@@ -3,6 +3,7 @@ import prody
 import numpy as np
 import rdkit
 import torch
+from scipy import spatial as spa
 
 def parse_protein(pdb_id: str, data_dir: Path) -> prody.AtomGroup:
     """Convert pdb file to prody AtomGroup object.
@@ -63,33 +64,55 @@ def parse_ligand(pdb_id: str, data_dir: Path):
     
     return ligand, atom_positions, atom_types, atom_charges
 
-def get_pocket_atoms(pdb_atoms: prody.AtomGroup, ligand_atom_positions, pocket_cutoff):
+def get_pocket_atoms(rec_atoms: prody.AtomGroup, ligand_atom_positions, box_padding, pocket_cutoff):
     # note that pocket_cutoff is in units of angstroms
 
-    # TODO: maybe it would be better to find all atoms that are within some distance of any ligand atom
-    # this is more computataionally expensive but might give more accurate models
-
     # get bounding box of ligand
+    lower_corner = ligand_atom_positions.min(axis=0, keepdim=True).values
+    upper_corner = ligand_atom_positions.max(axis=0, keepdim=True).values
+
     # get padded bounding box
-    # get coordinates of all protein atoms
-    # get atom types of all protein atoms
-    # find all atoms in padded bounding box
+    lower_corner -= box_padding
+    upper_corner += box_padding
+
+    # get coordinates and atom types of all protein atoms 
+    # TODO: fix parse_protein so that it selects the *atoms we actually want* from the protein structure (waters? metals? etc.)... i.e., selectiion logic will be contained to parse_protein
+    rec_atom_positions = rec_atoms.getCoords()
+    rec_atom_features = rec_atom_featurizer(rec_atoms)
+
+    # convert protein atom positions to pytorch tensor
+    rec_atom_positions = torch.tensor(rec_atom_positions)
+
+    # find all protein atoms in padded bounding box
+    above_lower_corner = (rec_atom_positions >= lower_corner).all(axis=1)
+    below_upper_corner = (rec_atom_positions <= upper_corner).all(axis=1)
+    # bounding_box_mask is a boolean array with length equal to number of atoms in receptor structure, indicating whether each atom is in the "bounding box"
+    bounding_box_mask = above_lower_corner & below_upper_corner 
+
+    # get positions + features for bounding box atoms
+    box_atom_positions = rec_atom_positions[bounding_box_mask]
+    box_atom_features = rec_atom_features[bounding_box_mask]
+
     # find atoms that come within a threshold distance from a ligand atom
+    all_distances = spa.distance_matrix(box_atom_positions, ligand_atom_positions)
+    # NOTE: even though the argumenets to distance_matrix were pytorch tensors, the returned array is a numpy array
+    min_dist_to_ligand = all_distances.min(axis=1) # distance from each box atom to closest ligand atom
+    pocket_atom_mask = min_dist_to_ligand < pocket_cutoff
+
+    # get positions + features for pocket atoms
+    pocket_atom_positions = box_atom_positions[pocket_atom_mask]
+    pocket_atom_features = box_atom_features[pocket_atom_mask]
+
     # get interface points
+    # TODO: apply clustering algorithm to summarize interface points
+    # for now, the interface points will just be the binding pocket points
+    # closest_ligand_index = all_distances.argmin(axis=1) # indicies of ligand atoms that are closest to each box atom
 
-    # get ligand center of mass
-    ligand_com = ligand_atom_positions.mean(axis=0, keepdims=False)
-    ligand_com = np.array(ligand_com, dtype=float)
+    return pocket_atom_positions, rec_atom_features
 
-    # select atoms within cutoff of ligand
-    pocket_atoms = pdb_atoms.select(f'protein and within {pocket_cutoff} of center', center=ligand_com)
-    pocket_atom_positions = pocket_atoms.getCoords()
-    pocket_atom_types = pocket_atoms.getElements()
-    pocket_atom_charges = pocket_atoms.getCharges()
 
-    # convert numpy arrays to torch tensors
-    pocket_atom_positions = torch.tensor(pocket_atom_positions)
-    
+def rec_atom_featurizer(rec_atoms: prody.AtomGroup):
+    protein_atom_elements = rec_atoms.getElements()
+    protein_atom_charges = rec_atoms.getCharges()
     # TODO: one-hot encode atom types
-
-    return pocket_atom_positions, pocket_atom_types, pocket_atom_charges
+    return protein_atom_elements
