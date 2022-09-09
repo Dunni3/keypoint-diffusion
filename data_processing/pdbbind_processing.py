@@ -48,21 +48,12 @@ def parse_ligand(pdb_id: str, data_dir: Path):
     # get atom positions
     ligand_conformer = ligand.GetConformer()
     atom_positions = ligand_conformer.GetPositions()
-
-    # get atom types and charges
-    atom_types = []
-    atom_charges = []
-    for atom in ligand.GetAtoms():
-        atom_types.append(atom.GetAtomicNum())
-        atom_charges.append(atom.GetFormalCharge()) # equibind code calls ComputeGasteigerCharges(mol), not sure why/if necessary
-
-    # convert numpy arrays to torch tensors
-    # TODO: one-hot encode atom types here
     atom_positions = torch.tensor(atom_positions)
-    atom_types = torch.tensor(atom_types)
-    atom_charges = torch.tensor(atom_charges)
+
+    # get atom features
+    atom_features = lig_atom_featurizer(ligand)
     
-    return ligand, atom_positions, atom_types, atom_charges
+    return ligand, atom_positions, atom_features
 
 def get_pocket_atoms(rec_atoms: prody.AtomGroup, ligand_atom_positions, box_padding, pocket_cutoff):
     # note that pocket_cutoff is in units of angstroms
@@ -117,3 +108,18 @@ def rec_atom_featurizer(rec_atoms: prody.AtomGroup):
     protein_atom_charges = rec_atoms.getCharges()
     # TODO: one-hot encode atom types
     return protein_atom_elements
+
+def lig_atom_featurizer(ligand):
+    atom_types = []
+    atom_charges = []
+    for atom in ligand.GetAtoms():
+        atom_types.append(atom.GetAtomicNum())
+        atom_charges.append(atom.GetFormalCharge()) # equibind code calls ComputeGasteigerCharges(mol), not sure why/if necessary
+
+    # convert numpy arrays to torch tensors
+    # TODO: one-hot encode atom types here
+    # TODO: think about how we are returning atom features. the diffusion model formulation
+    # from max welling's group requires that we treat integer and categorical variables separately
+    atom_types = torch.tensor(atom_types)
+    atom_charges = torch.tensor(atom_charges)
+    return atom_types
