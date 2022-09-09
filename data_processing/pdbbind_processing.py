@@ -98,17 +98,18 @@ def get_pocket_atoms(rec_atoms: prody.AtomGroup, ligand_atom_positions, box_padd
     # NOTE: even though the argumenets to distance_matrix were pytorch tensors, the returned array is a numpy array
     min_dist_to_ligand = all_distances.min(axis=1) # distance from each box atom to closest ligand atom
     pocket_atom_mask = min_dist_to_ligand < pocket_cutoff
+    pocket_atom_mask = torch.tensor(pocket_atom_mask)
 
     # get positions + features for pocket atoms
-    pocket_atom_positions = box_atom_positions[pocket_atom_mask]
-    pocket_atom_features = box_atom_features[pocket_atom_mask]
+    rec_atom_positions = box_atom_positions[pocket_atom_mask]
+    rec_atom_features = box_atom_features[pocket_atom_mask]
 
     # get interface points
     # TODO: apply clustering algorithm to summarize interface points
     # for now, the interface points will just be the binding pocket points
     # closest_ligand_index = all_distances.argmin(axis=1) # indicies of ligand atoms that are closest to each box atom
 
-    return pocket_atom_positions, rec_atom_features
+    return rec_atom_positions, rec_atom_features
 
 
 def rec_atom_featurizer(rec_atoms: prody.AtomGroup):
