@@ -5,6 +5,8 @@ import rdkit
 import torch
 from scipy import spatial as spa
 
+from typing import Union, List, Dict
+
 def parse_protein(pdb_id: str, data_dir: Path) -> prody.AtomGroup:
     """Convert pdb file to prody AtomGroup object.
 
@@ -55,7 +57,7 @@ def parse_ligand(pdb_id: str, data_dir: Path):
     
     return ligand, atom_positions, atom_features
 
-def get_pocket_atoms(rec_atoms: prody.AtomGroup, ligand_atom_positions, box_padding, pocket_cutoff):
+def get_pocket_atoms(rec_atoms: prody.AtomGroup, ligand_atom_positions: torch.Tensor, box_padding: Union[int, float], pocket_cutoff: Union[int, float], element_map: Dict[str, int]):
     # note that pocket_cutoff is in units of angstroms
 
     # get bounding box of ligand
@@ -69,7 +71,7 @@ def get_pocket_atoms(rec_atoms: prody.AtomGroup, ligand_atom_positions, box_padd
     # get positions, features, a residue indicies for all protein atoms
     # TODO: fix parse_protein so that it selects the *atoms we actually want* from the protein structure (waters? metals? etc.)... i.e., selectiion logic will be contained to parse_protein
     rec_atom_positions = rec_atoms.getCoords()
-    rec_atom_features = rec_atom_featurizer(rec_atoms)
+    rec_atom_features = rec_atom_featurizer(rec_atoms, element_map)
     rec_atom_residx = rec_atoms.getResindices()
 
     # convert protein atom positions to pytorch tensor
@@ -98,10 +100,9 @@ def get_pocket_atoms(rec_atoms: prody.AtomGroup, ligand_atom_positions, box_padd
     # get a mask of all atoms having a residue index contained in pocket_atom_residx
     byres_pocket_atom_mask = np.isin(rec_atom_residx, pocket_atom_residx)
 
-
     # get positions + features for pocket atoms
     pocket_atom_positions = rec_atom_positions[byres_pocket_atom_mask]
-    pocket_atom_features = rec_atom_features[byres_pocket_atom_mask]
+    pocket_atom_features = rec_atom_features[byres_pocket_atom_mask, :]
 
     # get interface points
     # TODO: apply clustering algorithm to summarize interface points
@@ -110,11 +111,26 @@ def get_pocket_atoms(rec_atoms: prody.AtomGroup, ligand_atom_positions, box_padd
     return pocket_atom_positions, pocket_atom_features
 
 
-def rec_atom_featurizer(rec_atoms: prody.AtomGroup):
-    protein_atom_elements = rec_atoms.getElements()
-    protein_atom_charges = rec_atoms.getCharges()
-    # TODO: one-hot encode atom types
-    return protein_atom_elements
+def rec_atom_featurizer(rec_atoms: prody.AtomGroup, element_map: Dict[str, int]):
+    protein_atom_elements: np.ndarray = rec_atoms.getElements()
+    protein_atom_charges: np.ndarray = rec_atoms.getCharges().astype(int)
+    # TODO: should atom charges be integers?
+
+    # one-hot encode atom elements
+    def element_to_idx(element_str, element_map=element_map):
+        try:
+            return element_map[element_str]
+        except KeyError:
+            return element_map['other']
+
+    element_idxs = np.fromiter((element_to_idx(element) for element in protein_atom_elements), int)
+    onehot_elements = np.zeros((element_idxs.size, len(element_map)))
+    onehot_elements[np.arange(element_idxs.size), element_idxs] = 1
+
+    # concatenate atom elements and charges
+    protein_atom_features = np.concatenate([onehot_elements, protein_atom_charges[:, None]], axis=1)
+
+    return protein_atom_features
 
 def lig_atom_featurizer(ligand):
     atom_types = []
