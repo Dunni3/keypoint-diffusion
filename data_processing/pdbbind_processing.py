@@ -66,10 +66,11 @@ def get_pocket_atoms(rec_atoms: prody.AtomGroup, ligand_atom_positions, box_padd
     lower_corner -= box_padding
     upper_corner += box_padding
 
-    # get coordinates and atom types of all protein atoms 
+    # get positions, features, a residue indicies for all protein atoms
     # TODO: fix parse_protein so that it selects the *atoms we actually want* from the protein structure (waters? metals? etc.)... i.e., selectiion logic will be contained to parse_protein
     rec_atom_positions = rec_atoms.getCoords()
     rec_atom_features = rec_atom_featurizer(rec_atoms)
+    rec_atom_residx = rec_atoms.getResindices()
 
     # convert protein atom positions to pytorch tensor
     rec_atom_positions = torch.tensor(rec_atom_positions)
@@ -80,9 +81,9 @@ def get_pocket_atoms(rec_atoms: prody.AtomGroup, ligand_atom_positions, box_padd
     # bounding_box_mask is a boolean array with length equal to number of atoms in receptor structure, indicating whether each atom is in the "bounding box"
     bounding_box_mask = above_lower_corner & below_upper_corner 
 
-    # get positions + features for bounding box atoms
+    # get positions + residue indicies for bounding box atoms
     box_atom_positions = rec_atom_positions[bounding_box_mask]
-    box_atom_features = rec_atom_features[bounding_box_mask]
+    box_atom_residx = rec_atom_residx[bounding_box_mask]
 
     # find atoms that come within a threshold distance from a ligand atom
     all_distances = spa.distance_matrix(box_atom_positions, ligand_atom_positions)
@@ -91,16 +92,22 @@ def get_pocket_atoms(rec_atoms: prody.AtomGroup, ligand_atom_positions, box_padd
     pocket_atom_mask = min_dist_to_ligand < pocket_cutoff
     pocket_atom_mask = torch.tensor(pocket_atom_mask)
 
+    # get residue indicies of all pocket atoms
+    pocket_atom_residx = box_atom_residx[pocket_atom_mask]
+
+    # get a mask of all atoms having a residue index contained in pocket_atom_residx
+    byres_pocket_atom_mask = np.isin(rec_atom_residx, pocket_atom_residx)
+
+
     # get positions + features for pocket atoms
-    rec_atom_positions = box_atom_positions[pocket_atom_mask]
-    rec_atom_features = box_atom_features[pocket_atom_mask]
+    pocket_atom_positions = rec_atom_positions[byres_pocket_atom_mask]
+    pocket_atom_features = rec_atom_features[byres_pocket_atom_mask]
 
     # get interface points
     # TODO: apply clustering algorithm to summarize interface points
     # for now, the interface points will just be the binding pocket points
-    # closest_ligand_index = all_distances.argmin(axis=1) # indicies of ligand atoms that are closest to each box atom
 
-    return rec_atom_positions, rec_atom_features
+    return pocket_atom_positions, pocket_atom_features
 
 
 def rec_atom_featurizer(rec_atoms: prody.AtomGroup):
