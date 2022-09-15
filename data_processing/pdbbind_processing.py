@@ -5,7 +5,7 @@ import rdkit
 import torch
 from scipy import spatial as spa
 
-from typing import Union, List, Dict
+from typing import Iterable, Union, List, Dict
 
 def parse_protein(pdb_id: str, data_dir: Path) -> prody.AtomGroup:
     """Convert pdb file to prody AtomGroup object.
@@ -23,7 +23,7 @@ def parse_protein(pdb_id: str, data_dir: Path) -> prody.AtomGroup:
     return protein_atoms
 
 
-def parse_ligand(pdb_id: str, data_dir: Path):
+def parse_ligand(pdb_id: str, data_dir: Path, element_map: Dict[str, int]):
     """Load ligand file into rdkit, retrieve atom features and positions.
 
     Args:
@@ -53,7 +53,7 @@ def parse_ligand(pdb_id: str, data_dir: Path):
     atom_positions = torch.tensor(atom_positions)
 
     # get atom features
-    atom_features = lig_atom_featurizer(ligand)
+    atom_features = lig_atom_featurizer(ligand, element_map)
     
     return ligand, atom_positions, atom_features
 
@@ -117,32 +117,49 @@ def rec_atom_featurizer(rec_atoms: prody.AtomGroup, element_map: Dict[str, int])
     # TODO: should atom charges be integers?
 
     # one-hot encode atom elements
-    def element_to_idx(element_str, element_map=element_map):
-        try:
-            return element_map[element_str]
-        except KeyError:
-            return element_map['other']
-
-    element_idxs = np.fromiter((element_to_idx(element) for element in protein_atom_elements), int)
-    onehot_elements = np.zeros((element_idxs.size, len(element_map)))
-    onehot_elements[np.arange(element_idxs.size), element_idxs] = 1
+    onehot_elements = onehot_encode_elements(protein_atom_elements, element_map)
 
     # concatenate atom elements and charges
     protein_atom_features = np.concatenate([onehot_elements, protein_atom_charges[:, None]], axis=1)
 
     return protein_atom_features
 
-def lig_atom_featurizer(ligand):
-    atom_types = []
+def lig_atom_featurizer(ligand, element_map: Dict[str, int]):
+    atom_elements = []
     atom_charges = []
+    # TODO: do i need to explicitly compute atomic charges?
     for atom in ligand.GetAtoms():
-        atom_types.append(atom.GetAtomicNum())
+        atom_elements.append(atom.GetSymbol())
         atom_charges.append(atom.GetFormalCharge()) # equibind code calls ComputeGasteigerCharges(mol), not sure why/if necessary
 
     # convert numpy arrays to torch tensors
-    # TODO: one-hot encode atom types here
     # TODO: think about how we are returning atom features. the diffusion model formulation
     # from max welling's group requires that we treat integer and categorical variables separately
-    atom_types = torch.tensor(atom_types)
-    atom_charges = torch.tensor(atom_charges)
-    return atom_types
+
+    # one-hot encode atom elements
+    onehot_elements = onehot_encode_elements(atom_elements, element_map)
+
+    # convert charges to numpy array
+    atom_charges = np.asarray(atom_charges, dtype=int)
+
+    # concatenate atom elements and charges
+    atom_features = np.concatenate([onehot_elements, atom_charges[:, None]], axis=1)
+
+    # TODO: determine datatype for torch tensors
+    atom_features = torch.tensor(atom_features)
+
+    return atom_features
+
+def onehot_encode_elements(atom_elements: Iterable, element_map: Dict[str, int]) -> np.ndarray:
+
+    def element_to_idx(element_str, element_map=element_map):
+        try:
+            return element_map[element_str]
+        except KeyError:
+            return element_map['other']
+
+    element_idxs = np.fromiter((element_to_idx(element) for element in atom_elements), int)
+    onehot_elements = np.zeros((element_idxs.size, len(element_map)))
+    onehot_elements[np.arange(element_idxs.size), element_idxs] = 1
+
+    return onehot_elements
