@@ -4,6 +4,7 @@ import numpy as np
 import rdkit
 import torch
 from scipy import spatial as spa
+import dgl
 
 from typing import Iterable, Union, List, Dict
 
@@ -76,6 +77,7 @@ def get_pocket_atoms(rec_atoms: prody.AtomGroup, ligand_atom_positions: torch.Te
 
     # convert protein atom positions to pytorch tensor
     rec_atom_positions = torch.tensor(rec_atom_positions)
+    rec_atom_features = torch.tensor(rec_atom_features)
 
     # find all protein atoms in padded bounding box
     above_lower_corner = (rec_atom_positions >= lower_corner).all(axis=1)
@@ -163,3 +165,8 @@ def onehot_encode_elements(atom_elements: Iterable, element_map: Dict[str, int])
     onehot_elements[np.arange(element_idxs.size), element_idxs] = 1
 
     return onehot_elements
+
+def build_receptor_graph(atom_positions: torch.Tensor, atom_features: torch.Tensor, k: int, edge_algorithm: str) -> dgl.DGLGraph:
+    g = dgl.knn_graph(atom_positions, k=k, algorithm=edge_algorithm, dist='euclidean')
+    g.ndata['h'] = atom_features
+    return g
