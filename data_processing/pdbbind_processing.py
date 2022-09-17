@@ -2,6 +2,7 @@ from pathlib import Path
 import prody
 import numpy as np
 import rdkit
+from rdkit.Chem import SDMolSupplier
 import torch
 from scipy import spatial as spa
 import dgl
@@ -168,5 +169,6 @@ def onehot_encode_elements(atom_elements: Iterable, element_map: Dict[str, int])
 
 def build_receptor_graph(atom_positions: torch.Tensor, atom_features: torch.Tensor, k: int, edge_algorithm: str) -> dgl.DGLGraph:
     g = dgl.knn_graph(atom_positions, k=k, algorithm=edge_algorithm, dist='euclidean')
+    g.ndata['x'] = atom_positions
     g.ndata['h'] = atom_features
     return g

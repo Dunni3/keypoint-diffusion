@@ -1,0 +1,12 @@
+dataset_config:
+  index_file: 'data/PDBbind_processed/train_index_mini.txt'
+  raw_data_dir: 'data/PDBbind/refined-set'
+  processed_data_dir: 'data/PDBbind_processed/processed_data'
+  rec_elements: ['H', 'C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'Mg', 'Mn', 'Zn', 'Ca', 'Fe', 'B']
+  lig_elements: ['H', 'C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'Mg', 'Mn', 'Zn', 'Ca', 'Fe', 'B']
+  pocket_edge_algorithm: 'bruteforce-blas'
+  lig_box_padding: 6 # angstroms
+  pocket_cutoff: 4 # angstroms
+  receptor_k: 3
+  ligand_k: 3
+  dataset_size: 1

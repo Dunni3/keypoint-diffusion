@@ -12,15 +12,11 @@ from data_processing.pdbbind_processing import (build_receptor_graph,
                                                 get_pocket_atoms, parse_ligand,
                                                 parse_protein)
 
-# TODO: create a training script and put supported element types into a config file
-rec_atom_elements = ['H', 'C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'Mg', 'Mn', 'Zn', 'Ca', 'Fe', 'B']
-
 # TODO: figure out what ligand atom elements we whould actually support. We don't really need to include the metals do we?
-lig_atom_elements = rec_atom_elements.copy()
 
 class PDBbind(dgl.data.DGLDataset):
 
-    def __init__(self, name: str, index_fpath: str, 
+    def __init__(self, name: str, index_file: str, 
         raw_data_dir: str,
         processed_data_dir: str,
         rec_elements: List[str],
@@ -35,7 +31,7 @@ class PDBbind(dgl.data.DGLDataset):
         self.dataset_size: int = dataset_size
 
         # define filepaths of data
-        self.index_fpath: Path = Path(index_fpath)
+        self.index_file: Path = Path(index_file)
         self.raw_data_dir: Path = Path(raw_data_dir)
         self.processed_data_dir: Path = Path(processed_data_dir)
 
@@ -59,10 +55,19 @@ class PDBbind(dgl.data.DGLDataset):
         super().__init__(name=name) # this has to happen last because this will call self.process()
 
     def __getitem__(self, i):
-        pass
+        pdb_id = self.pdb_ids[i] # get PDB ID of ith dataset example
+        
+        # get filepaths of the processed data that we need
+        rec_graph_path = self.processed_data_dir / pdb_id / f'{pdb_id}_rec_graph.dgl'
+        lig_atom_data = self.processed_data_dir / pdb_id / f'{pdb_id}_ligand_data.pt'
+
+        receptor_graph = dgl.load_graphs(str(rec_graph_path))
+        lig_atom_positions, lig_atom_features = torch.load(lig_atom_data)
+
+        return receptor_graph, lig_atom_positions, lig_atom_features
 
     def __len__(self):
-        return 1
+        return len(self.pdb_ids)
 
     def process(self):
 
@@ -70,15 +75,15 @@ class PDBbind(dgl.data.DGLDataset):
         # if output_files already exist and force_reprocess is not true, then skip this pdb_id
 
         # get pdb ids from index file
-        with open(self.index_fpath, 'r') as f:
-            pdb_ids = [line.strip() for line in f]
+        with open(self.index_file, 'r') as f:
+            self.pdb_ids = [line.strip() for line in f]
 
         if self.dataset_size is not None:
-            pdb_ids = pdb_ids[:self.dataset_size]
+            self.pdb_ids = self.pdb_ids[:self.dataset_size]
 
         # we will want to do this paralellized over PDBs
         # but for now, a simple for loop will do
-        for pdb_id in pdb_ids:
+        for pdb_id in self.pdb_ids:
 
             # get all atoms from pdb file
             pdb_atoms: prody.AtomGroup = parse_protein(pdb_id, data_dir=self.raw_data_dir)
