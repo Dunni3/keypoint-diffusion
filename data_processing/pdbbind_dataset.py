@@ -1,5 +1,110 @@
+from pathlib import Path
+from typing import Dict, List, Union
 
+import dgl
+import numpy as np
+import prody
+import rdkit
+import torch
+from scipy import spatial as spa
+
+from data_processing.pdbbind_processing import (build_receptor_graph,
+                                                get_pocket_atoms, parse_ligand,
+                                                parse_protein)
+
+# TODO: create a training script and put supported element types into a config file
 rec_atom_elements = ['H', 'C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'Mg', 'Mn', 'Zn', 'Ca', 'Fe', 'B']
 
 # TODO: figure out what ligand atom elements we whould actually support. We don't really need to include the metals do we?
 lig_atom_elements = rec_atom_elements.copy()
+
+class PDBbind(dgl.data.DGLDataset):
+
+    def __init__(self, name: str, index_fpath: str, 
+        raw_data_dir: str,
+        processed_data_dir: str,
+        rec_elements: List[str],
+        lig_elements: List[str],
+        pocket_edge_algorithm: str = 'bruteforce-blas',
+        lig_box_padding: Union[int, float] = 6,
+        pocket_cutoff: Union[int, float] = 4,
+        receptor_k: int = 3,
+        ligand_k: int = 3,
+        dataset_size: int = None):
+        
+        self.dataset_size: int = dataset_size
+
+        # define filepaths of data
+        self.index_fpath: Path = Path(index_fpath)
+        self.raw_data_dir: Path = Path(raw_data_dir)
+        self.processed_data_dir: Path = Path(processed_data_dir)
+
+        # atom typing configurations
+        self.rec_elements = rec_elements
+        self.rec_element_map: Dict[str, int] = { element: idx for idx, element in enumerate(self.rec_elements) }
+        self.rec_element_map['other'] = len(self.rec_elements)
+
+        self.lig_elements = lig_elements
+        self.lig_element_map: Dict[str, int] = { element: idx for idx, element in enumerate(self.lig_elements) }
+        self.lig_element_map['other'] = len(self.lig_elements)
+
+
+        # hyperparameters for protein graph
+        self.receptor_k: int = receptor_k
+        self.ligand_k: int = ligand_k
+        self.lig_box_padding: Union[int, float] = lig_box_padding
+        self.pocket_cutoff: Union[int, float] = pocket_cutoff
+        self.pocket_edge_algorithm = pocket_edge_algorithm
+
+        super().__init__(name=name) # this has to happen last because this will call self.process()
+
+    def __getitem__(self, i):
+        pass
+
+    def __len__(self):
+        return 1
+
+    def process(self):
+
+        # TODO: implement logic that only makes the graph objects if they don't already exist
+        # if output_files already exist and force_reprocess is not true, then skip this pdb_id
+
+        # get pdb ids from index file
+        with open(self.index_fpath, 'r') as f:
+            pdb_ids = [line.strip() for line in f]
+
+        if self.dataset_size is not None:
+            pdb_ids = pdb_ids[:self.dataset_size]
+
+        # we will want to do this paralellized over PDBs
+        # but for now, a simple for loop will do
+        for pdb_id in pdb_ids:
+
+            # get all atoms from pdb file
+            pdb_atoms: prody.AtomGroup = parse_protein(pdb_id, data_dir=self.raw_data_dir)
+
+            # get rdkit molecule from ligand, as well as atom positions/features
+            ligand, lig_atom_positions, lig_atom_features = parse_ligand(pdb_id, data_dir=self.raw_data_dir, element_map=self.lig_element_map)
+
+            # get all protein atoms that form the binding pocket
+            pocket_atom_positions, pocket_atom_features \
+                 = get_pocket_atoms(pdb_atoms, lig_atom_positions, 
+                 box_padding=self.lig_box_padding, pocket_cutoff=self.pocket_cutoff, element_map=self.rec_element_map)
+
+            # build receptor graph
+            receptor_graph = build_receptor_graph(pocket_atom_positions, pocket_atom_features, self.receptor_k, self.pocket_edge_algorithm)
+
+            # define filepaths for saving processed data
+            output_dir = self.processed_data_dir / pdb_id
+            output_dir.mkdir(exist_ok=True)
+            
+
+            # save receptor graph
+            receptor_graph_path = output_dir / f'{pdb_id}_rec_graph.dgl'
+            dgl.save_graphs(str(receptor_graph_path), receptor_graph)
+
+            # save ligand data
+            ligand_data_path = output_dir / f'{pdb_id}_ligand_data.pt'
+            payload = {'lig_atom_positions': lig_atom_positions, 'lig_atom_features': lig_atom_features}
+            with open(ligand_data_path, 'wb') as f:
+                torch.save(payload, f)
