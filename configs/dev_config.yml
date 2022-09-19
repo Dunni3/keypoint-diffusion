@@ -9,4 +9,4 @@ dataset_config:
   pocket_cutoff: 4 # angstroms
   receptor_k: 3
   ligand_k: 3
-  dataset_size: 1
+  dataset_size: 5

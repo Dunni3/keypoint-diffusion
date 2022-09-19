@@ -2,7 +2,10 @@ import argparse
 import pathlib
 import yaml
 
-from data_processing.pdbbind_dataset import PDBbind
+from data_processing.pdbbind_dataset import PDBbind, get_pdb_dataloader
+
+import dgl
+from dgl.dataloading import GraphDataLoader
 
 def parse_arguments():
     p = argparse.ArgumentParser()
@@ -14,11 +17,14 @@ def parse_arguments():
 
     return config_dict
 
-
-
 def main():
     args = parse_arguments()
     dataset = PDBbind(name='train', **args['dataset_config'])
+
+    dataloader = get_pdb_dataloader(dataset, batch_size=2, num_workers=1)
+
+    for rec_graphs, lig_atom_positions, lig_atom_features in dataloader:
+        pass
 
 
 if __name__ == "__main__":

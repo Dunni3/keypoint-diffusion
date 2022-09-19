@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Dict, List, Union
 
 import dgl
+from dgl.dataloading import GraphDataLoader
 import numpy as np
 import prody
 import rdkit
@@ -59,10 +60,13 @@ class PDBbind(dgl.data.DGLDataset):
         
         # get filepaths of the processed data that we need
         rec_graph_path = self.processed_data_dir / pdb_id / f'{pdb_id}_rec_graph.dgl'
-        lig_atom_data = self.processed_data_dir / pdb_id / f'{pdb_id}_ligand_data.pt'
+        lig_atom_data_path = self.processed_data_dir / pdb_id / f'{pdb_id}_ligand_data.pt'
 
-        receptor_graph = dgl.load_graphs(str(rec_graph_path))
-        lig_atom_positions, lig_atom_features = torch.load(lig_atom_data)
+        receptor_graph = dgl.load_graphs(str(rec_graph_path))[0][0]
+        with open(lig_atom_data_path, 'rb') as f:
+            lig_atom_data = torch.load(f)
+        lig_atom_positions = lig_atom_data['lig_atom_positions']
+        lig_atom_features = lig_atom_data['lig_atom_features']
 
         return receptor_graph, lig_atom_positions, lig_atom_features
 
@@ -113,3 +117,17 @@ class PDBbind(dgl.data.DGLDataset):
             payload = {'lig_atom_positions': lig_atom_positions, 'lig_atom_features': lig_atom_features}
             with open(ligand_data_path, 'wb') as f:
                 torch.save(payload, f)
+
+def pdbbind_collate_fn(examples: list):
+
+    # break receptor graphs, ligand positions, and ligand features into separate lists
+    receptor_graphs, lig_atom_positions, lig_atom_features = zip(*examples)
+
+    # batch the receptor graphs together
+    receptor_graphs = dgl.batch(receptor_graphs)
+    return receptor_graphs, lig_atom_positions, lig_atom_features
+
+def get_pdb_dataloader(dataset: PDBbind, batch_size: int, num_workers: int = 1) -> GraphDataLoader:
+
+    dataloader = GraphDataLoader(dataset, batch_size=batch_size, drop_last=False, num_workers=num_workers, collate_fn=pdbbind_collate_fn)
+    return dataloader
