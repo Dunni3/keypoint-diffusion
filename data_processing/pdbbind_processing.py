@@ -111,7 +111,7 @@ def get_pocket_atoms(rec_atoms: prody.AtomGroup, ligand_atom_positions: torch.Te
     # TODO: apply clustering algorithm to summarize interface points
     # for now, the interface points will just be the binding pocket points
 
-    return pocket_atom_positions, pocket_atom_features
+    return pocket_atom_positions, pocket_atom_features, byres_pocket_atom_mask
 
 
 def rec_atom_featurizer(rec_atoms: prody.AtomGroup, element_map: Dict[str, int]):

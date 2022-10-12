@@ -22,6 +22,7 @@ def main():
     args = parse_arguments()
     dataset = PDBbind(name='train', **args['dataset_config'])
 
+    # TODO: how do we / should we normalize features??
     dataloader = get_pdb_dataloader(dataset, batch_size=2, num_workers=1)
 
     test_rec_graph, _, _ = iter(dataloader).next()
@@ -30,7 +31,7 @@ def main():
     for rec_graphs, lig_atom_positions, lig_atom_features in dataloader:
         break
 
-    rec_encoder = ReceptorEncoder(n_egnn_convs=1, n_keypoints=10, in_n_node_feat=n_rec_atom_features, hidden_n_node_feat=32, out_n_node_feat=32)
+    rec_encoder = ReceptorEncoder(n_egnn_convs=2, n_keypoints=10, in_n_node_feat=n_rec_atom_features, hidden_n_node_feat=32, out_n_node_feat=32)
     rec_encoder(rec_graphs)
     print('meep!')
 

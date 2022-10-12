@@ -24,18 +24,17 @@ class ReceptorEncoder(nn.Module):
                 hidden_size = hidden_n_node_feat
                 out_size = out_n_node_feat
             elif i == 0 and self.n_egnn_convs != 1: # first but not the only convolutional layer
-                in_size = in_n_node_feat,
-                hidden_size = hidden_n_node_feat,
+                in_size = in_n_node_feat
+                hidden_size = hidden_n_node_feat
                 out_size = hidden_n_node_feat
             elif i == self.n_egnn_convs - 1 and self.n_egnn_convs != 1: # last but not the only convolutional layer
                 in_size = hidden_n_node_feat
                 hidden_size = hidden_n_node_feat
                 out_size = out_n_node_feat
             else: # layers that are neither the first nor last layer 
-                in_size = hidden_n_node_feat,
-                hidden_size = hidden_n_node_feat,
+                in_size = hidden_n_node_feat
+                hidden_size = hidden_n_node_feat
                 out_size = hidden_n_node_feat
-
 
             self.egnn_convs.append( 
                 EGNNConv(in_size=in_size, hidden_size=hidden_size, out_size=out_size).double() 
@@ -92,7 +91,7 @@ class ReceptorEncoder(nn.Module):
                 kp_feat = inv_att_weights @ graph.ndata['h']
                 keypoint_features.append(kp_feat)
                 
-                # TODO: implement a module that exchanges information between the two sets of keypoints to ensure alignment
+                # TODO: instead of a second attention mechanism, compute keypoint features by a boltzmann-weighted sum over interatomic distances
 
 
         return keypoint_positions, keypoint_features
