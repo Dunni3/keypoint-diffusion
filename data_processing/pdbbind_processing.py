@@ -3,25 +3,23 @@ import prody
 import numpy as np
 import rdkit
 from rdkit.Chem import SDMolSupplier
+from rdkit.Chem import AllChem as Chem
 import torch
 from scipy import spatial as spa
 import dgl
 
 from typing import Iterable, Union, List, Dict
 
-def parse_protein(pdb_id: str, data_dir: Path) -> prody.AtomGroup:
+def parse_protein(pdb_path: Path) -> prody.AtomGroup:
     """Convert pdb file to prody AtomGroup object.
 
     Args:
-        pdb_id (str): PDB ID
-        data_dir (Path): Filepath of PDBbind data
+        pdb_path (Path): Path to receptor pdb file. 
 
     Returns:
         prody.AtomGroup: All of the atoms in the pdb file.
     """
-    pdb_path = data_dir / pdb_id / f'{pdb_id}_protein.pdb'
-    pdb_path = str(pdb_path)
-    protein_atoms = prody.parsePDB(pdb_path)
+    protein_atoms = prody.parsePDB(str(pdb_path))
     return protein_atoms
 
 
@@ -169,6 +167,12 @@ def onehot_encode_elements(atom_elements: Iterable, element_map: Dict[str, int])
 
 def build_receptor_graph(atom_positions: torch.Tensor, atom_features: torch.Tensor, k: int, edge_algorithm: str) -> dgl.DGLGraph:
     g = dgl.knn_graph(atom_positions, k=k, algorithm=edge_algorithm, dist='euclidean')
-    g.ndata['x'] = atom_positions
-    g.ndata['h'] = atom_features
+    g.ndata['x_0'] = atom_positions
+    g.ndata['h_0'] = atom_features
     return g
+
+def get_ot_loss_weights(ligand: rdkit.Chem.rdchem.Mol, pdb_path: Path, pocket_atom_mask: torch.Tensor):
+    
+    # i tried to implement this using rdkit but it didn't work
+    # i need to implement the FF calculations using openmm, but that will take time that I simply don't have
+    raise NotImplementedError

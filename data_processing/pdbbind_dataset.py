@@ -11,7 +11,7 @@ from scipy import spatial as spa
 
 from data_processing.pdbbind_processing import (build_receptor_graph,
                                                 get_pocket_atoms, parse_ligand,
-                                                parse_protein)
+                                                parse_protein, get_ot_loss_weights)
 
 # TODO: figure out what ligand atom elements we whould actually support. We don't really need to include the metals do we?
 
@@ -27,7 +27,8 @@ class PDBbind(dgl.data.DGLDataset):
         pocket_cutoff: Union[int, float] = 4,
         receptor_k: int = 3,
         ligand_k: int = 3,
-        dataset_size: int = None):
+        dataset_size: int = None,
+        use_boltzmann_ot: bool = False):
         
         self.dataset_size: int = dataset_size
 
@@ -52,6 +53,8 @@ class PDBbind(dgl.data.DGLDataset):
         self.lig_box_padding: Union[int, float] = lig_box_padding
         self.pocket_cutoff: Union[int, float] = pocket_cutoff
         self.pocket_edge_algorithm = pocket_edge_algorithm
+
+        self.use_boltzmann_ot = use_boltzmann_ot
 
         super().__init__(name=name) # this has to happen last because this will call self.process()
 
@@ -89,16 +92,24 @@ class PDBbind(dgl.data.DGLDataset):
         # but for now, a simple for loop will do
         for pdb_id in self.pdb_ids:
 
+            # construct filepath of receptor pdb
+            pdb_path: Path = self.raw_data_dir / pdb_id / f'{pdb_id}_protein_nowater.pdb'
+
             # get all atoms from pdb file
-            pdb_atoms: prody.AtomGroup = parse_protein(pdb_id, data_dir=self.raw_data_dir)
+            pdb_atoms: prody.AtomGroup = parse_protein(pdb_path)
 
             # get rdkit molecule from ligand, as well as atom positions/features
             ligand, lig_atom_positions, lig_atom_features = parse_ligand(pdb_id, data_dir=self.raw_data_dir, element_map=self.lig_element_map)
 
             # get all protein atoms that form the binding pocket
-            pocket_atom_positions, pocket_atom_features \
+            pocket_atom_positions, pocket_atom_features, pocket_atom_mask \
                  = get_pocket_atoms(pdb_atoms, lig_atom_positions, 
                  box_padding=self.lig_box_padding, pocket_cutoff=self.pocket_cutoff, element_map=self.rec_element_map)
+
+            # get boltzmann probabilities for OT loss
+            # TODO: implement computing boltzmann probabilities for OT loss
+            if self.use_boltzmann_ot:
+                ot_loss_boltzmann_weights = get_ot_loss_weights(ligand, pdb_path, pocket_atom_mask, pocket_atom_positions)
 
             # build receptor graph
             receptor_graph = build_receptor_graph(pocket_atom_positions, pocket_atom_features, self.receptor_k, self.pocket_edge_algorithm)

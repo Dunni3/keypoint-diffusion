@@ -9,4 +9,8 @@ dataset_config:
   pocket_cutoff: 4 # angstroms
   receptor_k: 3
   ligand_k: 3
-  dataset_size: 5
+  dataset_size: 5 # used only for debugging
+  use_boltzmann_ot: False
+
+rec_encoder_loss_config:
+  use_boltzmann_weights: False

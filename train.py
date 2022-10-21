@@ -4,6 +4,7 @@ import yaml
 
 from data_processing.pdbbind_dataset import PDBbind, get_pdb_dataloader
 from models.receptor_encoder import ReceptorEncoder
+from losses.rec_encoder_loss import ReceptorEncoderLoss
 
 import dgl
 from dgl.dataloading import GraphDataLoader
@@ -21,6 +22,7 @@ def parse_arguments():
 def main():
     args = parse_arguments()
     dataset = PDBbind(name='train', **args['dataset_config'])
+    rec_encoder_loss_fn = ReceptorEncoderLoss(**args['rec_encoder_loss_config'])
 
     # TODO: how do we / should we normalize features??
     dataloader = get_pdb_dataloader(dataset, batch_size=2, num_workers=1)
@@ -32,7 +34,8 @@ def main():
         break
 
     rec_encoder = ReceptorEncoder(n_egnn_convs=2, n_keypoints=10, in_n_node_feat=n_rec_atom_features, hidden_n_node_feat=32, out_n_node_feat=32)
-    rec_encoder(rec_graphs)
+    kp_pos, kp_feat = rec_encoder(rec_graphs)
+    ot_loss = rec_encoder_loss_fn(kp_pos, rec_graphs)
     print('meep!')
 
 
