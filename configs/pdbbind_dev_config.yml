@@ -1,8 +1,7 @@
-dataset_location:
-  train: 'data/crossdock_processed/train'
-  test: 'data/crossdock_processed/test'
-
 dataset_config:
+  index_file: 'data/PDBbind_processed/train_index_mini.txt'
+  raw_data_dir: 'data/PDBbind/refined-set'
+  processed_data_dir: 'data/PDBbind_processed/processed_data'
   rec_elements: ['H', 'C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'Mg', 'Mn', 'Zn', 'Ca', 'Fe', 'B']
   lig_elements: ['H', 'C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'Mg', 'Mn', 'Zn', 'Ca', 'Fe', 'B']
   pocket_edge_algorithm: 'bruteforce-blas'

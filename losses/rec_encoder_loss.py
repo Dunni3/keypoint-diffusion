@@ -2,6 +2,7 @@ from torch.nn.modules.loss import _Loss
 import torch
 import dgl
 import ot
+from typing import List
 
 # this function is taken from equibind
 def compute_ot_emd(cost_mat, device):

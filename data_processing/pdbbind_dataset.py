@@ -99,7 +99,8 @@ class PDBbind(dgl.data.DGLDataset):
             pdb_atoms: prody.AtomGroup = parse_protein(pdb_path)
 
             # get rdkit molecule from ligand, as well as atom positions/features
-            ligand, lig_atom_positions, lig_atom_features = parse_ligand(pdb_id, data_dir=self.raw_data_dir, element_map=self.lig_element_map)
+            ligand_path = self.raw_data_dir / pdb_id / f'{pdb_id}_ligand.sdf'
+            ligand, lig_atom_positions, lig_atom_features = parse_ligand(ligand_path, element_map=self.lig_element_map)
 
             # get all protein atoms that form the binding pocket
             pocket_atom_positions, pocket_atom_features, pocket_atom_mask \

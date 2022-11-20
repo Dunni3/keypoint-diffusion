@@ -1,5 +1,7 @@
 # project-specific files
 data/PDBbind
+data/crossdock_processed
+data/PDBbind_processed
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

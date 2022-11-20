@@ -23,12 +23,11 @@ def parse_protein(pdb_path: Path) -> prody.AtomGroup:
     return protein_atoms
 
 
-def parse_ligand(pdb_id: str, data_dir: Path, element_map: Dict[str, int]):
+def parse_ligand(ligand_path: Path, element_map: Dict[str, int]):
     """Load ligand file into rdkit, retrieve atom features and positions.
 
     Args:
-        pdb_id (str): PDB ID
-        data_dir (Path): Filepath of PDBbind data
+        ligand_path (Path): Filepath of ligand SDF file
 
     Returns:
         ligand: rdkit molecule of the ligand
@@ -36,10 +35,6 @@ def parse_ligand(pdb_id: str, data_dir: Path, element_map: Dict[str, int]):
         atom_types: tbd
         atom_charges: tbd
     """
-
-    # construct path to ligand file
-    ligand_path = data_dir / pdb_id / f'{pdb_id}_ligand.sdf'
-
     # read ligand into a rdkit mol
     suppl = rdkit.Chem.SDMolSupplier(str(ligand_path), sanitize=False, removeHs=False)
     ligands = list(suppl)
