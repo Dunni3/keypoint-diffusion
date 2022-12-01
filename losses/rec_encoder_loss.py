@@ -3,6 +3,7 @@ import torch
 import dgl
 import ot
 from typing import List
+import numpy as np
 
 # this function is taken from equibind
 def compute_ot_emd(cost_mat, device):
@@ -18,6 +19,8 @@ class ReceptorEncoderLoss(_Loss):
 
     def __init__(self, use_boltzmann_weights=False):
         self.use_boltzmann_weights = use_boltzmann_weights
+
+        super().__init__()
 
     def forward(self, keypoint_positions: List[torch.Tensor], rec_graphs: dgl.DGLGraph, boltzmann_weights=None):
         # TODO: incorporate boltzmann-weights into cost matrix
