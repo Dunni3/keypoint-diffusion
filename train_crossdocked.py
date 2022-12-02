@@ -3,6 +3,7 @@ import pathlib
 import yaml
 
 from data_processing.crossdocked.dataset import CrossDockedDataset, get_dataloader
+from models.dynamics import LigRecDynamics
 from models.receptor_encoder import ReceptorEncoder
 from losses.rec_encoder_loss import ReceptorEncoderLoss
 
@@ -37,7 +38,14 @@ def main():
 
     rec_encoder = ReceptorEncoder(n_egnn_convs=2, n_keypoints=10, in_n_node_feat=n_rec_atom_features, hidden_n_node_feat=32, out_n_node_feat=32)
     kp_pos, kp_feat = rec_encoder(rec_graphs)
-    ot_loss = rec_encoder_loss_fn(kp_pos, rec_graphs)
+
+    n_atom_features = lig_atom_features[0].shape[1]
+    n_rec_features = kp_feat[0].shape[1]
+    dynamics = LigRecDynamics(n_atom_features, n_rec_features)
+
+    dynamics(lig_atom_positions, lig_atom_features, kp_pos, kp_feat)
+
+    # ot_loss = rec_encoder_loss_fn(kp_pos, rec_graphs)
     print('meep!')
 
 

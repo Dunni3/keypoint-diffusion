@@ -1,8 +1,11 @@
 import torch
 import torch.nn as nn
-from typing import Dict
+from typing import Dict, List
 import dgl.function as fn
+import dgl
 
+# TODO: rewrite EGNNConv for the receptor encoder
+# TODO: should we do a sign embedding of distances? no, they don't use it in our benchmark
 
 class LigRecConv(nn.Module):
 
@@ -162,3 +165,152 @@ class LigRecConv(nn.Module):
 
             return h, x
 
+
+class LigRecEGNN(nn.Module):
+
+    def __init__(self, n_layers, in_size, hidden_size, out_size):
+        super().__init__()
+
+        self.n_layers = n_layers
+        self.in_size = in_size
+        self.hidden_size = hidden_size
+        self.out_size = out_size
+
+        self.conv_layers: List[LigRecConv] = []
+        for i in range(self.n_layers):
+            if i == 0 and self.n_layers == 1: # first and only convolutional layer
+                layer_in_size = in_size
+                layer_hidden_size = hidden_size
+                layer_out_size = out_size
+            elif i == 0 and self.n_layers != 1: # first but not the only convolutional layer
+                layer_in_size = in_size
+                layer_hidden_size = hidden_size
+                layer_out_size = hidden_size
+            elif i == self.n_layers - 1 and self.n_layers != 1: # last but not the only convolutional layer
+                layer_in_size = hidden_size
+                layer_hidden_size = hidden_size
+                layer_out_size = out_size
+            else: # layers that are neither the first nor last layer 
+                layer_in_size = hidden_size
+                layer_hidden_size = hidden_size
+                layer_out_size = hidden_size
+
+            self.conv_layers.append( 
+                LigRecConv(in_size=layer_in_size, hidden_size=layer_hidden_size, out_size=layer_out_size).double() 
+            )
+
+    def forward(self, graph):
+
+        node_coords = graph.ndata['x_0']
+        node_features = graph.ndata['h_0']
+
+        # do equivariant message passing on the heterograph
+        h, x = self.conv_layers[0](graph, node_features, node_coords)
+        if len(self.conv_layers) > 1:
+            for conv_layer in self.conv_layers[1:]:
+                h, x = conv_layer(graph, h, x)
+
+        return h, x
+
+
+
+class LigRecDynamics(nn.Module):
+
+    def __init__(self, atom_nf, rec_nf, n_layers=4, joint_nf=32, hidden_nf=256, act_fn=nn.SiLU):
+        super().__init__()    
+
+    
+        self.lig_encoder = nn.Sequential(
+            nn.Linear(atom_nf, 2 * atom_nf),
+            act_fn(),
+            nn.Linear(2 * atom_nf, joint_nf)
+        )
+
+        self.lig_decoder = nn.Sequential(
+            nn.Linear(joint_nf, 2 * atom_nf),
+            act_fn(),
+            nn.Linear(2 * atom_nf, atom_nf)
+        )
+
+        self.rec_encoder = nn.Sequential(
+            nn.Linear(rec_nf, 2 * rec_nf),
+            act_fn(),
+            nn.Linear(2 * rec_nf, joint_nf)
+        )
+
+        # we add +1 to the input feature size for the timestep
+        self.egnn = LigRecEGNN(n_layers=n_layers, in_size=joint_nf+1, hidden_size=hidden_nf, out_size=joint_nf)
+
+
+    def forward(self, lig_pos, lig_feat, rec_pos, rec_feat, timestep):
+        # inputs: ligand/receptor positions/features, timestep
+        # outputs: predicted noise
+
+        lig_feat = list(lig_feat)
+        rec_feat = list(rec_feat)
+
+
+        # encode lig/rec features
+        for i in range(len(lig_feat)):
+            lig_feat[i] = self.lig_encoder(lig_feat[i])
+            rec_feat[i] = self.rec_encoder(rec_feat[i])
+
+    
+        # add timestep to node features
+        lig_feat_time = []
+        rec_feat_time = []
+        for i in range(len(lig_feat)):
+            t_reshaped = timestep[i].repeat(lig_feat[i].shape[0]).view(-1,1)
+            lig_feat_time.append( torch.cat([lig_feat[i], t_reshaped]) )
+
+            t_reshaped = timestep[i].repeat(rec_feat[i].shape[0]).view(-1,1)
+            rec_feat_time.append( torch.cat([rec_feat[i], t_reshaped]) )
+
+        # construct heterograph
+        graph = self.make_graph(lig_pos, lig_feat_time, rec_pos, rec_feat_time)
+
+        # pass through LigRecEGNN
+        h, x = self.egnn(graph)
+
+        # decode lig features
+
+    def make_graph(lig_pos, lig_feat, rec_pos, rec_feat):
+
+        # note that all arguments except timestep are tuples of length batch_size containing
+        # the values for each datapoint in the batch
+
+        k_rl = 4 # receptor keypoints have edges to the k_rl nearest ligand atoms
+        
+        graphs = []
+        for i in range(len(lig_pos)):
+
+            # create graph containing just ligand-ligand edges
+            lig_graph = dgl.knn_graph(lig_pos[i], k=4, algorithm="bruteforce-blas", dist='euclidean')
+
+            # find edges for rec -> lig conections
+            rl_dist = torch.cdist(rec_pos[i], lig_pos[i]) # distance between every receptor keypoint and every ligand atom
+            topk_dist, topk_idx = torch.topk(rl_dist, k=4, dim=1, largest=False) # get k closest ligand atoms to each receptor atom
+
+            # get list of rec -> ligand edges
+            n_rec_nodes = rec_pos[i].shape[0]
+            src_nodes = torch.repeat_interleave(torch.arange(n_rec_nodes), repeats=k_rl)
+            dst_nodes = topk_idx.flatten()
+
+            # create heterograph
+            graph_data = {
+
+            ('lig', 'll', 'lig'): lig_graph.edges(),
+
+            ('rec', 'rl', 'lig'): (src_nodes, dst_nodes)
+
+            }
+
+            g = dgl.heterograph(graph_data)
+            g.nodes['lig'].data['x_0'] = lig_pos[i]
+            g.nodes['lig'].data['h_0'] = lig_feat[i]
+            g.nodes['rec'].data['x_0'] = rec_pos[i]
+            g.nodes['rec'].data['h_0'] = rec_feat[i]
+            graphs.append(g)
+        
+        batched_graph = dgl.batch(graphs)
+        return batched_graph
