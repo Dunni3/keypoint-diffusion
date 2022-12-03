@@ -9,7 +9,7 @@ import pickle
 
 from data_processing.pdbbind_processing import (build_receptor_graph,
                                                 get_pocket_atoms, parse_ligand,
-                                                parse_protein, get_ot_loss_weights)
+                                                parse_protein, get_ot_loss_weights, center_complex)
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -87,6 +87,9 @@ if __name__ == "__main__":
                 pocket_atom_features, 
                 dataset_config['receptor_k'], 
                 dataset_config['pocket_edge_algorithm'])
+
+            # place ligand COM at origin for the lig/rec complex
+            receptor_graph, lig_atom_positions = center_complex(receptor_graph, lig_atom_positions)
 
             # define filepaths for saving processed data
             pair_dir = args.output_dir / split_key / str(pair_idx)

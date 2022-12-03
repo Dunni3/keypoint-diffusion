@@ -13,5 +13,14 @@ dataset_config:
   dataset_size: 5 # used only for debugging
   use_boltzmann_ot: False
 
+rec_encoder_config:
+  n_keypoints: 10
+  hidden_n_node_feat: 32 
+  out_n_node_feat: 32
+
 rec_encoder_loss_config:
   use_boltzmann_weights: False
+
+
+training_config:
+  rec_encoder_loss_weight: 0.2

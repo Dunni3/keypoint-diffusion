@@ -38,14 +38,14 @@ class ReceptorEncoder(nn.Module):
                 out_size = hidden_n_node_feat
 
             self.egnn_convs.append( 
-                EGNNConv(in_size=in_size, hidden_size=hidden_size, out_size=out_size).double() 
+                EGNNConv(in_size=in_size, hidden_size=hidden_size, out_size=out_size)
             )
 
-            self.eqv_keypoint_query_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints, dtype=torch.float64)
-            self.eqv_keypoint_key_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints, dtype=torch.float64)
+            self.eqv_keypoint_query_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints)
+            self.eqv_keypoint_key_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints)
 
-            self.inv_keypoint_query_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints, dtype=torch.float64)
-            self.inv_keypoint_key_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints, dtype=torch.float64)
+            # self.inv_keypoint_query_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints)
+            # self.inv_keypoint_key_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints)
 
     def forward(self, rec_graph: dgl.DGLGraph):
         node_positions = rec_graph.ndata['x_0']
@@ -77,19 +77,24 @@ class ReceptorEncoder(nn.Module):
             kp_pos = eqv_att_weights @ graph.ndata['x'] # (n_keypoints, 3)
             keypoint_positions.append(kp_pos)
 
-            # compute invariant keypoints
-            # TODO: I am computing invariant keypoints in the exact same way, except we use
-            # invariant feature vectors as values instead of equivaraint positions. 
-            # Maybe we should develop a more sophisticated method which 
-            # includes spatial information in the attention matrix. One method would be IPA with rotation frames = I
-            inv_queries = self.inv_keypoint_key_fn(mean_node_feature).view(self.n_keypoints, self.out_n_node_feat) # shape (n_attn_heads, n_node_feautres)
-            inv_keys = self.inv_keypoint_query_fn(graph.ndata['h']).view(-1, self.n_keypoints, self.out_n_node_feat) # (n_nodes, n_attn_heads, n_node_features)
-            inv_att_logits = torch.einsum('ijk,jk->ji', inv_keys, inv_queries) # (n_attn_heads, n_nodes)
-            inv_att_weights = torch.softmax(inv_att_logits, dim=1)
-            kp_feat = inv_att_weights @ graph.ndata['h']
-            keypoint_features.append(kp_feat)
-            
-            # TODO: instead of a second attention mechanism, compute keypoint features by a boltzmann-weighted sum over interatomic distances
+            # in my first attempt, i computed invariant keypoints by a mechanism similar to that used 
+            # for the equivariant keypoints. then i decided on a simpler approach:
+            # each invariant keypoint will be a weighted sum of the learned feature vectors for all receptor atoms
+            # the weights in this weighted sum will soft-maxes over the distance between the key point position and all receptor atoms
+            # the next block of commented code is the first method, and the following un-commented block of code is the second method
 
+            # compute invariant keypoints
+            # inv_queries = self.inv_keypoint_key_fn(mean_node_feature).view(self.n_keypoints, self.out_n_node_feat) # shape (n_attn_heads, n_node_feautres)
+            # inv_keys = self.inv_keypoint_query_fn(graph.ndata['h']).view(-1, self.n_keypoints, self.out_n_node_feat) # (n_nodes, n_attn_heads, n_node_features)
+            # inv_att_logits = torch.einsum('ijk,jk->ji', inv_keys, inv_queries) # (n_attn_heads, n_nodes)
+            # inv_att_weights = torch.softmax(inv_att_logits, dim=1)
+            # kp_feat = inv_att_weights @ graph.ndata['h']
+            # keypoint_features.append(kp_feat)
+
+            # compute distance between keypoints and binding pocket points
+            kp_dist = torch.cdist(kp_pos, graph.ndata['x_0'])
+            kp_feat_weights = torch.softmax(kp_dist, dim=1) # (n_keypoints, n_pocket_atoms)
+            kp_feat = kp_feat_weights @ graph.ndata["h"]
+            keypoint_features.append(kp_feat)
 
         return keypoint_positions, keypoint_features

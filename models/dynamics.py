@@ -20,7 +20,7 @@ class LigRecConv(nn.Module):
         self.hidden_size = hidden_size
         self.out_size = out_size
         self.edge_feat_size = edge_feat_size
-        act_fn = nn.SiLU()
+        act_fn = nn.SiLU
 
         self.edge_types = ["ll", "rl"]
 
@@ -33,15 +33,15 @@ class LigRecConv(nn.Module):
             self.edge_mlp[edge_type] = nn.Sequential(
                 # +1 for the radial feature: ||x_i - x_j||^2
                 nn.Linear(in_size * 2 + edge_feat_size + 1, hidden_size),
-                act_fn,
+                act_fn(),
                 nn.Linear(hidden_size, hidden_size),
-                act_fn,
+                act_fn(),
             )
 
         # \phi_h
         self.node_mlp = nn.Sequential(
             nn.Linear(in_size + hidden_size, hidden_size),
-            act_fn,
+            act_fn(),
             nn.Linear(hidden_size, out_size),
         )
 
@@ -51,9 +51,9 @@ class LigRecConv(nn.Module):
             self.coord_mlp[edge_type] = nn.Sequential(
                 # +1 for the radial feature: ||x_i - x_j||^2
                 nn.Linear(in_size * 2 + edge_feat_size + 1, hidden_size),
-                act_fn,
+                act_fn(),
                 nn.Linear(hidden_size, 1),
-                act_fn,
+                act_fn(),
             )
 
     def message(self, edges):
@@ -113,12 +113,11 @@ class LigRecConv(nn.Module):
             graph.ndata["h"] = node_feat
             # coordinate feature
             graph.ndata["x"] = coord_feat
-
+            
             # edge feature
             if self.edge_feat_size > 0:
                 assert edge_feat is not None, "Edge features must be provided."
                 graph.edata["a"] = edge_feat
-                
 
             # compute displacement vector between nodes for all edges
             # TODO: this is u_sub_v ... should we do v_sub_u? which way is information flowing? does this 
@@ -132,13 +131,11 @@ class LigRecConv(nn.Module):
                     torch.linalg.vector_norm(edges.data['x_diff'], dim=1).unsqueeze(-1)},
                     etype=etype)
 
-
             # normalize displacement vectors to unit length
             for etype in graph.etypes:
                 graph.apply_edges(
                     lambda edges: {'x_diff': edges.data['x_diff'] / (edges.data['dij'] + 1e-9)},
                     etype=etype)
-
 
             # compute messages and store them on every edge
             for etype in graph.etypes:
@@ -148,17 +145,14 @@ class LigRecConv(nn.Module):
             graph.update_all(fn.copy_e("msg_x", "m"), fn.sum("m", "x_neigh"))
             graph.update_all(fn.copy_e("msg_h", "m"), fn.sum("m", "h_neigh"))
 
-
             # get aggregated messages
             h_neigh, x_neigh = graph.ndata["h_neigh"], graph.ndata["x_neigh"]
-
 
             # compute updated features/coordinates
             # note that the receptor features/coordinates are not updated
             node_mlp_input = torch.cat([node_feat['lig'], h_neigh['lig']], dim=-1)
             h = {'lig': node_feat['lig'] + self.node_mlp(node_mlp_input),
                  'rec': node_feat['rec']}
-
 
             x = {'lig': coord_feat['lig'] + x_neigh['lig'],
                  'rec': coord_feat['rec']}
@@ -196,7 +190,7 @@ class LigRecEGNN(nn.Module):
                 layer_out_size = hidden_size
 
             self.conv_layers.append( 
-                LigRecConv(in_size=layer_in_size, hidden_size=layer_hidden_size, out_size=layer_out_size).double() 
+                LigRecConv(in_size=layer_in_size, hidden_size=layer_hidden_size, out_size=layer_out_size)
             )
 
     def forward(self, graph):
@@ -216,18 +210,18 @@ class LigRecEGNN(nn.Module):
 
 class LigRecDynamics(nn.Module):
 
-    def __init__(self, atom_nf, rec_nf, n_layers=4, joint_nf=32, hidden_nf=256, act_fn=nn.SiLU):
+    def __init__(self, atom_nf, rec_nf, n_layers=4, hidden_nf=255, act_fn=nn.SiLU):
         super().__init__()    
 
     
         self.lig_encoder = nn.Sequential(
             nn.Linear(atom_nf, 2 * atom_nf),
             act_fn(),
-            nn.Linear(2 * atom_nf, joint_nf)
+            nn.Linear(2 * atom_nf, hidden_nf)
         )
 
         self.lig_decoder = nn.Sequential(
-            nn.Linear(joint_nf, 2 * atom_nf),
+            nn.Linear(hidden_nf, 2 * atom_nf),
             act_fn(),
             nn.Linear(2 * atom_nf, atom_nf)
         )
@@ -235,11 +229,11 @@ class LigRecDynamics(nn.Module):
         self.rec_encoder = nn.Sequential(
             nn.Linear(rec_nf, 2 * rec_nf),
             act_fn(),
-            nn.Linear(2 * rec_nf, joint_nf)
+            nn.Linear(2 * rec_nf, hidden_nf)
         )
 
-        # we add +1 to the input feature size for the timestep
-        self.egnn = LigRecEGNN(n_layers=n_layers, in_size=joint_nf+1, hidden_size=hidden_nf, out_size=joint_nf)
+        # we add +1 to the feature size for the timestep
+        self.egnn = LigRecEGNN(n_layers=n_layers, in_size=hidden_nf+1, hidden_size=hidden_nf+1, out_size=hidden_nf+1)
 
 
     def forward(self, lig_pos, lig_feat, rec_pos, rec_feat, timestep):
@@ -261,20 +255,33 @@ class LigRecDynamics(nn.Module):
         rec_feat_time = []
         for i in range(len(lig_feat)):
             t_reshaped = timestep[i].repeat(lig_feat[i].shape[0]).view(-1,1)
-            lig_feat_time.append( torch.cat([lig_feat[i], t_reshaped]) )
+            lig_feat_time.append( torch.cat([lig_feat[i], t_reshaped], dim=1) )
 
             t_reshaped = timestep[i].repeat(rec_feat[i].shape[0]).view(-1,1)
-            rec_feat_time.append( torch.cat([rec_feat[i], t_reshaped]) )
+            rec_feat_time.append( torch.cat([rec_feat[i], t_reshaped], dim=1) )
 
         # construct heterograph
-        graph = self.make_graph(lig_pos, lig_feat_time, rec_pos, rec_feat_time)
+        batched_graph = self.make_graph(lig_pos, lig_feat_time, rec_pos, rec_feat_time)
+
+        # check that graph batching simply concats features - it does!
+        # this means we can return the batched eps predictions and then the ligand diffusion model
+        # can simply concat the added noise for input to the loss function
 
         # pass through LigRecEGNN
-        h, x = self.egnn(graph)
+        h, x = self.egnn(batched_graph)
+        
+        # slice off time dimension
+        h_final = h['lig'][:, :-1]
 
-        # decode lig features
+        # decode lig features and substract off original node coordinates from predicted ones
+        # these become our noise predictions, \hat{\epsilon}
+        eps_h = self.lig_decoder(h_final) 
+        eps_x = x['lig'] - batched_graph.nodes["lig"].data["x_0"]
 
-    def make_graph(lig_pos, lig_feat, rec_pos, rec_feat):
+        return eps_h, eps_x
+
+
+    def make_graph(self, lig_pos, lig_feat, rec_pos, rec_feat):
 
         # note that all arguments except timestep are tuples of length batch_size containing
         # the values for each datapoint in the batch

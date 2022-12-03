@@ -45,7 +45,7 @@ def parse_ligand(ligand_path: Path, element_map: Dict[str, int]):
     # get atom positions
     ligand_conformer = ligand.GetConformer()
     atom_positions = ligand_conformer.GetPositions()
-    atom_positions = torch.tensor(atom_positions)
+    atom_positions = torch.tensor(atom_positions).float()
 
     # get atom features
     atom_features = lig_atom_featurizer(ligand, element_map)
@@ -70,8 +70,8 @@ def get_pocket_atoms(rec_atoms: prody.AtomGroup, ligand_atom_positions: torch.Te
     rec_atom_residx = rec_atoms.getResindices()
 
     # convert protein atom positions to pytorch tensor
-    rec_atom_positions = torch.tensor(rec_atom_positions)
-    rec_atom_features = torch.tensor(rec_atom_features)
+    rec_atom_positions = torch.tensor(rec_atom_positions).float()
+    rec_atom_features = torch.tensor(rec_atom_features).float()
 
     # find all protein atoms in padded bounding box
     above_lower_corner = (rec_atom_positions >= lower_corner).all(axis=1)
@@ -142,7 +142,7 @@ def lig_atom_featurizer(ligand, element_map: Dict[str, int]):
     atom_features = np.concatenate([onehot_elements, atom_charges[:, None]], axis=1)
 
     # TODO: determine datatype for torch tensors
-    atom_features = torch.tensor(atom_features)
+    atom_features = torch.tensor(atom_features).float()
 
     return atom_features
 
@@ -171,3 +171,14 @@ def get_ot_loss_weights(ligand: rdkit.Chem.rdchem.Mol, pdb_path: Path, pocket_at
     # i tried to implement this using rdkit but it didn't work
     # i need to implement the FF calculations using openmm, but that will take time that I simply don't have
     raise NotImplementedError
+
+def center_complex(receptor_graph: dgl.DGLGraph, ligand_atom_positions: torch.Tensor):
+
+    
+    lig_com = ligand_atom_positions.mean(dim=0, keepdim=True)
+    
+    receptor_graph.ndata["x_0"] = receptor_graph.ndata["x_0"] - lig_com
+
+    new_lig_pos = ligand_atom_positions - lig_com
+
+    return receptor_graph, new_lig_pos
