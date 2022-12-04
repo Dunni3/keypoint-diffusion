@@ -133,14 +133,13 @@ class LigRecConv(nn.Module):
 
             # compute euclidean distance across all edges
             for etype in graph.etypes:
-                graph.apply_edges(
-                    lambda edges: {'dij': 
-                    torch.linalg.vector_norm(edges.data['x_diff'], dim=1).unsqueeze(-1)},
-                    etype=etype)
+                graph.apply_edges(self.compute_dij, etype=etype)
 
             # normalize displacement vectors to unit length
             for etype in graph.etypes:
-                graph.apply_edges(self.compute_dij, etype=etype)
+                graph.apply_edges(
+                    lambda edges: {'x_diff': edges.data['x_diff'] / (edges.data['dij'] + 1e-9)},
+                    etype=etype)
 
             # compute messages and store them on every edge
             for etype in graph.etypes:

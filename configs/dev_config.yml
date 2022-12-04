@@ -10,14 +10,14 @@ dataset_config:
   pocket_cutoff: 4 # angstroms
   receptor_k: 3
   ligand_k: 3
-  dataset_size: 0 # used only for debugging
+  dataset_size: 8 # used only for debugging
   use_boltzmann_ot: False
 
 rec_encoder_config:
   n_keypoints: 10
   n_egnn_convs: 4
   hidden_n_node_feat: 256 
-  out_n_node_feat: 32
+  out_n_node_feat: 128
 
 diffusion_config:
   n_timesteps: 1000
@@ -32,9 +32,9 @@ training_config:
   learning_rate: 1.0e-4
   weight_decay: 0.0
   clip_grad: False
-  max_norm: 1
+  max_norm: 0.2
   epochs: 300
-  batch_size: 1
+  batch_size: 3
   test_interval: 1
   save_interval: 1
   metrics_file: 'metrics.pkl'

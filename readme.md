@@ -4,11 +4,13 @@ python data_processing/crossdocked/process_crossdocked.py --config=configs/dev_c
 ```
 
 todo:
-1. create optimizer
-    - gradient clipping?
-    - exponential weight decay?
-2. loss.backwards, optimizer.step
+1. script arguments for recording a training run
+    - specify output dir
+    - give the training run a name
+    - specify write/test intervals
+    - also, we need to implement the test loop 
+2. remove hydrogens from dataset
 3. record train and test loss, save/load model weights
-4. script arguments for num_epochs, batch_size
-5. code for sampling using trained model
-6. 
+5. code for sampling a molecule, computing metrics?
+6. process dataset for diffsbdd
+7. train diffsbdd
