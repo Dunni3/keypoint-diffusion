@@ -7,7 +7,7 @@ from typing import List
 
 class ReceptorEncoder(nn.Module):
 
-    def __init__(self, n_egnn_convs: int, n_keypoints: int, in_n_node_feat: int, hidden_n_node_feat: int, out_n_node_feat: int):
+    def __init__(self, n_egnn_convs: int = 6, n_keypoints: int = 10, in_n_node_feat: int = 13, hidden_n_node_feat: int = 256, out_n_node_feat: int = 32):
         super().__init__()
 
         self.n_egnn_convs = n_egnn_convs
@@ -41,6 +41,13 @@ class ReceptorEncoder(nn.Module):
                 EGNNConv(in_size=in_size, hidden_size=hidden_size, out_size=out_size)
             )
 
+            self.egnn_convs = nn.ModuleList(self.egnn_convs)
+
+            self.node_feat_embedding = nn.Sequential(
+                nn.Linear(out_n_node_feat, out_n_node_feat),
+                nn.LeakyReLU()
+            )
+
             self.eqv_keypoint_query_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints)
             self.eqv_keypoint_key_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints)
 
@@ -69,7 +76,8 @@ class ReceptorEncoder(nn.Module):
         for graph_idx, graph in enumerate(dgl.unbatch(rec_graph)):
 
             # compute equivariant keypoints
-            mean_node_feature = dgl.mean_nodes(graph, feat='h').view(1, self.out_n_node_feat) # shape (1, n_node_features)
+            # embedded_node_features = self.node_feat_embedding(graph.ndata['h']) # shape (n_pocket_atoms, n_node_features)
+            mean_node_feature = self.node_feat_embedding(graph.ndata['h']).mean(dim=0) # shape (1, n_node_features)
             eqv_queries = self.eqv_keypoint_key_fn(mean_node_feature).view(self.n_keypoints, self.out_n_node_feat) # shape (n_attn_heads, n_node_feautres)
             eqv_keys = self.eqv_keypoint_query_fn(graph.ndata['h']).view(-1, self.n_keypoints, self.out_n_node_feat) # (n_nodes, n_attn_heads, n_node_features)
             eqv_att_logits = torch.einsum('ijk,jk->ji', eqv_keys, eqv_queries) # (n_attn_heads, n_nodes)

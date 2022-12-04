@@ -13,14 +13,16 @@ class LigRecConv(nn.Module):
     # original code: https://github.com/dmlc/dgl/blob/76bb54044eb387e9e3009bc169e93d66aa004a74/python/dgl/nn/pytorch/conv/egnnconv.py
     # I have extended the EGNN graph conv layer to operate on heterogeneous graphs containing containing receptor and ligand nodes
 
-    def __init__(self, in_size, hidden_size, out_size, edge_feat_size=0):
+    def __init__(self, in_size, hidden_size, out_size, edge_feat_size=0, coords_range=10):
         super().__init__()
 
         self.in_size = in_size
         self.hidden_size = hidden_size
         self.out_size = out_size
         self.edge_feat_size = edge_feat_size
-        act_fn = nn.SiLU
+        act_fn = nn.SiLU()
+
+        self.coords_range = coords_range
 
         self.edge_types = ["ll", "rl"]
 
@@ -28,33 +30,38 @@ class LigRecConv(nn.Module):
         # TODO: what activation function do they use in Hoogeboom? which should i use?
 
         # \phi_e^t
-        self.edge_mlp: Dict[str, nn.Sequential] = {}
+        self.edge_mlp = {}
         for edge_type in self.edge_types:
             self.edge_mlp[edge_type] = nn.Sequential(
                 # +1 for the radial feature: ||x_i - x_j||^2
                 nn.Linear(in_size * 2 + edge_feat_size + 1, hidden_size),
-                act_fn(),
+                act_fn,
                 nn.Linear(hidden_size, hidden_size),
-                act_fn(),
+                act_fn,
             )
+        self.edge_mlp = nn.ModuleDict(self.edge_mlp)
 
         # \phi_h
         self.node_mlp = nn.Sequential(
             nn.Linear(in_size + hidden_size, hidden_size),
-            act_fn(),
+            act_fn,
             nn.Linear(hidden_size, out_size),
         )
 
         # \phi_x^t
-        self.coord_mlp: Dict[str, nn.Sequential] = {}
+        self.coord_mlp = {}
         for edge_type in self.edge_types:
+            layer = nn.Linear(hidden_size, 1, bias=False)
+            torch.nn.init.xavier_uniform_(layer.weight, gain=0.001)
             self.coord_mlp[edge_type] = nn.Sequential(
                 # +1 for the radial feature: ||x_i - x_j||^2
                 nn.Linear(in_size * 2 + edge_feat_size + 1, hidden_size),
-                act_fn(),
-                nn.Linear(hidden_size, 1),
-                act_fn(),
+                act_fn,
+                nn.Linear(hidden_size, hidden_size),
+                act_fn,
+                layer
             )
+        self.coord_mlp = nn.ModuleDict(self.coord_mlp)
 
     def message(self, edges):
         """message function for EGNN"""
@@ -81,7 +88,7 @@ class LigRecConv(nn.Module):
         msg_h = self.edge_mlp[edge_type](f)
 
         # compute coordinate messages
-        msg_x = self.coord_mlp[edge_type](f) * edges.data["x_diff"]
+        msg_x = torch.tanh( self.coord_mlp[edge_type](f) )* edges.data["x_diff"] * self.coords_range
 
         return {"msg_x": msg_x, "msg_h": msg_h}
 
@@ -133,9 +140,7 @@ class LigRecConv(nn.Module):
 
             # normalize displacement vectors to unit length
             for etype in graph.etypes:
-                graph.apply_edges(
-                    lambda edges: {'x_diff': edges.data['x_diff'] / (edges.data['dij'] + 1e-9)},
-                    etype=etype)
+                graph.apply_edges(self.compute_dij, etype=etype)
 
             # compute messages and store them on every edge
             for etype in graph.etypes:
@@ -159,6 +164,16 @@ class LigRecConv(nn.Module):
 
             return h, x
 
+    def compute_dij(self, edges):
+        dij = torch.linalg.vector_norm(edges.data['x_diff'], dim=1).unsqueeze(-1)
+        # when the distance between two points is 0 (or very small)
+        # the backwards pass through the comptuation of the distance
+        # requires a backwards pass through torch.sqrt() which produces nan gradients
+        # with torch.no_grad():
+        #     dij.clamp_(min=1e-2)
+        return {'dij': dij}
+
+
 
 class LigRecEGNN(nn.Module):
 
@@ -170,7 +185,7 @@ class LigRecEGNN(nn.Module):
         self.hidden_size = hidden_size
         self.out_size = out_size
 
-        self.conv_layers: List[LigRecConv] = []
+        self.conv_layers = []
         for i in range(self.n_layers):
             if i == 0 and self.n_layers == 1: # first and only convolutional layer
                 layer_in_size = in_size
@@ -192,6 +207,8 @@ class LigRecEGNN(nn.Module):
             self.conv_layers.append( 
                 LigRecConv(in_size=layer_in_size, hidden_size=layer_hidden_size, out_size=layer_out_size)
             )
+
+            self.conv_layers = nn.ModuleList(self.conv_layers)
 
     def forward(self, graph):
 
@@ -287,12 +304,13 @@ class LigRecDynamics(nn.Module):
         # the values for each datapoint in the batch
 
         k_rl = 4 # receptor keypoints have edges to the k_rl nearest ligand atoms
+        device = lig_pos[0].device
         
         graphs = []
         for i in range(len(lig_pos)):
 
             # create graph containing just ligand-ligand edges
-            lig_graph = dgl.knn_graph(lig_pos[i], k=4, algorithm="bruteforce-blas", dist='euclidean')
+            lig_graph = dgl.knn_graph(lig_pos[i], k=4, algorithm="bruteforce-blas", dist='euclidean', exclude_self=True).to(device)
 
             # find edges for rec -> lig conections
             rl_dist = torch.cdist(rec_pos[i], lig_pos[i]) # distance between every receptor keypoint and every ligand atom
@@ -300,7 +318,7 @@ class LigRecDynamics(nn.Module):
 
             # get list of rec -> ligand edges
             n_rec_nodes = rec_pos[i].shape[0]
-            src_nodes = torch.repeat_interleave(torch.arange(n_rec_nodes), repeats=k_rl)
+            src_nodes = torch.repeat_interleave(torch.arange(n_rec_nodes), repeats=k_rl).to(device)
             dst_nodes = topk_idx.flatten()
 
             # create heterograph

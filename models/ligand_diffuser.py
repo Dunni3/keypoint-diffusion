@@ -3,38 +3,53 @@ import torch
 import numpy as np
 
 from models.dynamics import LigRecDynamics
+from models.receptor_encoder import ReceptorEncoder
+from losses.rec_encoder_loss import ReceptorEncoderLoss
 
 class LigandDiffuser(nn.Module):
 
-    def __init__(self, atom_nf, rec_nf, n_timesteps: int = 1000):
+    def __init__(self, atom_nf, rec_nf, rec_encoder_config, rec_encoder_loss_config, 
+        n_timesteps: int = 1000,
+        n_layers=6,
+        hidden_nf=256):
         super().__init__()
 
         # TODO: add default keyword arguments from LigRecDynamics to config file
         self.n_timesteps = n_timesteps
         self.gamma = PredefinedNoiseSchedule(noise_schedule='polynomial_2', timesteps=n_timesteps, precision=1e-4)
-        self.dynamics = LigRecDynamics(atom_nf, rec_nf)
+        self.dynamics = LigRecDynamics(atom_nf, rec_nf, n_layers=n_layers, hidden_nf=hidden_nf)
 
-    def forward(self, lig_atom_positions, lig_atom_features, rec_pos, rec_feat):
+        self.rec_encoder = ReceptorEncoder(**rec_encoder_config)
+        self.rec_encoder_loss_fn = ReceptorEncoderLoss(**rec_encoder_loss_config)
+
+    def forward(self, rec_graphs, lig_atom_positions, lig_atom_features):
         """Computes loss."""
-        # input: ligand atom positions/features + rec atom or keypoint positions/features
+        # TODO: normalize values. specifically, atom features are normalized by a value of 4
 
         batch_size = len(lig_atom_positions)
+        device = lig_atom_positions[0].device
+
+        # encode the receptor
+        rec_pos, rec_feat = self.rec_encoder(rec_graphs)
+
+        # compute receptor encoding loss
+        ot_loss = self.rec_encoder_loss_fn(rec_pos, rec_graphs)
 
         # sample timepoints for each item in the batch
-        t = torch.randint(0, self.n_timesteps, size=(len(lig_atom_positions),)).float() # timesteps
+        t = torch.randint(1, self.n_timesteps, size=(len(lig_atom_positions),), device=device).float() # timesteps
         t = t / self.n_timesteps
 
         # sample epsilon for each ligand
         eps_batch = []
         for i in range(batch_size):
             eps = {
-                'h': torch.randn(lig_atom_features[i].shape),
-                'x': self.sample_com_free(lig_atom_positions[i].shape)
+                'h': torch.randn(lig_atom_features[i].shape, device=device),
+                'x': self.sample_com_free(lig_atom_positions[i].shape, device=device)
             }
             eps_batch.append(eps)
         
         # construct noisy versions of the ligand
-        gamma_t = self.gamma(t)
+        gamma_t = self.gamma(t).to(device=device)
         zt_pos, zt_feat = self.noised_representation(lig_atom_positions, lig_atom_features, eps_batch, gamma_t)
 
         # predict the noise that was added
@@ -45,14 +60,15 @@ class LigandDiffuser(nn.Module):
         eps_h = torch.concat([ eps_dict['h'] for eps_dict in eps_batch ], dim=0)
 
         # compute l2 loss on noise
-        x_loss = (eps_x - eps_x_pred).square().sum()
-        h_loss = (eps_h - eps_h_pred).square().sum()
+        x_loss = (eps_x - eps_x_pred).square().sum() / eps_x.numel()
+        h_loss = (eps_h - eps_h_pred).square().sum() / eps_h.numel()
         l2_loss = x_loss + h_loss
+        l2_loss = l2_loss / batch_size
 
-        return l2_loss
+        return l2_loss, ot_loss
 
-    def sample_com_free(self, shape):
-        eps = torch.randn(shape)
+    def sample_com_free(self, shape, device):
+        eps = torch.randn(shape, device=device)
         eps = eps - eps.mean()
         return eps
 

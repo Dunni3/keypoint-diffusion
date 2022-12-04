@@ -161,7 +161,7 @@ def onehot_encode_elements(atom_elements: Iterable, element_map: Dict[str, int])
     return onehot_elements
 
 def build_receptor_graph(atom_positions: torch.Tensor, atom_features: torch.Tensor, k: int, edge_algorithm: str) -> dgl.DGLGraph:
-    g = dgl.knn_graph(atom_positions, k=k, algorithm=edge_algorithm, dist='euclidean')
+    g = dgl.knn_graph(atom_positions, k=k, algorithm=edge_algorithm, dist='euclidean', exclude_self=True)
     g.ndata['x_0'] = atom_positions
     g.ndata['h_0'] = atom_features
     return g

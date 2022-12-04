@@ -1,5 +1,6 @@
 from torch.nn.modules.loss import _Loss
 import torch
+import torch.nn as nn
 import dgl
 import ot
 from typing import List
@@ -15,7 +16,7 @@ def compute_ot_emd(cost_mat, device):
     ot_dist = torch.sum(ot_mat_attached * cost_mat)
     return ot_dist, ot_mat_attached
 
-class ReceptorEncoderLoss(_Loss):
+class ReceptorEncoderLoss(nn.Module):
 
     def __init__(self, use_boltzmann_weights=False):
         self.use_boltzmann_weights = use_boltzmann_weights

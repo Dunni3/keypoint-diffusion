@@ -4,23 +4,37 @@ dataset_location:
 
 dataset_config:
   rec_elements: ['H', 'C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'Mg', 'Mn', 'Zn', 'Ca', 'Fe', 'B']
-  lig_elements: ['H', 'C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'Mg', 'Mn', 'Zn', 'Ca', 'Fe', 'B']
+  lig_elements: ['H', 'C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'B']
   pocket_edge_algorithm: 'bruteforce-blas'
   lig_box_padding: 6 # angstroms
   pocket_cutoff: 4 # angstroms
   receptor_k: 3
   ligand_k: 3
-  dataset_size: 5 # used only for debugging
+  dataset_size: 0 # used only for debugging
   use_boltzmann_ot: False
 
 rec_encoder_config:
   n_keypoints: 10
-  hidden_n_node_feat: 32 
+  n_egnn_convs: 4
+  hidden_n_node_feat: 256 
   out_n_node_feat: 32
+
+diffusion_config:
+  n_timesteps: 1000
+  n_layers: 6
+  hidden_nf: 256
 
 rec_encoder_loss_config:
   use_boltzmann_weights: False
 
-
 training_config:
-  rec_encoder_loss_weight: 0.2
+  rec_encoder_loss_weight: 0.4
+  learning_rate: 1.0e-4
+  weight_decay: 0.0
+  clip_grad: False
+  max_norm: 1
+  epochs: 300
+  batch_size: 1
+  test_interval: 1
+  save_interval: 1
+  metrics_file: 'metrics.pkl'
