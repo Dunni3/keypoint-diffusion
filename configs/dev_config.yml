@@ -1,5 +1,5 @@
 experiment:
-  name: dev_weightdecay
+  name: dev
   results_dir: experiments/
 
 dataset_location:
