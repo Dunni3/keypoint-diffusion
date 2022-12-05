@@ -176,7 +176,7 @@ def main():
 
             loss.backward()
             if args['training_config']['clip_grad']:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args['training_config']['max_norm'])
+                torch.nn.utils.clip_grad_value_(model.parameters(), clip_value=args['training_config']['clip_value'])
             optimizer.step()
 
             # save the model if necessary

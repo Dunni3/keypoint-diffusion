@@ -37,7 +37,7 @@ training_config:
   learning_rate: 1.0e-4
   weight_decay: 0.01
   clip_grad: False
-  max_norm: 0.2
+  clip_value: 1
   epochs: 3
   batch_size: 32
   test_interval: 100 # measured in iterations (an iteration is one forwards/backwards pass in the training loop)
