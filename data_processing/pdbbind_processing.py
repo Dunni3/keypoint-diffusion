@@ -10,7 +10,10 @@ import dgl
 
 from typing import Iterable, Union, List, Dict
 
-def parse_protein(pdb_path: Path) -> prody.AtomGroup:
+class Unparsable(Exception):
+    pass
+
+def parse_protein(pdb_path: Path, remove_hydrogen=False) -> prody.AtomGroup:
     """Convert pdb file to prody AtomGroup object.
 
     Args:
@@ -19,11 +22,26 @@ def parse_protein(pdb_path: Path) -> prody.AtomGroup:
     Returns:
         prody.AtomGroup: All of the atoms in the pdb file.
     """
-    protein_atoms = prody.parsePDB(str(pdb_path))
+    pdb_atoms = prody.parsePDB(str(pdb_path))
+
+    # on rare occasions, pdb_atoms can be None
+    # here is one such example: /home/ian/projects/mol_diffusion/DiffSBDD/data/crossdocked_pocket10/RDM1_ARATH_7_163_0/2q3t_A_rec_2q3t_cps_lig_tt_docked_262_pocket10.pdb
+    # for now, we will skip these
+    if pdb_atoms is None:
+        raise Unparsable
+
+    # exclude certain entities
+    if remove_hydrogen:
+        selection_str = 'not water and not hydrogen'
+    else:
+        selection_str = 'not water'
+
+    protein_atoms = pdb_atoms.select(selection_str)
+
     return protein_atoms
 
 
-def parse_ligand(ligand_path: Path, element_map: Dict[str, int]):
+def parse_ligand(ligand_path: Path, element_map: Dict[str, int], remove_hydrogen=False, include_charges=False):
     """Load ligand file into rdkit, retrieve atom features and positions.
 
     Args:
@@ -36,7 +54,7 @@ def parse_ligand(ligand_path: Path, element_map: Dict[str, int]):
         atom_charges: tbd
     """
     # read ligand into a rdkit mol
-    suppl = rdkit.Chem.SDMolSupplier(str(ligand_path), sanitize=False, removeHs=False)
+    suppl = rdkit.Chem.SDMolSupplier(str(ligand_path), sanitize=False, removeHs=remove_hydrogen)
     ligands = list(suppl)
     if len(ligands) > 1:
         raise NotImplementedError('Multiple ligands found. Code is not written to handle multiple ligands.')
@@ -47,12 +65,12 @@ def parse_ligand(ligand_path: Path, element_map: Dict[str, int]):
     atom_positions = ligand_conformer.GetPositions()
     atom_positions = torch.tensor(atom_positions).float()
 
-    # get atom features
-    atom_features = lig_atom_featurizer(ligand, element_map)
+    atom_features = lig_atom_featurizer(ligand, element_map, include_charges=include_charges)
     
     return ligand, atom_positions, atom_features
 
-def get_pocket_atoms(rec_atoms: prody.AtomGroup, ligand_atom_positions: torch.Tensor, box_padding: Union[int, float], pocket_cutoff: Union[int, float], element_map: Dict[str, int]):
+def get_pocket_atoms(rec_atoms: prody.Selection, ligand_atom_positions: torch.Tensor, box_padding: Union[int, float], 
+        pocket_cutoff: Union[int, float], element_map: Dict[str, int]):
     # note that pocket_cutoff is in units of angstroms
 
     # get bounding box of ligand
@@ -63,7 +81,7 @@ def get_pocket_atoms(rec_atoms: prody.AtomGroup, ligand_atom_positions: torch.Te
     lower_corner -= box_padding
     upper_corner += box_padding
 
-    # get positions, features, a residue indicies for all protein atoms
+    # get positions, features, and residue indicies for all protein atoms
     # TODO: fix parse_protein so that it selects the *atoms we actually want* from the protein structure (waters? metals? etc.)... i.e., selectiion logic will be contained to parse_protein
     rec_atom_positions = rec_atoms.getCoords()
     rec_atom_features = rec_atom_featurizer(rec_atoms, element_map)
@@ -107,7 +125,7 @@ def get_pocket_atoms(rec_atoms: prody.AtomGroup, ligand_atom_positions: torch.Te
     return pocket_atom_positions, pocket_atom_features, byres_pocket_atom_mask
 
 
-def rec_atom_featurizer(rec_atoms: prody.AtomGroup, element_map: Dict[str, int]):
+def rec_atom_featurizer(rec_atoms: prody.AtomGroup, element_map: Dict[str, int], include_charges=False):
     protein_atom_elements: np.ndarray = rec_atoms.getElements()
     protein_atom_charges: np.ndarray = rec_atoms.getCharges().astype(int)
     # TODO: should atom charges be integers?
@@ -115,18 +133,25 @@ def rec_atom_featurizer(rec_atoms: prody.AtomGroup, element_map: Dict[str, int])
     # one-hot encode atom elements
     onehot_elements = onehot_encode_elements(protein_atom_elements, element_map)
 
-    # concatenate atom elements and charges
-    protein_atom_features = np.concatenate([onehot_elements, protein_atom_charges[:, None]], axis=1)
+    # concatenate features
+    if include_charges:
+        protein_atom_features = [onehot_elements, protein_atom_charges[:, None]]
+    else:
+        protein_atom_features = [onehot_elements]
+
+    protein_atom_features = np.concatenate(protein_atom_features, axis=1)
 
     return protein_atom_features
 
-def lig_atom_featurizer(ligand, element_map: Dict[str, int]):
+def lig_atom_featurizer(ligand, element_map: Dict[str, int], include_charges=False):
     atom_elements = []
     atom_charges = []
     # TODO: do i need to explicitly compute atomic charges?
     for atom in ligand.GetAtoms():
         atom_elements.append(atom.GetSymbol())
-        atom_charges.append(atom.GetFormalCharge()) # equibind code calls ComputeGasteigerCharges(mol), not sure why/if necessary
+
+        if include_charges:
+            atom_charges.append(atom.GetFormalCharge()) # equibind code calls ComputeGasteigerCharges(mol), not sure why/if necessary
 
     # convert numpy arrays to torch tensors
     # TODO: think about how we are returning atom features. the diffusion model formulation
@@ -136,12 +161,16 @@ def lig_atom_featurizer(ligand, element_map: Dict[str, int]):
     onehot_elements = onehot_encode_elements(atom_elements, element_map)
 
     # convert charges to numpy array
-    atom_charges = np.asarray(atom_charges, dtype=int)
+    if include_charges:
+        atom_charges = np.asarray(atom_charges, dtype=int)
 
-    # concatenate atom elements and charges
-    atom_features = np.concatenate([onehot_elements, atom_charges[:, None]], axis=1)
+    # concatenate atom elements and charges, then convert the feature array to a pytorch tensor
+    if include_charges:
+        atom_features = [onehot_elements, atom_charges[:, None]]
+    else:
+        atom_features = [onehot_elements]
 
-    # TODO: determine datatype for torch tensors
+    atom_features = np.concatenate(atom_features, axis=1)
     atom_features = torch.tensor(atom_features).float()
 
     return atom_features
@@ -152,6 +181,7 @@ def onehot_encode_elements(atom_elements: Iterable, element_map: Dict[str, int])
         try:
             return element_map[element_str]
         except KeyError:
+            # print(f'other element found: {element_str}')
             return element_map['other']
 
     element_idxs = np.fromiter((element_to_idx(element) for element in atom_elements), int)

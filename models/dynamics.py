@@ -252,7 +252,7 @@ class LigRecDynamics(nn.Module):
         self.egnn = LigRecEGNN(n_layers=n_layers, in_size=hidden_nf+1, hidden_size=hidden_nf+1, out_size=hidden_nf+1)
 
 
-    def forward(self, lig_pos, lig_feat, rec_pos, rec_feat, timestep):
+    def forward(self, lig_pos, lig_feat, rec_pos, rec_feat, timestep, unbatch_eps=False):
         # inputs: ligand/receptor positions/features, timestep
         # outputs: predicted noise
 
@@ -294,6 +294,18 @@ class LigRecDynamics(nn.Module):
         eps_h = self.lig_decoder(h_final) 
         eps_x = x['lig'] - batched_graph.nodes["lig"].data["x_0"]
 
+        # unbatch noise estimates - this is necessary when sampling because
+        # we are going to use these noise estimates to denoise the input data.
+        # during training, we just compute the l2 loss over all the predicted noise values
+        # so we can deal with all of the noise predictions being lumped into one tensor
+        if unbatch_eps:
+            batched_graph.nodes["lig"].data["eps_h"] = eps_h
+            batched_graph.nodes["lig"].data["eps_x"] = eps_x
+
+            unbatched_graphs = dgl.unbatch(batched_graph)
+            eps_h = [ g.nodes['lig'].data['eps_h'] for g in unbatched_graphs ]
+            eps_x = [ g.nodes['lig'].data['eps_x'] for g in unbatched_graphs ]
+ 
         return eps_h, eps_x
 
 

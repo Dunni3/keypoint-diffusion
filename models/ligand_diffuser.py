@@ -1,6 +1,9 @@
 import torch.nn as nn
 import torch
 import numpy as np
+from typing import List
+import dgl
+import torch.nn.functional as fn
 
 from models.dynamics import LigRecDynamics
 from models.receptor_encoder import ReceptorEncoder
@@ -13,6 +16,9 @@ class LigandDiffuser(nn.Module):
         n_layers=6,
         hidden_nf=256):
         super().__init__()
+
+        self.n_lig_features = atom_nf
+        self.n_kp_feat = rec_nf
 
         # TODO: add default keyword arguments from LigRecDynamics to config file
         self.n_timesteps = n_timesteps
@@ -36,7 +42,7 @@ class LigandDiffuser(nn.Module):
         ot_loss = self.rec_encoder_loss_fn(rec_pos, rec_graphs)
 
         # sample timepoints for each item in the batch
-        t = torch.randint(1, self.n_timesteps, size=(len(lig_atom_positions),), device=device).float() # timesteps
+        t = torch.randint(0, self.n_timesteps, size=(len(lig_atom_positions),), device=device).float() # timesteps
         t = t / self.n_timesteps
 
         # sample epsilon for each ligand
@@ -63,7 +69,7 @@ class LigandDiffuser(nn.Module):
         x_loss = (eps_x - eps_x_pred).square().sum() / eps_x.numel()
         h_loss = (eps_h - eps_h_pred).square().sum() / eps_h.numel()
         l2_loss = x_loss + h_loss
-        l2_loss = l2_loss / batch_size
+        l2_loss = l2_loss
 
         return l2_loss, ot_loss
 
@@ -91,6 +97,107 @@ class LigandDiffuser(nn.Module):
         """Computes alpha given gamma."""
         return torch.sqrt(torch.sigmoid(-gamma))
 
+    def sigma_and_alpha_t_given_s(self, gamma_t, gamma_s):
+        # this function is almost entirely copied from DiffSBDD
+
+        sigma2_t_given_s = -torch.expm1(fn.softplus(gamma_s) - fn.softplus(gamma_t))
+
+        log_alpha2_t = fn.logsigmoid(-gamma_t)
+        log_alpha2_s = fn.logsigmoid(-gamma_s)
+        log_alpha2_t_given_s = log_alpha2_t - log_alpha2_s
+        alpha_t_given_s = torch.exp(0.5 * log_alpha2_t_given_s)
+
+        sigma_t_given_s = torch.sqrt(sigma2_t_given_s)
+
+        return sigma2_t_given_s, sigma_t_given_s, alpha_t_given_s
+
+
+    @torch.no_grad()
+    def sample_given_pocket(self, rec_graph: dgl.DGLGraph, n_lig_atoms: torch.Tensor):
+
+        device = self.device
+        n_samples = len(n_lig_atoms)
+
+        # encode the receptor
+        rec_pos, rec_feat = self.rec_encoder(rec_graph)
+
+        # copy the receptor encoding so a separate graph can be made for each ligand
+        rec_pos = [ rec_pos[0].copy() for _ in range(n_samples) ]
+        rec_feat = [ rec_feat[0].copy() for _ in range(n_samples) ]
+
+        # sample initial ligand positions/features
+        lig_pos, lig_feat = [], []
+        for i in range(n_samples):
+            lig_pos.append(self.sample_com_free(shape=(n_lig_atoms[i], 3), device=device))
+            lig_feat.append(torch.randn((n_lig_atoms[i], self.n_lig_features), device=device))
+
+        # TODO: note that at the time of writing this, I am only sampling from receptors which have been preprocessed
+        # by my process_crossdocked.py script. Specifically, this means that all receptors are positioned such that
+        # the ligand COM is at 0. This is why we can sample initial ligand positions using the standard normal.
+        # We will have to do something different in the future, as I think this gives it a weird bias, and to make this code
+        # so that you can sample any given pocket no matter where the coordinates are
+        # in other words, this is an assumption of the code in this function that i would like to not rely on in the future
+
+        # Iteratively sample p(z_s | z_t) for t = 1, ..., T, with s = t - 1.
+        for s in reversed(range(0, self.n_timesteps)):
+            s_arr = torch.full(size=(n_samples,), fill_value=s, device=device)
+            t_arr = s_arr + 1
+            s_arr = s_arr / self.n_timesteps
+            t_arr = t_arr / self.n_timesteps
+
+            lig_feat, lig_pos = self.sample_p_zs_given_zt(s_arr, t_arr, rec_pos, rec_feat, lig_pos, lig_feat)
+
+
+        lig_element_idxs = [ torch.argmax(lig_feat_i, dim=1) for lig_feat_i in lig_feat ]
+
+        return lig_pos, lig_element_idxs
+
+    def sample_p_zs_given_zt(self, s, t, rec_pos: List[torch.Tensor], rec_feat: List[torch.Tensor], zt_pos: List[torch.Tensor], zt_feat: List[torch.Tensor]):
+
+        n_samples = len(s)
+        device = rec_pos[0].device
+
+        # compute the alpha and sigma terms that define p(z_s | z_t)
+        gamma_s = self.gamma(s)
+        gamma_t = self.gamma(t)
+
+        sigma2_t_given_s, sigma_t_given_s, alpha_t_given_s = self.sigma_and_alpha_t_given_s(gamma_t, gamma_s)
+        sigma_s = self.sigma(gamma_s)
+        sigma_t = self.sigma(gamma_t)
+
+        # predict the noise that we should remove from this example, epsilon
+        # they will each be lists containing the epsilon tensors for each ligand
+        eps_h, eps_x = self.dynamics(zt_pos, zt_feat, rec_pos, rec_feat, t, unbatch_eps=True)
+
+        var_terms = sigma2_t_given_s / alpha_t_given_s / sigma_t
+
+        # compute the mean (mu) for positions/features of the distribution p(z_s | z_t)
+        # this is essentially our approximation of the completely denoised ligand i think?
+        # i think that's not quite correct but i think we COULD formulate sampling this way
+        # -- this is how sampling is conventionally formulated for diffusion models IIRC
+        # not sure why the authors settled on the alternative formulation
+        mu_pos = []
+        mu_feat = []
+        for i in range(n_samples):
+            mu_pos_i = zt_pos[i]/alpha_t_given_s[i] - var_terms[i]*eps_x[i]
+            mu_feat_i = zt_feat[i]/alpha_t_given_s[i] - var_terms[i]*eps_h[i]
+
+            mu_pos.append(mu_pos_i)
+            mu_feat.append(mu_feat_i)
+        
+        # Compute sigma for p(zs | zt)
+        sigma = sigma_t_given_s * sigma_s / sigma_t
+
+        # sample zs given the mu and sigma we just computed
+        zs_pos = []
+        zs_feat = []
+        for i in range(n_samples):
+            pos_noise = self.sample_com_free(shape=zt_pos[i].shape, device=device)
+            feat_noise = torch.randn(zt_feat[i].shape, device=device)
+            zs_pos.append( mu_pos[i] + sigma[i]*pos_noise )
+            zs_feat.append(mu_feat[i] + sigma[i]*feat_noise)
+
+        return zs_feat, zs_pos
 
 
 

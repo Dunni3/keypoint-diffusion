@@ -13,7 +13,7 @@ from data_processing.pdbbind_processing import (build_receptor_graph,
                                                 get_pocket_atoms, parse_ligand,
                                                 parse_protein, get_ot_loss_weights)
 
-# TODO: figure out what ligand atom elements we whould actually support. We don't really need to include the metals do we?
+# TODO: figure out what ligand atom elements we would/should actually support. We don't really need to include the metals do we?
 
 class CrossDockedDataset(dgl.data.DGLDataset):
 

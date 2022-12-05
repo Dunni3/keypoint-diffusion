@@ -1,23 +1,28 @@
+experiment:
+  name: dev_weightdecay
+  results_dir: experiments/
+
 dataset_location:
   train: 'data/crossdock_processed/train'
   test: 'data/crossdock_processed/test'
 
 dataset_config:
-  rec_elements: ['H', 'C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'Mg', 'Mn', 'Zn', 'Ca', 'Fe', 'B']
-  lig_elements: ['H', 'C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'B']
+  rec_elements: ['C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'Mg', 'Mn', 'Zn', 'Ca', 'Fe', 'B']
+  lig_elements: ['C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'B']
+  remove_hydrogen: True
   pocket_edge_algorithm: 'bruteforce-blas'
-  lig_box_padding: 6 # angstroms
-  pocket_cutoff: 4 # angstroms
-  receptor_k: 3
+  lig_box_padding: 8 # angstroms
+  pocket_cutoff: 5 # angstroms
+  receptor_k: 5
   ligand_k: 3
-  dataset_size: 8 # used only for debugging
+  dataset_size: 50000 # 8 # used only for debugging
   use_boltzmann_ot: False
 
 rec_encoder_config:
-  n_keypoints: 10
-  n_egnn_convs: 4
+  n_keypoints: 20
+  n_egnn_convs: 6
   hidden_n_node_feat: 256 
-  out_n_node_feat: 128
+  out_n_node_feat: 256
 
 diffusion_config:
   n_timesteps: 1000
@@ -28,13 +33,14 @@ rec_encoder_loss_config:
   use_boltzmann_weights: False
 
 training_config:
-  rec_encoder_loss_weight: 0.4
+  rec_encoder_loss_weight: 0.1
   learning_rate: 1.0e-4
-  weight_decay: 0.0
+  weight_decay: 0.01
   clip_grad: False
   max_norm: 0.2
-  epochs: 300
-  batch_size: 3
-  test_interval: 1
-  save_interval: 1
-  metrics_file: 'metrics.pkl'
+  epochs: 3
+  batch_size: 32
+  test_interval: 100 # measured in iterations (an iteration is one forwards/backwards pass in the training loop)
+  train_metrics_interval: 100 # iterations
+  save_interval: 300 # iterations (an iteration is one forwards/backwards pass in the training loop)
+  test_epochs: 2 # number of epochs to run when evaluating on the test set

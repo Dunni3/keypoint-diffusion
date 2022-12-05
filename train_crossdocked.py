@@ -1,8 +1,11 @@
 import argparse
-import pathlib
 import yaml
 import pickle
 from collections import defaultdict
+from pathlib import Path
+from datetime import datetime
+import time
+import shutil
 
 from data_processing.crossdocked.dataset import CrossDockedDataset, get_dataloader
 from models.dynamics import LigRecDynamics
@@ -16,20 +19,77 @@ from dgl.dataloading import GraphDataLoader
 
 def parse_arguments():
     p = argparse.ArgumentParser()
-    p.add_argument('--config', type=argparse.FileType(mode='r'), default='configs/dev_config.yml')
+    p.add_argument('--config', type=str, default='configs/dev_config.yml')
     args = p.parse_args()
-    config_dict = yaml.load(args.config, Loader=yaml.FullLoader)
+
+    with open(args.config, 'r') as f:
+        config_dict = yaml.load(f, Loader=yaml.FullLoader)
 
     # TODO: allow configs to be specified by commandline arguments
 
-    return config_dict
+    return args, config_dict
+
+
+def test_model(model, test_dataloader, args, device):
+
+    l2_losses = []
+    losses = []
+    ot_losses = []
+
+    for _ in range(args['training_config']['test_epochs']):
+        for rec_graphs, lig_atom_positions, lig_atom_features in test_dataloader:
+
+            rec_graphs = rec_graphs.to(device)
+            lig_atom_positions = [ arr.to(device) for arr in lig_atom_positions ]
+            lig_atom_features = [ arr.to(device) for arr in lig_atom_features ]
+
+            noise_loss, ot_loss = model(rec_graphs, lig_atom_positions, lig_atom_features)
+
+            # combine losses
+            loss = noise_loss + ot_loss*args['training_config']['rec_encoder_loss_weight']
+
+            l2_losses.append(noise_loss.detach().cpu())
+            losses.append(loss.detach().cpu())
+            ot_losses.append(ot_loss.detach().cpu())
+
+    loss_dict = {
+        'l2_loss': np.array(l2_losses).mean(),
+        'total_loss': np.array(losses).mean(),
+        'ot_loss': np.array(ot_losses).mean()
+    }
+    return loss_dict
+
 
 def main():
-    args = parse_arguments()
+    script_args, args = parse_arguments()
     # torch.autograd.set_detect_anomaly(True)
 
+    # create output directory
+    now = datetime.now().strftime('%m%d%H%M%S')
+    results_dir = Path(args['experiment']['results_dir'])
+    output_dir_name = f"{args['experiment']['name']}_{now}"
+    output_dir = results_dir / output_dir_name
+    output_dir.mkdir()
+
+    # copy input config file to output directory
+    input_config_file = Path(script_args.config).resolve()
+    new_configfile_loc = output_dir / input_config_file.name
+    shutil.copy(input_config_file, new_configfile_loc)
+
+    # create metrics files and lists to store metrics
+    test_metrics_file = output_dir / 'test_metrics.pkl'
+    train_metrics_file = output_dir / 'train_metrics.pkl'
+    test_metrics = []
+    train_metrics = []
+
+    # set random seed
     torch.manual_seed(42)
+
+    # determine device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f'{device=}')
+
+    # get batch size
     batch_size = args['training_config']['batch_size']
 
     # create datasets
@@ -37,8 +97,6 @@ def main():
     test_dataset_path = args['dataset_location']['test']
     train_dataset = CrossDockedDataset(name='train', processed_data_dir=train_dataset_path, **args['dataset_config'])
     test_dataset = CrossDockedDataset(name='test', processed_data_dir=test_dataset_path, **args['dataset_config'])
-    
-    n_timesteps = 1000
 
     # create dataloaders
     train_dataloader = get_dataloader(train_dataset, batch_size=batch_size, num_workers=1)
@@ -50,8 +108,12 @@ def main():
     n_lig_feat = test_lig_feat.shape[1]
     n_kp_feat = args["rec_encoder_config"]["out_n_node_feat"]
 
+    print(f'{n_rec_atom_features=}')
+    print(f'{n_lig_feat=}')
+
     rec_encoder_config = args["rec_encoder_config"]
     rec_encoder_config["in_n_node_feat"] = n_rec_atom_features
+    args["rec_encoder_config"]["in_n_node_feat"] = n_rec_atom_features
 
     # create diffusion model
     model = LigandDiffuser(
@@ -68,15 +130,30 @@ def main():
         lr=args["training_config"]['learning_rate'],
         weight_decay=args["training_config"]['weight_decay'])
 
-    epoch_losses = defaultdict(list)
+    # add info that is needed to reconstruct the model later into args
+    # this should definitely be done in a cleaner way. and it can be. i just dont have time
+    args["reconstruction"] = {
+        'n_lig_feat': n_lig_feat,
+        'n_rec_atom_feat': n_rec_atom_features
+    }
+
+    # save args to output dir
+    arg_fp = output_dir / 'args.pkl'
+    with open(arg_fp, 'wb') as f:
+        pickle.dump(args, f)
+
+    training_start = time.time()
+    train_losses = []
+    train_l2_losses = []
+    train_ot_losses = []
+    iterations_per_epoch = len(train_dataset) / batch_size
     for epoch_idx in range(args['training_config']['epochs']):
 
-
-        # train for 1 epoch
-        batch_losses = []
-        batch_l2_losses = []
-        batch_ot_losses = []
+        
+        iter_idx = -1
         for rec_graphs, lig_atom_positions, lig_atom_features in train_dataloader:
+
+            iter_idx += 1
 
             rec_graphs = rec_graphs.to(device)
             lig_atom_positions = [ arr.to(device) for arr in lig_atom_positions ]
@@ -92,33 +169,67 @@ def main():
             # combine losses
             loss = noise_loss + ot_loss*args['training_config']['rec_encoder_loss_weight']
 
-            batch_losses.append(loss.detach().cpu())
-            batch_l2_losses.append(noise_loss.detach().cpu())
-            batch_ot_losses.append(ot_loss.detach().cpu())
+            # record losses for this batch
+            train_losses.append(loss.detach().cpu())
+            train_l2_losses.append(noise_loss.detach().cpu())
+            train_ot_losses.append(ot_loss.detach().cpu())
 
             loss.backward()
             if args['training_config']['clip_grad']:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args['training_config']['max_norm'])
             optimizer.step()
 
-        
-        mean_loss = np.array(batch_losses).mean()
-        mean_l2_loss = np.array(batch_l2_losses).mean()
-        mean_ot_loss = np.array(batch_ot_losses).mean()
+            # save the model if necessary
+            if iter_idx % args['training_config']['save_interval'] == 0 and iter_idx > 0:
+                file_name = f'model_epoch_{epoch_idx}_iter_{iter_idx}.pt'
+                file_path = output_dir / file_name
+                most_recent_model = output_dir / 'model.pt'
+                torch.save(model.state_dict(), str(file_path))
+                torch.save(model.state_dict(), str(most_recent_model))
 
-        epoch_losses['total'].append(mean_loss)
-        epoch_losses['l2'].append(mean_l2_loss)
-        epoch_losses['ot'].append(mean_ot_loss)
+            # test the model if necessary
+            if iter_idx % args['training_config']['test_interval'] == 0:
+                model.eval()
+                test_metrics_row = test_model(model, test_dataloader, args, device=device)
+                model.train()
 
-        print(f'Epoch {epoch_idx+1}')
-        print(f'Mean Batch Loss = {mean_loss:.2f}')
-        print(f'Mean L2 Loss = {mean_l2_loss:.4f}')
-        print(f'Mean OT Loss = {mean_ot_loss:.2f}')
-        print('\n')
+                test_metrics_row['epoch'] = epoch_idx
+                test_metrics_row['iter'] = iter_idx
+                test_metrics_row['time_passed'] = time.time() - training_start 
+                test_metrics.append(test_metrics_row)
+                with open(test_metrics_file, 'wb') as f:
+                    pickle.dump(test_metrics, f)
+
+                print('test metrics')
+                print(*[ f'{k} = {v:.2f}' for k,v in test_metrics_row.items()], sep='\n')
+                print('\n')
 
 
-    with open(args['training_config']['metrics_file'], 'wb') as f:
-        pickle.dump(epoch_losses, f)
+            # record train metrics if necessary
+            if iter_idx % args['training_config']['train_metrics_interval'] == 0:
+
+                train_metrics_row = {
+                    'total_loss': np.array(train_losses).mean(),
+                    'l2_loss': np.array(train_l2_losses).mean(),
+                    'ot_loss': np.array(train_ot_losses).mean(),
+                    'epoch': epoch_idx,
+                    'iter': iter_idx,
+                    'time_passed': time.time() - training_start
+                }
+                train_metrics.append(train_metrics_row)
+                with open(train_metrics_file, 'wb') as f:
+                    pickle.dump(train_metrics, f)
+
+                print('training metrics')
+                print(*[ f'{k} = {v:.2f}' for k,v in train_metrics_row.items()], sep='\n')
+                print('\n')
+
+                train_losses, train_l2_losses, train_ot_losses, = [], [], []
+
+    
+    # after exiting the training loop, save the final model file
+    most_recent_model = output_dir / 'model.pt'
+    torch.save(model.state_dict(), str(most_recent_model))
 
 
 if __name__ == "__main__":
