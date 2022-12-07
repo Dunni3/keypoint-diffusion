@@ -87,7 +87,7 @@ def main():
 
     # determine device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f'{device=}')
+    print(f'{device=}', flush=True)
 
     # get batch size
     batch_size = args['training_config']['batch_size']
@@ -99,8 +99,8 @@ def main():
     test_dataset = CrossDockedDataset(name='test', processed_data_dir=test_dataset_path, **args['dataset_config'])
 
     # create dataloaders
-    train_dataloader = get_dataloader(train_dataset, batch_size=batch_size, num_workers=1)
-    test_dataloader = get_dataloader(test_dataset, batch_size=batch_size, num_workers=1)
+    train_dataloader = get_dataloader(train_dataset, batch_size=batch_size, num_workers=args['training_config']['num_workers'])
+    test_dataloader = get_dataloader(test_dataset, batch_size=batch_size, num_workers=args['training_config']['num_workers'])
 
     # get number of ligand and receptor atom features
     test_rec_graph, test_lig_pos, test_lig_feat = train_dataset[0]
@@ -109,7 +109,7 @@ def main():
     n_kp_feat = args["rec_encoder_config"]["out_n_node_feat"]
 
     print(f'{n_rec_atom_features=}')
-    print(f'{n_lig_feat=}')
+    print(f'{n_lig_feat=}', flush=True)
 
     rec_encoder_config = args["rec_encoder_config"]
     rec_encoder_config["in_n_node_feat"] = n_rec_atom_features
@@ -154,6 +154,11 @@ def main():
         for rec_graphs, lig_atom_positions, lig_atom_features in train_dataloader:
 
             iter_idx += 1
+
+            # TODO: remove this later. I'm just keeping it right now for debugging purposes. There is a bug 
+            # where the training loop hangs on the first iteration. Haven't been able to reproduce yet.
+            if iter_idx < 50:
+                print(f'{iter_idx=}, {time.time() - training_start:.2f} seconds since start', flush=True)
 
             rec_graphs = rec_graphs.to(device)
             lig_atom_positions = [ arr.to(device) for arr in lig_atom_positions ]
@@ -201,7 +206,7 @@ def main():
                     pickle.dump(test_metrics, f)
 
                 print('test metrics')
-                print(*[ f'{k} = {v:.2f}' for k,v in test_metrics_row.items()], sep='\n')
+                print(*[ f'{k} = {v:.2f}' for k,v in test_metrics_row.items()], sep='\n', flush=True)
                 print('\n')
 
 
@@ -221,7 +226,7 @@ def main():
                     pickle.dump(train_metrics, f)
 
                 print('training metrics')
-                print(*[ f'{k} = {v:.2f}' for k,v in train_metrics_row.items()], sep='\n')
+                print(*[ f'{k} = {v:.2f}' for k,v in train_metrics_row.items()], sep='\n', flush=True)
                 print('\n')
 
                 train_losses, train_l2_losses, train_ot_losses, = [], [], []

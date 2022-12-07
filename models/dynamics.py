@@ -314,18 +314,19 @@ class LigRecDynamics(nn.Module):
         # note that all arguments except timestep are tuples of length batch_size containing
         # the values for each datapoint in the batch
 
-        k_rl = 4 # receptor keypoints have edges to the k_rl nearest ligand atoms
+        k_rl = 6 # receptor keypoints have edges to the k_rl nearest ligand atoms
         device = lig_pos[0].device
         
         graphs = []
         for i in range(len(lig_pos)):
 
             # create graph containing just ligand-ligand edges
-            lig_graph = dgl.knn_graph(lig_pos[i], k=4, algorithm="bruteforce-blas", dist='euclidean', exclude_self=True).to(device)
+            # TODO: expose all these k's as hyperparameters. Also, there is an issue when the ligand has less than k atoms. Maybe fix this by some method other than excluding small ligands?
+            lig_graph = dgl.knn_graph(lig_pos[i], k=8, algorithm="bruteforce-blas", dist='euclidean', exclude_self=True).to(device)
 
             # find edges for rec -> lig conections
             rl_dist = torch.cdist(rec_pos[i], lig_pos[i]) # distance between every receptor keypoint and every ligand atom
-            topk_dist, topk_idx = torch.topk(rl_dist, k=4, dim=1, largest=False) # get k closest ligand atoms to each receptor atom
+            topk_dist, topk_idx = torch.topk(rl_dist, k=k_rl, dim=1, largest=False) # get k closest ligand atoms to each receptor key point
 
             # get list of rec -> ligand edges
             n_rec_nodes = rec_pos[i].shape[0]
