@@ -118,10 +118,10 @@ def main():
     # create diffusion model
     model = LigandDiffuser(
         n_lig_feat, 
-        n_kp_feat, 
-        rec_encoder_config, 
-        args['rec_encoder_loss_config'],
-        **args['diffusion_config']
+        n_kp_feat,
+        dynamics_config=args['dynamics'], 
+        rec_encoder_config=rec_encoder_config, 
+        rec_encoder_loss_config=args['rec_encoder_loss_config']
         ).to(device=device)
 
     # create optimizer

@@ -25,7 +25,6 @@ class CrossDockedDataset(dgl.data.DGLDataset):
         lig_box_padding: Union[int, float] = 6,
         pocket_cutoff: Union[int, float] = 4,
         receptor_k: int = 3,
-        ligand_k: int = 3,
         use_boltzmann_ot: bool = False, **kwargs):
 
         # define filepaths of data
@@ -42,10 +41,9 @@ class CrossDockedDataset(dgl.data.DGLDataset):
 
         # hyperparameters for protein graph
         self.receptor_k: int = receptor_k
-        self.ligand_k: int = ligand_k
         self.lig_box_padding: Union[int, float] = lig_box_padding
         self.pocket_cutoff: Union[int, float] = pocket_cutoff
-        self.pocket_edge_algorithm = pocket_edge_algorithm
+        self.pocket_edge_algorithm: str = pocket_edge_algorithm
 
         self.use_boltzmann_ot = use_boltzmann_ot
 

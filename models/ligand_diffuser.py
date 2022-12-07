@@ -11,10 +11,8 @@ from losses.rec_encoder_loss import ReceptorEncoderLoss
 
 class LigandDiffuser(nn.Module):
 
-    def __init__(self, atom_nf, rec_nf, rec_encoder_config, rec_encoder_loss_config, 
-        n_timesteps: int = 1000,
-        n_layers=6,
-        hidden_nf=256):
+    def __init__(self, atom_nf, rec_nf, dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, 
+    n_timesteps: int = 1000):
         super().__init__()
 
         self.n_lig_features = atom_nf
@@ -23,7 +21,7 @@ class LigandDiffuser(nn.Module):
         # TODO: add default keyword arguments from LigRecDynamics to config file
         self.n_timesteps = n_timesteps
         self.gamma = PredefinedNoiseSchedule(noise_schedule='polynomial_2', timesteps=n_timesteps, precision=1e-4)
-        self.dynamics = LigRecDynamics(atom_nf, rec_nf, n_layers=n_layers, hidden_nf=hidden_nf)
+        self.dynamics = LigRecDynamics(atom_nf, rec_nf, **dynamics_config)
 
         self.rec_encoder = ReceptorEncoder(**rec_encoder_config)
         self.rec_encoder_loss_fn = ReceptorEncoderLoss(**rec_encoder_loss_config)

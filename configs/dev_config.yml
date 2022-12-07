@@ -26,8 +26,13 @@ rec_encoder_config:
 
 diffusion_config:
   n_timesteps: 1000
+
+dynamics:
   n_layers: 6
   hidden_nf: 256
+  receptor_keypoint_k: 6
+  ligand_k: 8
+
 
 rec_encoder_loss_config:
   use_boltzmann_weights: False
