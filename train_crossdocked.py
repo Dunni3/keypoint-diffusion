@@ -95,8 +95,8 @@ def main():
     # create datasets
     train_dataset_path = args['dataset_location']['train']
     test_dataset_path = args['dataset_location']['test']
-    train_dataset = CrossDockedDataset(name='train', processed_data_dir=train_dataset_path, **args['dataset_config'])
-    test_dataset = CrossDockedDataset(name='test', processed_data_dir=test_dataset_path, **args['dataset_config'])
+    train_dataset = CrossDockedDataset(name='train', processed_data_file=train_dataset_path, **args['dataset_config'])
+    test_dataset = CrossDockedDataset(name='test', processed_data_file=test_dataset_path, **args['dataset_config'])
 
     # create dataloaders
     train_dataloader = get_dataloader(train_dataset, batch_size=batch_size, num_workers=args['training_config']['num_workers'])

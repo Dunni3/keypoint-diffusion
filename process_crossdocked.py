@@ -65,6 +65,7 @@ if __name__ == "__main__":
     for split_key in dataset_index:
 
         dataset_idx = 0
+        data = []
         for pair_idx, input_pair in enumerate(dataset_index[split_key]):
 
             if pair_idx % 10000 == 0:
@@ -90,8 +91,8 @@ if __name__ == "__main__":
             ligand, lig_atom_positions, lig_atom_features = parse_ligand(lig_file, element_map=lig_element_map, 
                 remove_hydrogen=dataset_config['remove_hydrogen'])
 
-            # skip ligands smaller than 6 atoms
-            if lig_atom_positions.shape[0] < 6:
+            # skip ligands smaller than minimum ligand size
+            if lig_atom_positions.shape[0] < dataset_config['min_ligand_atoms']:
                 continue
 
             # get all protein atoms that form the binding pocket
@@ -120,22 +121,36 @@ if __name__ == "__main__":
                 dataset_config['receptor_k'], 
                 dataset_config['pocket_edge_algorithm'])
 
+            # TODO: this could be considered a target leak. We should do somthing else. Maybe pocket COM?
             # place ligand COM at origin for the lig/rec complex
             receptor_graph, lig_atom_positions = center_complex(receptor_graph, lig_atom_positions)
 
-            # define filepaths for saving processed data
-            pair_dir = args.output_dir / split_key / str(dataset_idx)
-            pair_dir.mkdir(exist_ok=True, parents=True)
+            # record this pair
+            data.append({
+                'receptor_graph': receptor_graph,
+                'lig_atom_positions': lig_atom_positions,
+                'lig_atom_features': lig_atom_features
+            })
 
-            # save receptor graph
-            receptor_graph_path = pair_dir / f'rec_graph.dgl'
-            dgl.save_graphs(str(receptor_graph_path), receptor_graph)
+            # # define filepaths for saving processed data
+            # pair_dir = args.output_dir / split_key / str(dataset_idx)
+            # pair_dir.mkdir(exist_ok=True, parents=True)
 
-            # save ligand data
-            ligand_data_path = pair_dir / f'ligand_data.pt'
-            payload = {'lig_atom_positions': lig_atom_positions, 'lig_atom_features': lig_atom_features}
-            with open(ligand_data_path, 'wb') as f:
-                torch.save(payload, f)
+            # # save receptor graph
+            # receptor_graph_path = pair_dir / f'rec_graph.dgl'
+            # dgl.save_graphs(str(receptor_graph_path), receptor_graph)
+
+            # # save ligand data
+            # ligand_data_path = pair_dir / f'ligand_data.pt'
+            # payload = {'lig_atom_positions': lig_atom_positions, 'lig_atom_features': lig_atom_features}
+            # with open(ligand_data_path, 'wb') as f:
+            #     torch.save(payload, f)
 
             # increment dataset_idx
             dataset_idx += 1
+
+
+        # save data for this split
+        data_filepath = args.output_dir / f'{split_key}.pkl'
+        with open(data_filepath, 'wb') as f:
+            pickle.dump(data, f)

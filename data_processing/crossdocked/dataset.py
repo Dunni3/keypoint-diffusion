@@ -1,13 +1,10 @@
 from pathlib import Path
+import pickle
 from typing import Dict, List, Union
 
 import dgl
 from dgl.dataloading import GraphDataLoader
-import numpy as np
-import prody
-import rdkit
 import torch
-from scipy import spatial as spa
 
 from data_processing.pdbbind_processing import (build_receptor_graph,
                                                 get_pocket_atoms, parse_ligand,
@@ -18,7 +15,7 @@ from data_processing.pdbbind_processing import (build_receptor_graph,
 class CrossDockedDataset(dgl.data.DGLDataset):
 
     def __init__(self, name: str, 
-        processed_data_dir: str,
+        processed_data_file: str,
         rec_elements: List[str],
         lig_elements: List[str],
         pocket_edge_algorithm: str = 'bruteforce-blas',
@@ -27,8 +24,8 @@ class CrossDockedDataset(dgl.data.DGLDataset):
         receptor_k: int = 3,
         use_boltzmann_ot: bool = False, **kwargs):
 
-        # define filepaths of data
-        self.data_dir: Path = Path(processed_data_dir)
+        # define filepath of data
+        self.data_file: Path = Path(processed_data_file)
 
         # atom typing configurations
         self.rec_elements = rec_elements
@@ -50,31 +47,16 @@ class CrossDockedDataset(dgl.data.DGLDataset):
         super().__init__(name=name) # this has to happen last because this will call self.process()
 
     def __getitem__(self, i):
-    
-        # get filepaths of the processed data that we need
-        example_dir = self.data_dir / str(i)
-        rec_graph_path = example_dir / 'rec_graph.dgl'
-        lig_atom_data_path = example_dir / 'ligand_data.pt'
-
-        receptor_graph = dgl.load_graphs(str(rec_graph_path))[0][0]
-        with open(lig_atom_data_path, 'rb') as f:
-            lig_atom_data = torch.load(f)
-        lig_atom_positions = lig_atom_data['lig_atom_positions']
-        lig_atom_features = lig_atom_data['lig_atom_features']
-
-        return receptor_graph, lig_atom_positions, lig_atom_features
+        data_dict = self.data[i]
+        return data_dict['receptor_graph'], data_dict['lig_atom_positions'], data_dict['lig_atom_features']
 
     def __len__(self):
-        return self._size
+        return len(self.data)
 
     def process(self):
-
-        self._size = 0
-        for subdir in self.data_dir.iterdir():
-            if not subdir.is_dir():
-                raise ValueError(f'only directories should be in data_dir, but found {subdir}')
-
-            self._size += 1
+        # load data into memory
+        with open(self.data_file, 'rb') as f:
+            self.data = pickle.load(f)
 
         
 def collate_fn(examples: list):

@@ -3,19 +3,20 @@ experiment:
   results_dir: experiments/
 
 dataset_location:
-  train: 'data/crossdock_processed/train'
-  test: 'data/crossdock_processed/test'
+  train: 'data/crossdock_processed/train.pkl'
+  test: 'data/crossdock_processed/test.pkl'
 
 dataset_config:
-  rec_elements: ['C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'Mg', 'Mn', 'Zn', 'Ca', 'Fe', 'B']
+  rec_elements: ['C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'B'] # ['C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'Mg', 'Mn', 'Zn', 'Ca', 'Fe', 'B']
   lig_elements: ['C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'B']
   remove_hydrogen: True
+  min_ligand_atoms: 8 # minimum number of atoms in a ligand, skip all smaller ligands in the dataset when processing
   pocket_edge_algorithm: 'bruteforce-blas'
   lig_box_padding: 8 # angstroms
   pocket_cutoff: 5 # angstroms
   receptor_k: 8
   ligand_k: 3
-  dataset_size: 50000 # 8 # used only for debugging
+  dataset_size: 20 # # used only for debugging
   use_boltzmann_ot: False
 
 rec_encoder_config:
@@ -32,6 +33,7 @@ dynamics:
   hidden_nf: 256
   receptor_keypoint_k: 6
   ligand_k: 8
+  use_tanh: True # whether to use tanh activation for coordinate updates 
 
 
 rec_encoder_loss_config:

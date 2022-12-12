@@ -12,8 +12,15 @@ todo:
 3. issue with ligand COM. maybe we should always start at pocket COM?
 4. expose all model hyperparameters to config file
 5. learning rate schedules. training only REM before training diffusion model.
+6. xavier uniform initialization in receptor encoder
+7. visualize sampled molecules and keypoint location
 
-
+data processing woes:
 ok so i set the remove_hydrogens flag to True, but apparently sometimes there are still hydrogens. but it seems quite rare so i'm actually going to ignore this for now..
 there are a few "bugs" that occur - proteins that can't be parsed, proteins that can be parsed by for some reason they
 end up having 0 pocket atoms
+
+it seems i can use the `nn.Module.model_parameters()` method to find the params just for rec encoder module which will let me specify different learning schedules for these params separately i.e., including 
+the balance of losses into the learning rate scheduling algo
+
+expose use_tanh hyperparameter to config file!!
