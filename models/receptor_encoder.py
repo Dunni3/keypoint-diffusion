@@ -7,10 +7,10 @@ from typing import List
 
 class ReceptorEncoder(nn.Module):
 
-    def __init__(self, n_egnn_convs: int = 6, n_keypoints: int = 10, in_n_node_feat: int = 13, hidden_n_node_feat: int = 256, out_n_node_feat: int = 32):
+    def __init__(self, n_convs: int = 6, n_keypoints: int = 10, in_n_node_feat: int = 13, hidden_n_node_feat: int = 256, out_n_node_feat: int = 32):
         super().__init__()
 
-        self.n_egnn_convs = n_egnn_convs
+        self.n_convs = n_convs
         self.n_keypoints = n_keypoints
         self.out_n_node_feat = out_n_node_feat
 
@@ -19,16 +19,16 @@ class ReceptorEncoder(nn.Module):
         # TODO: the DGL EGNN implementation uses two-layer MLPs - does the EDM paper use 1 or 2?
         # TODO: the EDM paper has a skip connection in the update of node features (which is not specified in model equations)
         # - does DGL have this as well?
-        for i in range(self.n_egnn_convs):
-            if i == 0 and self.n_egnn_convs == 1: # first and only convolutional layer
+        for i in range(self.n_convs):
+            if i == 0 and self.n_convs == 1: # first and only convolutional layer
                 in_size = in_n_node_feat
                 hidden_size = hidden_n_node_feat
                 out_size = out_n_node_feat
-            elif i == 0 and self.n_egnn_convs != 1: # first but not the only convolutional layer
+            elif i == 0 and self.n_convs != 1: # first but not the only convolutional layer
                 in_size = in_n_node_feat
                 hidden_size = hidden_n_node_feat
                 out_size = hidden_n_node_feat
-            elif i == self.n_egnn_convs - 1 and self.n_egnn_convs != 1: # last but not the only convolutional layer
+            elif i == self.n_convs - 1 and self.n_convs != 1: # last but not the only convolutional layer
                 in_size = hidden_n_node_feat
                 hidden_size = hidden_n_node_feat
                 out_size = out_n_node_feat

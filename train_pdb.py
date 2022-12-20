@@ -33,7 +33,7 @@ def main():
     for rec_graphs, lig_atom_positions, lig_atom_features in dataloader:
         break
 
-    rec_encoder = ReceptorEncoder(n_egnn_convs=2, n_keypoints=10, in_n_node_feat=n_rec_atom_features, hidden_n_node_feat=32, out_n_node_feat=32)
+    rec_encoder = ReceptorEncoder(n_convs=2, n_keypoints=10, in_n_node_feat=n_rec_atom_features, hidden_n_node_feat=32, out_n_node_feat=32)
     kp_pos, kp_feat = rec_encoder(rec_graphs)
     ot_loss = rec_encoder_loss_fn(kp_pos, rec_graphs)
     print('meep!')

@@ -23,4 +23,8 @@ end up having 0 pocket atoms
 it seems i can use the `nn.Module.model_parameters()` method to find the params just for rec encoder module which will let me specify different learning schedules for these params separately i.e., including 
 the balance of losses into the learning rate scheduling algo
 
-expose use_tanh hyperparameter to config file!!
+# sampling molecule from the test set
+
+```console
+python sample_crossdocked.py --output_dir=sample_epoch_130 --model_dir=experiments/baseline_clipping_1218162647 --n_replicates=4 --n_complexes=4
+```

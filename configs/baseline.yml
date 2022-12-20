@@ -1,19 +1,19 @@
 experiment:
-  name: baseline
+  name: baseline_clipping
   results_dir: experiments/
 
 wandb:
   init_kwargs:
-    mode: disabled # options: online, offline, disabled
+    mode: online # options: online, offline, disabled
     project: ligdiff
     group: 
   watch_model: False
   watch_kwargs:
-    log: # (str) One of "gradients", "parameters", "all", or None
-    log_freq: 100 # (int) log gradients and parameters every N batches
+    log: all # (str) One of "gradients", "parameters", "all", or None
+    log_freq: 1000 # (int) log gradients and parameters every N batches
 
 dataset:
-  location: 'data/crossdock_mini/'
+  location: 'data/crossdock_50k/'
   rec_elements: ['C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'B'] # ['C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'Mg', 'Mn', 'Zn', 'Ca', 'Fe', 'B']
   lig_elements: ['C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'B']
   remove_hydrogen: True
@@ -22,7 +22,7 @@ dataset:
   lig_box_padding: 8 # angstroms
   pocket_cutoff: 5 # angstroms
   receptor_k: 8
-  dataset_size: 50 # used only for debugging
+  dataset_size: 50000 # used only for debugging
   use_boltzmann_ot: False
 
 rec_encoder:
@@ -49,15 +49,15 @@ training:
   rec_encoder_loss_weight: 0.1
   learning_rate: 1.0e-4
   weight_decay: 1.0e-12
-  clip_grad: False
-  clip_value: 1.5
-  epochs: 1
-  batch_size: 8
-  test_interval: 0.5 # measured in epochs
-  train_metrics_interval: 0.5 # epochs
-  save_interval: 0.5 # epoch
+  clip_grad: True
+  clip_value: 1.0
+  epochs: 1000
+  batch_size: 32
+  test_interval: 0.25 # measured in epochs
+  train_metrics_interval: 0.05 # epochs
+  save_interval: 2 # epoch
   test_epochs: 2 # number of epochs to run when evaluating on the test set
-  num_workers: 1
+  num_workers: 0
   cyclic_lr: # settings regarding a cyclic learning rate
     use_cyclic_lr: False
     base_lr: 1.0e-5

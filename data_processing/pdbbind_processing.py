@@ -60,12 +60,28 @@ def parse_ligand(ligand_path: Path, element_map: Dict[str, int], remove_hydrogen
         raise NotImplementedError('Multiple ligands found. Code is not written to handle multiple ligands.')
     ligand = ligands[0]
 
+    # actually remove all hydrogens - setting removeHs=True still preserves hydrogens that are necessary for specifying stereochemistry
+    # note that therefore, this step destroys stereochemistry
+    if remove_hydrogen:
+        ligand = Chem.RemoveAllHs(ligand, sanitize=False)
+
     # get atom positions
     ligand_conformer = ligand.GetConformer()
     atom_positions = ligand_conformer.GetPositions()
     atom_positions = torch.tensor(atom_positions).float()
 
-    atom_features = lig_atom_featurizer(ligand, element_map, include_charges=include_charges)
+    atom_features, other_atoms_mask = lig_atom_featurizer(ligand, element_map, include_charges=include_charges)
+
+    # skip ligands which have "other" type atoms
+    if other_atoms_mask.sum() > 0:
+        raise Unparsable
+
+    # remove atoms that have the "other" atom type
+    atom_features = atom_features[~other_atoms_mask, :]
+    atom_positions = atom_positions[~other_atoms_mask, :]
+
+    # drop the "other" atom dimension
+    atom_features = atom_features[:, :-1]
     
     return ligand, atom_positions, atom_features
 
@@ -82,14 +98,18 @@ def get_pocket_atoms(rec_atoms: prody.Selection, ligand_atom_positions: torch.Te
     upper_corner += box_padding
 
     # get positions, features, and residue indicies for all protein atoms
-    # TODO: fix parse_protein so that it selects the *atoms we actually want* from the protein structure (waters? metals? etc.)... i.e., selectiion logic will be contained to parse_protein
     rec_atom_positions = rec_atoms.getCoords()
-    rec_atom_features = rec_atom_featurizer(rec_atoms, element_map)
+    rec_atom_features, other_atoms_mask = rec_atom_featurizer(rec_atoms, element_map)
     rec_atom_residx = rec_atoms.getResindices()
 
     # convert protein atom positions to pytorch tensor
     rec_atom_positions = torch.tensor(rec_atom_positions).float()
     rec_atom_features = torch.tensor(rec_atom_features).float()
+
+    # remove "other" atoms from the receptor
+    rec_atom_positions = rec_atom_positions[~other_atoms_mask]
+    rec_atom_features = rec_atom_features[~other_atoms_mask]
+    rec_atom_residx = torch.tensor(rec_atom_residx, dtype=int)[~other_atoms_mask]
 
     # find all protein atoms in padded bounding box
     above_lower_corner = (rec_atom_positions >= lower_corner).all(axis=1)
@@ -133,6 +153,13 @@ def rec_atom_featurizer(rec_atoms: prody.AtomGroup, element_map: Dict[str, int],
     # one-hot encode atom elements
     onehot_elements = onehot_encode_elements(protein_atom_elements, element_map)
 
+    # get a mask for atoms that have the "other" category
+    other_atoms_mask = torch.tensor(onehot_elements[:, -1] == 1).bool()
+
+    # remove "other" category from onehot_elements
+    # note that here we are assuming that the other category is the last in the onehot encoding
+    onehot_elements = onehot_elements[:, :-1]
+
     # concatenate features
     if include_charges:
         protein_atom_features = [onehot_elements, protein_atom_charges[:, None]]
@@ -141,7 +168,7 @@ def rec_atom_featurizer(rec_atoms: prody.AtomGroup, element_map: Dict[str, int],
 
     protein_atom_features = np.concatenate(protein_atom_features, axis=1)
 
-    return protein_atom_features
+    return protein_atom_features, other_atoms_mask
 
 def lig_atom_featurizer(ligand, element_map: Dict[str, int], include_charges=False):
     atom_elements = []
@@ -158,7 +185,10 @@ def lig_atom_featurizer(ligand, element_map: Dict[str, int], include_charges=Fal
     # from max welling's group requires that we treat integer and categorical variables separately
 
     # one-hot encode atom elements
-    onehot_elements = onehot_encode_elements(atom_elements, element_map)
+    onehot_elements = onehot_encode_elements(atom_elements, element_map) # boolean array of shape (n_atoms, n_atom_types)
+
+    # get a mask for atoms that have the "other" category
+    other_atoms_mask = torch.tensor(onehot_elements[:, -1] == 1).bool()
 
     # convert charges to numpy array
     if include_charges:
@@ -173,7 +203,7 @@ def lig_atom_featurizer(ligand, element_map: Dict[str, int], include_charges=Fal
     atom_features = np.concatenate(atom_features, axis=1)
     atom_features = torch.tensor(atom_features).float()
 
-    return atom_features
+    return atom_features, other_atoms_mask
 
 def onehot_encode_elements(atom_elements: Iterable, element_map: Dict[str, int]) -> np.ndarray:
 

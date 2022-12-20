@@ -11,8 +11,8 @@ from losses.rec_encoder_loss import ReceptorEncoderLoss
 
 class LigandDiffuser(nn.Module):
 
-    def __init__(self, atom_nf, rec_nf, dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, 
-    n_timesteps: int = 1000):
+    def __init__(self, atom_nf, rec_nf, n_timesteps: int = 1000, 
+    dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}):
         super().__init__()
 
         self.n_lig_features = atom_nf
@@ -113,15 +113,15 @@ class LigandDiffuser(nn.Module):
     @torch.no_grad()
     def sample_given_pocket(self, rec_graph: dgl.DGLGraph, n_lig_atoms: torch.Tensor):
 
-        device = self.device
+        device = rec_graph.device
         n_samples = len(n_lig_atoms)
 
         # encode the receptor
         rec_pos, rec_feat = self.rec_encoder(rec_graph)
 
         # copy the receptor encoding so a separate graph can be made for each ligand
-        rec_pos = [ rec_pos[0].copy() for _ in range(n_samples) ]
-        rec_feat = [ rec_feat[0].copy() for _ in range(n_samples) ]
+        rec_pos = [ rec_pos[0].detach().clone() for _ in range(n_samples) ]
+        rec_feat = [ rec_feat[0].detach().clone() for _ in range(n_samples) ]
 
         # sample initial ligand positions/features
         lig_pos, lig_feat = [], []
@@ -145,10 +145,7 @@ class LigandDiffuser(nn.Module):
 
             lig_feat, lig_pos = self.sample_p_zs_given_zt(s_arr, t_arr, rec_pos, rec_feat, lig_pos, lig_feat)
 
-
-        lig_element_idxs = [ torch.argmax(lig_feat_i, dim=1) for lig_feat_i in lig_feat ]
-
-        return lig_pos, lig_element_idxs
+        return lig_pos, lig_feat
 
     def sample_p_zs_given_zt(self, s, t, rec_pos: List[torch.Tensor], rec_feat: List[torch.Tensor], zt_pos: List[torch.Tensor], zt_feat: List[torch.Tensor]):
 
