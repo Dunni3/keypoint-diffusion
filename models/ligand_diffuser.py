@@ -39,6 +39,9 @@ class LigandDiffuser(nn.Module):
         # compute receptor encoding loss
         ot_loss = self.rec_encoder_loss_fn(rec_pos, rec_graphs)
 
+        # remove ligand COM from receptor keypoint positions and ligand atom positions
+        rec_pos, lig_atom_positions = self.remove_lig_com(rec_pos, lig_atom_positions)
+
         # sample timepoints for each item in the batch
         t = torch.randint(0, self.n_timesteps, size=(len(lig_atom_positions),), device=device).float() # timesteps
         t = t / self.n_timesteps
@@ -48,13 +51,13 @@ class LigandDiffuser(nn.Module):
         for i in range(batch_size):
             eps = {
                 'h': torch.randn(lig_atom_features[i].shape, device=device),
-                'x': self.sample_com_free(lig_atom_positions[i].shape, device=device)
+                'x': torch.randn(lig_atom_positions[i].shape, device=device)
             }
             eps_batch.append(eps)
         
         # construct noisy versions of the ligand
         gamma_t = self.gamma(t).to(device=device)
-        zt_pos, zt_feat = self.noised_representation(lig_atom_positions, lig_atom_features, eps_batch, gamma_t)
+        zt_pos, zt_feat, rec_pos = self.noised_representation(lig_atom_positions, lig_atom_features, rec_pos, eps_batch, gamma_t)
 
         # predict the noise that was added
         eps_h_pred, eps_x_pred = self.dynamics(zt_pos, zt_feat, rec_pos, rec_feat, t)
@@ -64,6 +67,7 @@ class LigandDiffuser(nn.Module):
         eps_h = torch.concat([ eps_dict['h'] for eps_dict in eps_batch ], dim=0)
 
         # compute l2 loss on noise
+        # TODO: maybe compute this loss a little differently? like, concat epislon_x and epsilon_h together before computing l2?
         x_loss = (eps_x - eps_x_pred).square().sum() / eps_x.numel()
         h_loss = (eps_h - eps_h_pred).square().sum() / eps_h.numel()
         l2_loss = x_loss + h_loss
@@ -71,12 +75,21 @@ class LigandDiffuser(nn.Module):
 
         return l2_loss, ot_loss
 
+    def remove_lig_com(self, kp_pos: List[torch.Tensor], lig_pos: List[torch.Tensor]):
+        """Remove ligand center of mass from ligand atom positions and receptor keypoint positions."""
+        # note that this function operates on batches of molecules, so kp_pos and lig_pos are lists of length batch_size
+        # contianing the position of atoms/keypoints in each sample of the batch
+        lig_coms = [ x.mean(dim=0, keepdim=True) for x in lig_pos ]
+        com_free_lig = [ lig_pos[i] - lig_com for i, lig_com in enumerate(lig_coms) ]
+        com_free_kp = [ kp_pos[i] - lig_com for i, lig_com in enumerate(lig_coms) ]
+        return com_free_kp, com_free_lig
+
     def sample_com_free(self, shape, device):
         eps = torch.randn(shape, device=device)
         eps = eps - eps.mean()
         return eps
 
-    def noised_representation(self, lig_pos, lig_feat, eps_batch, gamma_t):
+    def noised_representation(self, lig_pos, lig_feat, rec_pos, eps_batch, gamma_t):
         alpha_t = self.alpha(gamma_t)
         sigma_t = self.sigma(gamma_t)
 
@@ -84,8 +97,11 @@ class LigandDiffuser(nn.Module):
         for i in range(len(gamma_t)):
             zt_pos.append(alpha_t[i]*lig_pos[i] + sigma_t[i]*eps_batch[i]['x'])
             zt_feat.append(alpha_t[i]*lig_feat[i] + sigma_t[i]*eps_batch[i]['h'])
+
+        # remove ligand COM from the system
+        zt_pos, rec_pos = self.remove_lig_com(rec_pos, zt_pos)
         
-        return zt_pos, zt_feat
+        return zt_pos, zt_feat, rec_pos
 
     def sigma(self, gamma):
         """Computes sigma given gamma."""
