@@ -1,4 +1,5 @@
 import openbabel
+import rdkit
 from rdkit.Chem import AllChem as Chem
 from rdkit.Chem import rdDetermineBonds
 import tempfile
@@ -54,23 +55,20 @@ def make_mol_rdkit(positions, atom_types, atom_decoder):
 
     return mol
 
-def make_mol_openbabel(positions, atom_types, atom_decoder):
+def make_mol_openbabel(positions, atom_elements):
     """
     Build an RDKit molecule using openbabel for creating bonds
     Args:
         positions: N x 3
-        atom_types: N
-        atom_decoder: maps indices to atom types
+        atom_elemens: N, containing element string of each atom
     Returns:
         rdkit molecule
     """
-    atom_types = [atom_decoder[x] for x in atom_types]
-
     with tempfile.NamedTemporaryFile() as tmp:
         tmp_file = tmp.name
 
         # Write xyz file
-        write_xyz_file(positions, atom_types, tmp_file)
+        write_xyz_file(positions, atom_elements, tmp_file)
 
         # Convert to sdf file with openbabel
         # openbabel will add bonds

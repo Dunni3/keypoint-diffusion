@@ -1,5 +1,5 @@
 experiment:
-  name: baseline_clipping
+  name: ot_weight_0.8
   results_dir: experiments/
 
 wandb:
@@ -33,13 +33,14 @@ rec_encoder:
 
 diffusion:
   n_timesteps: 1000
+  keypoint_centered: False # when t=T, are atoms centered at COM of binding pocket keypoints? If true, then yes, if false, then atoms are at COM of binding pocket atoms when t=T
 
 dynamics:
   n_layers: 6
   hidden_nf: 256
   receptor_keypoint_k: 6
   ligand_k: 8
-  use_tanh: True # whether to use tanh activation for coordinate updates 
+  use_tanh: True # whether to use tanh activation for coordinate updates
 
 
 rec_encoder_loss:
@@ -50,7 +51,7 @@ training:
   learning_rate: 1.0e-4
   weight_decay: 1.0e-12
   clip_grad: True
-  clip_value: 1.0
+  clip_value: 1
   epochs: 1000
   batch_size: 32
   test_interval: 0.25 # measured in epochs

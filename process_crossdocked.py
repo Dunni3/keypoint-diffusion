@@ -131,9 +131,9 @@ if __name__ == "__main__":
                 dataset_config['receptor_k'], 
                 dataset_config['pocket_edge_algorithm'])
 
-            # TODO: this could be considered a target leak. We should do somthing else. Maybe pocket COM?
-            # place ligand COM at origin for the lig/rec complex
-            receptor_graph, lig_atom_positions = center_complex(receptor_graph, lig_atom_positions)
+            # note: we used to center the complexes. specifically, we would remove the ligand COM from the 
+            # ligand and receptor atom positions. however, i've refactored our training/sampling method
+            # such that it does not depend on the assumption that the input structures are in a particular reference frame
 
             # record this pair
             data.append({

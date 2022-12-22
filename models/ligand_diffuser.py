@@ -11,12 +11,13 @@ from losses.rec_encoder_loss import ReceptorEncoderLoss
 
 class LigandDiffuser(nn.Module):
 
-    def __init__(self, atom_nf, rec_nf, n_timesteps: int = 1000, 
+    def __init__(self, atom_nf, rec_nf, n_timesteps: int = 1000, keypoint_centered=False, 
     dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}):
         super().__init__()
 
         self.n_lig_features = atom_nf
         self.n_kp_feat = rec_nf
+        self.keypoint_centered = keypoint_centered
 
         # TODO: add default keyword arguments from LigRecDynamics to config file
         self.n_timesteps = n_timesteps
@@ -33,14 +34,27 @@ class LigandDiffuser(nn.Module):
         batch_size = len(lig_atom_positions)
         device = lig_atom_positions[0].device
 
+        # if we are not keypoint centered, we are receptor atom centered. We must remove COM of binding pocket atoms from the system.
+        if not self.keypoint_centered:
+            unbatched_graphs = dgl.unbatch(rec_graphs)
+            rec_atom_pos = [ g.ndata["x_0"] for g in unbatched_graphs ] # get positions of all receptor atoms
+            rec_atom_pos, lig_atom_positions = self.remove_com(rec_atom_pos, lig_atom_positions, com='receptor') # remove receptor atom COM
+
+            for i in range(batch_size):
+                unbatched_graphs[i].ndata["x_0"] = rec_atom_pos[i] # apply new positions to the receptor graph objects
+            
+            # re-batch the receptor graphs
+            rec_graphs = dgl.batch(unbatched_graphs)
+                
         # encode the receptor
         rec_pos, rec_feat = self.rec_encoder(rec_graphs)
 
         # compute receptor encoding loss
         ot_loss = self.rec_encoder_loss_fn(rec_pos, rec_graphs)
 
-        # remove ligand COM from receptor keypoint positions and ligand atom positions
-        rec_pos, lig_atom_positions = self.remove_lig_com(rec_pos, lig_atom_positions)
+        # if we are keypoint centered, we need to remove the keypoint COM from the system
+        if self.keypoint_centered:
+            rec_pos, lig_atom_positions = self.remove_com(rec_pos, lig_atom_positions, com='receptor')
 
         # sample timepoints for each item in the batch
         t = torch.randint(0, self.n_timesteps, size=(len(lig_atom_positions),), device=device).float() # timesteps
@@ -75,19 +89,32 @@ class LigandDiffuser(nn.Module):
 
         return l2_loss, ot_loss
 
-    def remove_lig_com(self, kp_pos: List[torch.Tensor], lig_pos: List[torch.Tensor]):
-        """Remove ligand center of mass from ligand atom positions and receptor keypoint positions."""
-        # note that this function operates on batches of molecules, so kp_pos and lig_pos are lists of length batch_size
-        # contianing the position of atoms/keypoints in each sample of the batch
-        lig_coms = [ x.mean(dim=0, keepdim=True) for x in lig_pos ]
-        com_free_lig = [ lig_pos[i] - lig_com for i, lig_com in enumerate(lig_coms) ]
-        com_free_kp = [ kp_pos[i] - lig_com for i, lig_com in enumerate(lig_coms) ]
-        return com_free_kp, com_free_lig
+    def remove_com(self, kp_pos: List[torch.Tensor], lig_pos: List[torch.Tensor], com: str = None):
+        """Remove center of mass from ligand atom positions and receptor keypoint positions.
 
-    def sample_com_free(self, shape, device):
-        eps = torch.randn(shape, device=device)
-        eps = eps - eps.mean()
-        return eps
+        This method can remove either the ligand COM, protein COM or the complex COM.
+
+        Args:
+            kp_pos (List[torch.Tensor]): A list of length batch_size containing receptor key point positions for each element in the batch.
+            lig_pos (List[torch.Tensor]): A list of length batch_size containing ligand atom positions for each element in the batch.
+            com (str, optional): Specifies which center of mass to remove from the system. Options are 'ligand', 'receptor', or None. If None, the COM of the ligand/receptor complex will be removed. Defaults to None.
+
+        Returns:
+            List[torch.Tensor]: Receptor keypoints with COM removed.
+            List[torch.Tensor]: Ligand atom positions with COM removed.
+        """        
+        if com is None:
+            raise NotImplementedError('removing COM of receptor/ligand complex not implemented')
+        elif com == 'ligand':
+            coms = [ x.mean(dim=0, keepdim=True) for x in lig_pos ]
+        elif com == 'receptor':
+            coms = [ x.mean(dim=0, keepdim=True) for x in kp_pos ]
+        else:
+            raise ValueError(f'invalid value for com: {com=}')
+
+        com_free_lig = [ lig_pos[i] - com for i, com in enumerate(coms) ]
+        com_free_kp = [ kp_pos[i] - com for i, com in enumerate(coms) ]
+        return com_free_kp, com_free_lig
 
     def noised_representation(self, lig_pos, lig_feat, rec_pos, eps_batch, gamma_t):
         alpha_t = self.alpha(gamma_t)
@@ -99,7 +126,7 @@ class LigandDiffuser(nn.Module):
             zt_feat.append(alpha_t[i]*lig_feat[i] + sigma_t[i]*eps_batch[i]['h'])
 
         # remove ligand COM from the system
-        zt_pos, rec_pos = self.remove_lig_com(rec_pos, zt_pos)
+        rec_pos, zt_pos = self.remove_com(rec_pos, zt_pos, com='ligand')
         
         return zt_pos, zt_feat, rec_pos
 
@@ -128,29 +155,54 @@ class LigandDiffuser(nn.Module):
 
     @torch.no_grad()
     def sample_given_pocket(self, rec_graph: dgl.DGLGraph, n_lig_atoms: torch.Tensor):
+        """Sample multiple ligands for a single binding pocket.
+
+        Args:
+            rec_graph (dgl.DGLGraph): KNN graph of just the binding pocket atoms for 1 binding pocket. Note that this is not a batched graph containing multiple receptors.
+            n_lig_atoms (torch.Tensor): A 1-dimensional tensor of integers specifying how many ligand atoms there should be in each generated ligand. If the tensor is [10,12,12], then this method call will generate a ligand with 10 atoms, 2 ligands with 12 atoms.  
+
+        Returns:
+            _type_: _description_
+        """        
 
         device = rec_graph.device
         n_samples = len(n_lig_atoms)
 
         # encode the receptor
-        rec_pos, rec_feat = self.rec_encoder(rec_graph)
+        kp_pos, kp_feat = self.rec_encoder(rec_graph)
+
+        # save initial receptor atom COM
+        init_rec_atom_com = [ g.ndata["x_0"].mean(dim=0, keepdim=True) for g in dgl.unbatch(rec_graph) ]
+
+        # save initial receptor keypoint COM
+        init_kp_com = [ x.mean(dim=0, keepdim=True) for x in kp_pos ]
+
+        # remove (receptor atom COM, or keypoint COM) from receptor keypoints
+        if self.keypoint_centered:
+            sampling_com = init_kp_com
+        else:
+            sampling_com = init_rec_atom_com
+        
+        for i in range(len(kp_pos)):
+            kp_pos[i] = kp_pos[i] - sampling_com
+
+        # up until this point, i think this method works for an arbitray number of distnct receptors, hence the unbatching of the graph object
+        # however, moving forward, this method does things that assums len(kp_pos) == 1, in other words, there is only 1 receptor and we are generating multiple ligands for the same receptor
+
+        # generate ligand
 
         # copy the receptor encoding so a separate graph can be made for each ligand
-        rec_pos = [ rec_pos[0].detach().clone() for _ in range(n_samples) ]
-        rec_feat = [ rec_feat[0].detach().clone() for _ in range(n_samples) ]
+        kp_pos = [ kp_pos[0].detach().clone() for _ in range(n_samples) ]
+        kp_feat = [ kp_feat[0].detach().clone() for _ in range(n_samples) ]
 
         # sample initial ligand positions/features
         lig_pos, lig_feat = [], []
         for i in range(n_samples):
-            lig_pos.append(self.sample_com_free(shape=(n_lig_atoms[i], 3), device=device))
+            lig_pos.append(torch.randn((n_lig_atoms[i], 3), device=device))
             lig_feat.append(torch.randn((n_lig_atoms[i], self.n_lig_features), device=device))
 
-        # TODO: note that at the time of writing this, I am only sampling from receptors which have been preprocessed
-        # by my process_crossdocked.py script. Specifically, this means that all receptors are positioned such that
-        # the ligand COM is at 0. This is why we can sample initial ligand positions using the standard normal.
-        # We will have to do something different in the future, as I think this gives it a weird bias, and to make this code
-        # so that you can sample any given pocket no matter where the coordinates are
-        # in other words, this is an assumption of the code in this function that i would like to not rely on in the future
+        # remove ligand COM from the system
+        kp_pos, lig_pos = self.remove_com(kp_pos, lig_pos, com='ligand')
 
         # Iteratively sample p(z_s | z_t) for t = 1, ..., T, with s = t - 1.
         for s in reversed(range(0, self.n_timesteps)):
@@ -159,7 +211,16 @@ class LigandDiffuser(nn.Module):
             s_arr = s_arr / self.n_timesteps
             t_arr = t_arr / self.n_timesteps
 
-            lig_feat, lig_pos = self.sample_p_zs_given_zt(s_arr, t_arr, rec_pos, rec_feat, lig_pos, lig_feat)
+            lig_feat, lig_pos = self.sample_p_zs_given_zt(s_arr, t_arr, kp_pos, kp_feat, lig_pos, lig_feat)
+
+
+        # remove final keypoint COM from system after generation
+        kp_pos, lig_pos = self.remove_com(kp_pos, lig_pos, com='receptor')
+
+        # add initial keypoint COM to system, bringing us back into the input frame of reference
+        for i in range(len(kp_pos)):
+            kp_pos[i] += init_kp_com[0]
+            lig_pos[i] += init_kp_com[0]
 
         return lig_pos, lig_feat
 
@@ -203,10 +264,13 @@ class LigandDiffuser(nn.Module):
         zs_pos = []
         zs_feat = []
         for i in range(n_samples):
-            pos_noise = self.sample_com_free(shape=zt_pos[i].shape, device=device)
+            pos_noise = torch.randn(zt_pos[i].shape, device=device)
             feat_noise = torch.randn(zt_feat[i].shape, device=device)
             zs_pos.append( mu_pos[i] + sigma[i]*pos_noise )
             zs_feat.append(mu_feat[i] + sigma[i]*feat_noise)
+
+        # remove ligand COM from system
+        rec_pos, zs_pos = self.remove_com(rec_pos, zs_pos, com='ligand')
 
         return zs_feat, zs_pos
 

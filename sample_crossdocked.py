@@ -9,7 +9,7 @@ from rdkit.Geometry import Point3D
 
 from data_processing.crossdocked.dataset import CrossDockedDataset
 from models.ligand_diffuser import LigandDiffuser
-from utils import write_xyz_file
+from utils import write_xyz_file, make_mol_openbabel
 
 def parse_arguments():
     p = argparse.ArgumentParser()
@@ -82,13 +82,19 @@ def write_sampled_ligands(lig_pos, lig_feat, output_dir: Path, dataset: CrossDoc
     lig_pos = [ arr.detach().cpu() for arr in lig_pos ]
     lig_feat = [ arr.detach().cpu() for arr in lig_feat ]
 
+    sdf_file = output_dir / 'sampled_mols.sdf'
+    writer = Chem.SDWriter(str(sdf_file))
+
     for lig_idx in range(len(lig_pos)):
         element_idxs = torch.argmax(lig_feat[lig_idx], dim=1).tolist()
 
         atom_elements = dataset.lig_atom_idx_to_element(element_idxs)
 
-        xyz_file = output_dir / f'sampled_mol_{lig_idx}.xyz'
-        write_xyz_file(lig_pos[lig_idx], atom_elements, xyz_file)
+        mol = make_mol_openbabel(lig_pos[lig_idx], atom_elements)
+
+        writer.write(mol)
+
+    writer.close()
 
 
 def main():
@@ -136,6 +142,7 @@ def main():
         n_lig_feat, 
         n_kp_feat,
         n_timesteps=args['diffusion']['n_timesteps'],
+        keypoint_centered=args['diffusion']['keypoint_centered'],
         dynamics_config=args['dynamics'], 
         rec_encoder_config=rec_encoder_config, 
         rec_encoder_loss_config=args['rec_encoder_loss']
@@ -182,6 +189,7 @@ def main():
         kp_pos, kp_feat = model.rec_encoder(rec_graph)
         kp_pos, kp_feat = kp_pos[0], kp_feat[0] # the keypoints and features are returned as lists of length batch_size, but now our batch size is just 1
 
+        # sample ligands
         lig_pos, lig_feat = model.sample_given_pocket(rec_graph, n_nodes)
 
         # write sampled ligands

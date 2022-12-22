@@ -151,6 +151,7 @@ def main():
         n_lig_feat, 
         n_kp_feat,
         n_timesteps=args['diffusion']['n_timesteps'],
+        keypoint_centered=args['diffusion']['keypoint_centered'],
         dynamics_config=args['dynamics'], 
         rec_encoder_config=rec_encoder_config, 
         rec_encoder_loss_config=args['rec_encoder_loss']
