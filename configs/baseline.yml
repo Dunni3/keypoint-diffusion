@@ -1,5 +1,5 @@
 experiment:
-  name: ot_weight_0.8
+  name: rec_encoder_coord_limit
   results_dir: experiments/
 
 wandb:
@@ -30,6 +30,8 @@ rec_encoder:
   n_convs: 6
   hidden_n_node_feat: 256 
   out_n_node_feat: 256
+  use_tanh: True
+  coords_range: 10
 
 diffusion:
   n_timesteps: 1000

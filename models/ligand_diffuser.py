@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from typing import List
 import dgl
+import dgl.function as dglfn
 import torch.nn.functional as fn
 
 from models.dynamics import LigRecDynamics
@@ -184,7 +185,7 @@ class LigandDiffuser(nn.Module):
             sampling_com = init_rec_atom_com
         
         for i in range(len(kp_pos)):
-            kp_pos[i] = kp_pos[i] - sampling_com
+            kp_pos[i] = kp_pos[i] - sampling_com[i]
 
         # up until this point, i think this method works for an arbitray number of distnct receptors, hence the unbatching of the graph object
         # however, moving forward, this method does things that assums len(kp_pos) == 1, in other words, there is only 1 receptor and we are generating multiple ligands for the same receptor
