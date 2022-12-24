@@ -1,5 +1,5 @@
 experiment:
-  name: rec_encoder_coord_limit
+  name: scaled_attention
   results_dir: experiments/
 
 wandb:
@@ -27,11 +27,12 @@ dataset:
 
 rec_encoder:
   n_keypoints: 20
-  n_convs: 6
+  n_convs: 2
   hidden_n_node_feat: 256 
   out_n_node_feat: 256
   use_tanh: True
   coords_range: 10
+  kp_feat_scale: 1.0
 
 diffusion:
   n_timesteps: 1000
@@ -39,7 +40,7 @@ diffusion:
 
 dynamics:
   n_layers: 6
-  hidden_nf: 256
+  hidden_nf: 255
   receptor_keypoint_k: 6
   ligand_k: 8
   use_tanh: True # whether to use tanh activation for coordinate updates
@@ -49,7 +50,7 @@ rec_encoder_loss:
   use_boltzmann_weights: False
 
 training:
-  rec_encoder_loss_weight: 0.1
+  rec_encoder_loss_weight: 0.01
   learning_rate: 1.0e-4
   weight_decay: 1.0e-12
   clip_grad: True
@@ -57,7 +58,7 @@ training:
   epochs: 1000
   batch_size: 32
   test_interval: 0.25 # measured in epochs
-  train_metrics_interval: 0.05 # epochs
+  train_metrics_interval: 0.1 # epochs
   save_interval: 2 # epoch
   test_epochs: 2 # number of epochs to run when evaluating on the test set
   num_workers: 0
@@ -65,4 +66,4 @@ training:
     use_cyclic_lr: False
     base_lr: 1.0e-5
     max_lr: 1.0e-4
-    step_size_up_frac: 0.25 # we specify step_size_up as a fraction of iterations_per_epoch
+    step_size_up_frac: 2 # we specify step_size_up as a fraction of iterations_per_epoch

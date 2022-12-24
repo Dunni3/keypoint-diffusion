@@ -32,6 +32,7 @@ rec_encoder:
   out_n_node_feat: 256
   use_tanh: True
   coords_range: 10
+  kp_feat_scale: 1.0
 
 diffusion:
   n_timesteps: 1000

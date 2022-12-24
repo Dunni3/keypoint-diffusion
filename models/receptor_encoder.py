@@ -136,12 +136,13 @@ class EGNNConv(nn.Module):
 class ReceptorEncoder(nn.Module):
 
     def __init__(self, n_convs: int = 6, n_keypoints: int = 10, in_n_node_feat: int = 13, 
-        hidden_n_node_feat: int = 256, out_n_node_feat: int = 32, use_tanh=True, coords_range=10):
+        hidden_n_node_feat: int = 256, out_n_node_feat: int = 32, use_tanh=True, coords_range=10, kp_feat_scale=1):
         super().__init__()
 
         self.n_convs = n_convs
         self.n_keypoints = n_keypoints
         self.out_n_node_feat = out_n_node_feat
+        self.kp_feat_scale = kp_feat_scale
 
         self.egnn_convs = []
 
@@ -210,27 +211,13 @@ class ReceptorEncoder(nn.Module):
             eqv_queries = self.eqv_keypoint_key_fn(mean_node_feature).view(self.n_keypoints, self.out_n_node_feat) # shape (n_attn_heads, n_node_feautres)
             eqv_keys = self.eqv_keypoint_query_fn(graph.ndata['h']).view(-1, self.n_keypoints, self.out_n_node_feat) # (n_nodes, n_attn_heads, n_node_features)
             eqv_att_logits = torch.einsum('ijk,jk->ji', eqv_keys, eqv_queries) # (n_attn_heads, n_nodes)
-            eqv_att_weights = torch.softmax(eqv_att_logits, dim=1)
+            eqv_att_weights = torch.softmax(eqv_att_logits/self.out_n_node_feat, dim=1)
             kp_pos = eqv_att_weights @ graph.ndata['x'] # (n_keypoints, 3)
             keypoint_positions.append(kp_pos)
 
-            # in my first attempt, i computed invariant keypoints by a mechanism similar to that used 
-            # for the equivariant keypoints. then i decided on a simpler approach:
-            # each invariant keypoint will be a weighted sum of the learned feature vectors for all receptor atoms
-            # the weights in this weighted sum will soft-maxes over the distance between the key point position and all receptor atoms
-            # the next block of commented code is the first method, and the following un-commented block of code is the second method
-
-            # compute invariant keypoints
-            # inv_queries = self.inv_keypoint_key_fn(mean_node_feature).view(self.n_keypoints, self.out_n_node_feat) # shape (n_attn_heads, n_node_feautres)
-            # inv_keys = self.inv_keypoint_query_fn(graph.ndata['h']).view(-1, self.n_keypoints, self.out_n_node_feat) # (n_nodes, n_attn_heads, n_node_features)
-            # inv_att_logits = torch.einsum('ijk,jk->ji', inv_keys, inv_queries) # (n_attn_heads, n_nodes)
-            # inv_att_weights = torch.softmax(inv_att_logits, dim=1)
-            # kp_feat = inv_att_weights @ graph.ndata['h']
-            # keypoint_features.append(kp_feat)
-
             # compute distance between keypoints and binding pocket points
             kp_dist = torch.cdist(kp_pos, graph.ndata['x_0'])
-            kp_feat_weights = torch.softmax(kp_dist, dim=1) # (n_keypoints, n_pocket_atoms)
+            kp_feat_weights = torch.softmax(kp_dist/self.kp_feat_scale, dim=1) # (n_keypoints, n_pocket_atoms)
             kp_feat = kp_feat_weights @ graph.ndata["h"]
             keypoint_features.append(kp_feat)
 

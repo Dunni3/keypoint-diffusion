@@ -22,24 +22,25 @@ from dgl.dataloading import GraphDataLoader
 def parse_arguments():
     p = argparse.ArgumentParser()
 
-    # rec_encoder_group = p.add_argument_group('receptor encoder')
-    # rec_encoder_group.add_argument('--n_keypoints', type=int, default=20, help="number of keypoints produced by receptor encoder module")
-    # rec_encoder_group.add_argument('--n_convs_encoder', type=int, default=6, help="number of graph convolutions in receptor encoder")
-    # rec_encoder_group.add_argument('--encoder_hidden_feats', type=int, default=256, help="number of hidden features in receptor encoder")
-    # rec_encoder_group.add_argument('--keypoint_feats', type=int, default=256, help='number of features for receptor keypoints')
+    rec_encoder_group = p.add_argument_group('receptor encoder')
+    rec_encoder_group.add_argument('--n_keypoints', type=int, default=None, help="number of keypoints produced by receptor encoder module")
+    rec_encoder_group.add_argument('--n_convs_encoder', type=int, default=None, help="number of graph convolutions in receptor encoder")
+    rec_encoder_group.add_argument('--encoder_hidden_feats', type=int, default=None, help="number of hidden features in receptor encoder")
+    rec_encoder_group.add_argument('--keypoint_feats', type=int, default=None, help='number of features for receptor keypoints')
+    rec_encoder_group.add_argument('--kp_feat_scale', type=float, default=None, help='scaling value for rec encoder keypoint feature attention')
     
-    # dynamics_group = p.add_argument_group('dynamics')
-    # dynamics_group.add_argument('--n_convs_dynamics', type=int, default=6, help='number of graph convolutions in the dynamics model')
+    dynamics_group = p.add_argument_group('dynamics')
+    dynamics_group.add_argument('--n_convs_dynamics', type=int, default=None, help='number of graph convolutions in the dynamics model')
     # dynamics_group.add_argument('--keypoint_k', type=int, default=6, help='K for keypoint -> ligand KNN graph')
     # dynamics_group.add_argument('--ligand_k', type=int, default=8, help='K for ligand -> ligand KNN graph')
     # dynamics_group.add_argument('--use_tanh', type=bool, default=True, help='whether to place tanh activation on coordinate MLP output')
 
-    # training_group = p.add_argument_group('training')
-    # training_group.add_argument('--rec_encoder_loss_weight', type=float, default=0.1, help='relative weight applied to receptor encoder OT loss')
-    # training_group.add_argument('--lr', type=float, default=1e-4, help='base learning rate')
-    # training_group.add_argument('--weight_decay', type=float, default=1e-9)
+    training_group = p.add_argument_group('training')
+    training_group.add_argument('--rec_encoder_loss_weight', type=float, default=None, help='relative weight applied to receptor encoder OT loss')
+    training_group.add_argument('--lr', type=float, default=None, help='base learning rate')
+    training_group.add_argument('--weight_decay', type=float, default=None)
     # training_group.add_argument('--clip_grad', type=bool, default=True, help='whether to clip gradients')
-    # training_group.add_argument('--clip_value', type=float, default=1.5, help='max gradient value for clipping')
+    training_group.add_argument('--clip_value', type=float, default=None, help='max gradient value for clipping')
     # training_group.add_argument('--epochs', type=int, default=1000)
     # training_group.add_argument('--batch_size', type=int, default=32)
     # training_group.add_argument('--test_interval', type=float, default=1, help="evaluate on test set every test_interval epochs")
@@ -48,11 +49,42 @@ def parse_arguments():
     # training_group.add_argument('--num_workers', type=int, default=1, help='num_workers argument for pytorch dataloader')
     # TODO: how do i merge commandline arguments with config file arguments?
 
-    p.add_argument('--config', type=str, default='configs/dev_config.yml')
+    p.add_argument('--config', type=str, required=True)
     args = p.parse_args()
 
     with open(args.config, 'r') as f:
         config_dict = yaml.load(f, Loader=yaml.FullLoader)
+
+    # override config file args with command line args
+    if args.n_keypoints is not None:
+        config_dict['rec_encoder']['n_keypoints'] = args.n_keypoints
+
+    if args.n_convs_encoder is not None:
+        config_dict['rec_encoder']['n_convs'] = args.n_convs_encoder
+
+    if args.encoder_hidden_feats is not None:
+        config_dict['rec_encoder']['hidden_n_node_feat'] = args.encoder_hidden_feats
+
+    if args.keypoint_feats is not None:
+        config_dict['rec_encoder']['out_n_node_feat'] = args.keypoint_feats
+
+    if args.n_convs_dynamics is not None:
+        config_dict['dynamics']['n_layers'] = args.n_convs_dynamics
+
+    if args.kp_feat_scale is not None:
+        config_dict['rec_encoder']['kp_feat_scale'] = args.kp_feat_scale
+
+    if args.rec_encoder_loss_weight is not None:
+        config_dict['training']['rec_encoder_loss_weight'] = args.rec_encoder_loss_weight
+
+    if args.lr is not None:
+        config_dict['training']['learning_rate'] = args.lr
+
+    if args.weight_decay is not None:
+        config_dict['training']['weight_decay'] = args.weight_decay
+
+    if args.clip_value is not None:
+        config_dict['training']['clip_value'] = args.clip_value
 
     return args, config_dict
 
