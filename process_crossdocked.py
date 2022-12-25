@@ -74,7 +74,7 @@ if __name__ == "__main__":
         for pair_idx, input_pair in enumerate(dataset_index[split_key]):
 
             if pair_idx % 10000 == 0:
-                print(f'{pair_idx} complexes processed')
+                print(f'{pair_idx} complexes processed', flush=True)
 
             # break early if the dataset size is limited
             # this is only for working with truncated datasets for debugging/development purposes

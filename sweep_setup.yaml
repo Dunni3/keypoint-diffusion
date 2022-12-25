@@ -1,4 +1,4 @@
-method: bayes
+method: grid
 metric:
   goal: minimize
   name: test_l2_loss
@@ -7,12 +7,10 @@ parameters:
     values:
       - 5
       - 10
-      - 15
       - 20
   n_convs_encoder:
     values:
       - 2
-      - 3
       - 6
   encoder_hidden_feats:
     values:
@@ -29,34 +27,28 @@ parameters:
   n_convs_dynamics:
     values:
       - 2
-      - 4
       - 6
   rec_encoder_loss_weight:
     values:
       - 0
-      - 0.0001
       - 0.001
-      - 0.01
       - 0.1
       - 0.3
   lr:
     values:
       - 1.0e-4
       - 3.0e-4
-      - 5.0e-4
   weight_decay:
     values:
       - 1.0e-12
-      - 1.0e-9
       - 1.0e-7
   clip_value:
     values:
       - 1
       - 0.5
-      - 2
 program: train_crossdocked.py
 command:
-  - /home/ian/miniconda3/envs/ligdiff/bin/python
+  - /net/dali/home/mscbio/icd3/.conda/envs/ligdiff/bin/python
   - ${program}
-  - "--config=configs/baseline.yml"
+  - "--config=configs/sweep.yml"
   - ${args}
