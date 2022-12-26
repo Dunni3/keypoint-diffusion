@@ -1,5 +1,5 @@
 experiment:
-  name: scaled_attention
+  name: scale2_cyclic
   results_dir: experiments/
 
 wandb:
@@ -32,7 +32,7 @@ rec_encoder:
   out_n_node_feat: 256
   use_tanh: True
   coords_range: 10
-  kp_feat_scale: 1.0
+  kp_feat_scale: 2
 
 diffusion:
   n_timesteps: 1000
@@ -50,7 +50,7 @@ rec_encoder_loss:
   use_boltzmann_weights: False
 
 training:
-  rec_encoder_loss_weight: 0.01
+  rec_encoder_loss_weight: 1.0
   learning_rate: 1.0e-4
   weight_decay: 1.0e-12
   clip_grad: True
@@ -63,7 +63,7 @@ training:
   test_epochs: 2 # number of epochs to run when evaluating on the test set
   num_workers: 0
   cyclic_lr: # settings regarding a cyclic learning rate
-    use_cyclic_lr: False
+    use_cyclic_lr: True
     base_lr: 1.0e-5
-    max_lr: 1.0e-4
-    step_size_up_frac: 2 # we specify step_size_up as a fraction of iterations_per_epoch
+    max_lr: 4.0e-4
+    step_size_up_frac: 4 # we specify step_size_up as a fraction of iterations_per_epoch

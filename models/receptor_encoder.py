@@ -143,6 +143,7 @@ class ReceptorEncoder(nn.Module):
         self.n_keypoints = n_keypoints
         self.out_n_node_feat = out_n_node_feat
         self.kp_feat_scale = kp_feat_scale
+        self.kp_pos_norm = out_n_node_feat**0.5
 
         self.egnn_convs = []
 
@@ -211,14 +212,67 @@ class ReceptorEncoder(nn.Module):
             eqv_queries = self.eqv_keypoint_key_fn(mean_node_feature).view(self.n_keypoints, self.out_n_node_feat) # shape (n_attn_heads, n_node_feautres)
             eqv_keys = self.eqv_keypoint_query_fn(graph.ndata['h']).view(-1, self.n_keypoints, self.out_n_node_feat) # (n_nodes, n_attn_heads, n_node_features)
             eqv_att_logits = torch.einsum('ijk,jk->ji', eqv_keys, eqv_queries) # (n_attn_heads, n_nodes)
-            eqv_att_weights = torch.softmax(eqv_att_logits/self.out_n_node_feat, dim=1)
+            eqv_att_weights = torch.softmax(eqv_att_logits/self.kp_pos_norm, dim=1)
             kp_pos = eqv_att_weights @ graph.ndata['x'] # (n_keypoints, 3)
             keypoint_positions.append(kp_pos)
 
             # compute distance between keypoints and binding pocket points
             kp_dist = torch.cdist(kp_pos, graph.ndata['x_0'])
-            kp_feat_weights = torch.softmax(kp_dist/self.kp_feat_scale, dim=1) # (n_keypoints, n_pocket_atoms)
+            kp_feat_weights = torch.softmax(kp_dist*self.kp_feat_scale, dim=1) # (n_keypoints, n_pocket_atoms)
             kp_feat = kp_feat_weights @ graph.ndata["h"]
             keypoint_features.append(kp_feat)
 
         return keypoint_positions, keypoint_features
+
+
+class KeypointMHA(nn.Module):
+
+    def __init__(self, n_heads: int, in_dim: int, hidden_dim: int, act_fn = nn.SiLU):
+        super().__init__()
+        self.n_heads = n_heads
+        self.hidden_dim = hidden_dim
+        self.in_dim = in_dim
+
+        self.key_fn = nn.Linear(in_dim, hidden_dim*n_heads, bias=False)
+        self.query_fn = nn.Linear(in_dim, hidden_dim*n_heads, bias=False)
+        self.val_fn = nn.Linear(in_dim, hidden_dim*n_heads, bias=False)
+
+        self.out_mlp = nn.Sequential(
+            nn.Linear(hidden_dim*n_heads, hidden_dim),
+            act_fn(),
+            nn.Linear(hidden_dim, in_dim),
+            act_fn()
+        )
+
+        self.kq_norm = self.hidden_dim**0.5
+        self.dist_norm = 0.5
+        self.att_norm = 2**0.5
+
+    def forward(self, kp_pos, kp_feat):
+        # kp_pos (batch_size, n_keypoints, 3)
+        # kp_feat (batch_size, n_keypoints, in_dim)
+        batch_size, n_keypoints, _ = kp_pos.shape
+
+        # compute pairwise keypoint distances
+        dist_mat = torch.cdist(kp_pos, kp_pos).unsqueeze(1) # (batch_size, 1, n_keypoints, n_keypoints)
+
+        # compute keys, queries, and values
+        keys = self.key_fn(kp_feat).view(batch_size, self.n_heads, n_keypoints, self.hidden_dim) # (batch_size, n_heads, n_keypoints, hidden_dim)
+        queries = self.query_fn(kp_feat).view(batch_size, self.n_heads, n_keypoints, self.hidden_dim) # (batch_size, n_heads, n_keypoints, hidden_dim)
+        values = self.val_fn(kp_feat).view(batch_size, self.n_heads, n_keypoints, self.hidden_dim) # (batch_size, n_heads, n_keypoints, hidden_dim)
+
+        # compute dot-product of keys/queries for all pairs of keypoints
+        kq_dot = torch.einsum('bhkd,bhkd->bhkk' , keys, queries) # (batch_size, n_heads, n_keypoints, n_keypoints)
+
+        # compute pre-softmax attention matrix, then take its softmax
+        att_mat = (dist_mat/self.dist_norm + kq_dot/self.kq_norm)/self.att_norm # (batch_size, n_heads, n_keypoints, n_keypoints)
+        att_weights = torch.softmax(att_mat, dim=3)
+        
+        # multiply attention weights by values
+        updated_values = torch.einsum('bhkk,bhkd->', att_weights, values) # (n_heads, hidden_dim, batch_size, n_keypoints)
+
+        # collapse n_heads and hidden_dim on to each other
+
+
+
+        pass
