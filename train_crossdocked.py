@@ -210,7 +210,7 @@ def main():
     # initialize wandb
     wandb_init_kwargs = args['wandb']['init_kwargs']
     wandb_init_kwargs['name'] = args['experiment']['name']
-    wandb.init(config=args, **wandb_init_kwargs)
+    wandb.init(config=args, settings=dict(start_method="thread"), **wandb_init_kwargs)
 
     # watch model if desired
     if args['wandb']['watch_model']:
