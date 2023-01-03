@@ -32,10 +32,10 @@ class CrossDockedDataset(dgl.data.DGLDataset):
         self.data_file: Path = Path(processed_data_file)
 
         # TODO: remove this line, this was only for debugging
-        data_split = self.data_file.stem
-        filenames_file = self.data_file.parent / f'{data_split}_filenames.pkl'
-        with open(filenames_file, 'rb') as f:
-            self.filenames = pickle.load(f)
+        # data_split = self.data_file.stem
+        # filenames_file = self.data_file.parent / f'{data_split}_filenames.pkl'
+        # with open(filenames_file, 'rb') as f:
+        #     self.filenames = pickle.load(f)
         ########
 
         # atom typing configurations
@@ -60,23 +60,18 @@ class CrossDockedDataset(dgl.data.DGLDataset):
         super().__init__(name=name) # this has to happen last because this will call self.process()
 
     def __getitem__(self, i):
-        data_dict = self.data[i]
-
-        # TODO: remove this line, its for debugging only
-        # rec_file = self.filenames['rec_files'][i]
-        # lig_file = self.filenames['lig_files'][i]
-        # print(f'{i=}, {rec_file=}, {lig_file=}', flush=True)
-
-        return data_dict['receptor_graph'], data_dict['lig_atom_positions'], data_dict['lig_atom_features']
+        rec_graph = self.data['receptor_graph'][i]
+        lig_atom_positions = self.data['lig_atom_positions'][i]
+        lig_atom_features = self.data['lig_atom_features'][i]
+        return rec_graph, lig_atom_positions, lig_atom_features
 
     def __len__(self):
-        return len(self.data)
+        return len(self.data['receptor_graph'])
 
     def process(self):
         # load data into memory
-        
         if not self.load_data:
-            self.data = []
+            self.data = {'receptor_graph': []}
         else:
             with open(self.data_file, 'rb') as f:
                 self.data = pickle.load(f)

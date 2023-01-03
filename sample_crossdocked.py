@@ -9,7 +9,8 @@ import shutil
 
 from data_processing.crossdocked.dataset import CrossDockedDataset
 from models.ligand_diffuser import LigandDiffuser
-from utils import write_xyz_file, make_mol_openbabel
+from utils import write_xyz_file
+from analysis.molecule_builder import make_mol_openbabel
 
 def parse_arguments():
     p = argparse.ArgumentParser()

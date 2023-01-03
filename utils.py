@@ -19,6 +19,8 @@ def write_xyz_file(coords, atom_types, filename = None):
 
 # this is taken from DiffSBDD's make_mol_openbabel, i've adapted their method to do bond determination using rdkit
 # useful blog post: https://greglandrum.github.io/rdkit-blog/posts/2022-12-18-introducing-rdDetermineBonds.html
+# update, i wasn't able to make this work, so
+# TODO: make this work
 def make_mol_rdkit(positions, atom_types, atom_decoder):
     """
     Build an RDKit molecule using openbabel for creating bonds
@@ -55,31 +57,3 @@ def make_mol_rdkit(positions, atom_types, atom_decoder):
 
     return mol
 
-def make_mol_openbabel(positions, atom_elements):
-    """
-    Build an RDKit molecule using openbabel for creating bonds
-    Args:
-        positions: N x 3
-        atom_elemens: N, containing element string of each atom
-    Returns:
-        rdkit molecule
-    """
-    with tempfile.NamedTemporaryFile() as tmp:
-        tmp_file = tmp.name
-
-        # Write xyz file
-        write_xyz_file(positions, atom_elements, tmp_file)
-
-        # Convert to sdf file with openbabel
-        # openbabel will add bonds
-        obConversion = openbabel.OBConversion()
-        obConversion.SetInAndOutFormats("xyz", "sdf")
-        ob_mol = openbabel.OBMol()
-        obConversion.ReadFile(ob_mol, tmp_file)
-
-        obConversion.WriteFile(ob_mol, tmp_file)
-
-        # Read sdf file with RDKit
-        mol = Chem.SDMolSupplier(tmp_file, sanitize=False)[0]
-
-    return mol

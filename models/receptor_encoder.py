@@ -186,8 +186,6 @@ class KeypointMHA(nn.Module):
 
         return output
 
-
-
 class ReceptorEncoder(nn.Module):
 
     def __init__(self, n_convs: int = 6, n_keypoints: int = 10, in_n_node_feat: int = 13, 

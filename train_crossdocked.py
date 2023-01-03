@@ -119,6 +119,17 @@ def test_model(model, test_dataloader, args, device):
     return loss_dict
 
 
+@torch.no_grad()
+def eval_samples(model: LigandDiffuser, test_dataset: CrossDockedDataset, n_receptors: int = 10, n_replicates: int = 10):
+
+
+    receptor_idxs = torch.randint(low=0, high=len(test_dataset), size=(n_receptors,))
+
+    rec_graphs = [test_dataset[idx][0] for idx in receptor_idxs]
+
+    
+        
+
 def main():
     script_args, args = parse_arguments()
     # torch.autograd.set_detect_anomaly(True)

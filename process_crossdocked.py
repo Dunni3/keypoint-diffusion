@@ -7,6 +7,7 @@ from typing import Dict
 import dgl
 import pickle
 import numpy as np
+from collections import defaultdict
 
 from data_processing.pdbbind_processing import (build_receptor_graph,
                                                 get_pocket_atoms, parse_ligand,
@@ -68,9 +69,9 @@ if __name__ == "__main__":
             continue
 
         dataset_idx = 0
-        data = []
-        rec_files = []
-        lig_files = []
+        data = defaultdict(list)
+        ligand_size_counter = defaultdict(int)
+        atom_type_counts = None
         for pair_idx, input_pair in enumerate(dataset_index[split_key]):
 
             if pair_idx % 10000 == 0:
@@ -131,24 +132,33 @@ if __name__ == "__main__":
                 dataset_config['receptor_k'], 
                 dataset_config['pocket_edge_algorithm'])
 
-            # note: we used to center the complexes. specifically, we would remove the ligand COM from the 
-            # ligand and receptor atom positions. however, i've refactored our training/sampling method
-            # such that it does not depend on the assumption that the input structures are in a particular reference frame
+            # record data
+            data['receptor_graph'].append(receptor_graph)
+            data['lig_atom_positions'].append(lig_atom_positions)
+            data['lig_atom_features'].append(lig_atom_features)
+            data['rec_files'].append(str(rec_file))
+            data['lig_files'].append(str(lig_file))
 
-            # record this pair
-            data.append({
-                'receptor_graph': receptor_graph,
-                'lig_atom_positions': lig_atom_positions,
-                'lig_atom_features': lig_atom_features
-            })
+            # update atom counts
+            # NOTE: we are assuming that ligand atom features are strictly one-hots of atom type so.
+            # this might not always be the case, for example, maybe we want partial charges to be an atom-features
+            # but for now, we're only using atom types, so ligand features == atom type one-hots
+            if atom_type_counts is None:
+                atom_type_counts = lig_atom_features.sum(dim=0)
+            else:
+                atom_type_counts += lig_atom_features.sum(dim=0)
 
-            # record receptor and ligand files
-            rec_files.append(str(rec_file))
-            lig_files.append(str(lig_file))
+            # record ligand size
+            ligand_size_counter[lig_atom_positions.shape[0]] += 1
 
             # increment dataset_idx
             dataset_idx += 1
 
+        # compute/save atom type counts
+        atom_type_counts = torch.concat(data['lig_atom_features'], dim=0).sum(dim=0)
+        type_counts_file = output_dir / f'{split_key}_type_counts.pkl'
+        with open(type_counts_file, 'wb') as f:
+            pickle.dump(atom_type_counts, f)
 
         # save data for this split
         data_filepath = output_dir / f'{split_key}.pkl'
@@ -157,4 +167,9 @@ if __name__ == "__main__":
 
         filenames = output_dir / f'{split_key}_filenames.pkl'
         with open(filenames, 'wb') as f:
-            pickle.dump({'rec_files': rec_files, 'lig_files': lig_files}, f)
+            pickle.dump({'rec_files': data['rec_files'], 'lig_files': data['lig_files']}, f)
+
+        # save ligand size counts
+        lig_size_file = output_dir / f'{split_key}_ligand_sizes.pkl'
+        with open(lig_size_file, 'wb') as f:
+            pickle.dump(ligand_size_counter, f)
