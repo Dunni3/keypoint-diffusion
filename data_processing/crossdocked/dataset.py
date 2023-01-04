@@ -31,6 +31,9 @@ class CrossDockedDataset(dgl.data.DGLDataset):
         # define filepath of data
         self.data_file: Path = Path(processed_data_file)
 
+        # create ligand type distribution object
+        self.lig_type_dist = LigandTypeDistribution(self.data_file)
+
         # TODO: remove this line, this was only for debugging
         # data_split = self.data_file.stem
         # filenames_file = self.data_file.parent / f'{data_split}_filenames.pkl'
@@ -54,7 +57,6 @@ class CrossDockedDataset(dgl.data.DGLDataset):
         self.lig_box_padding: Union[int, float] = lig_box_padding
         self.pocket_cutoff: Union[int, float] = pocket_cutoff
         self.pocket_edge_algorithm: str = pocket_edge_algorithm
-
         self.use_boltzmann_ot = use_boltzmann_ot
 
         super().__init__(name=name) # this has to happen last because this will call self.process()
@@ -80,6 +82,15 @@ class CrossDockedDataset(dgl.data.DGLDataset):
         atom_elements = [ self.lig_reverse_map[element_idx] for element_idx in element_idxs ]
         return atom_elements
 
+    @property
+    def type_counts_file(self) -> Path:
+        dataset_split = self.data_file.name.split('_')[0]
+        types_file = self.data_file.parent / f'{dataset_split}_type_counts.pkl'
+        return types_file
+
+    @property
+    def dataset_dir(self) -> Path:
+        return self.data_file.parent
 
         
 def collate_fn(examples: list):

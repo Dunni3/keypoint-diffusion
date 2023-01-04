@@ -120,14 +120,28 @@ def test_model(model, test_dataloader, args, device):
 
 
 @torch.no_grad()
-def eval_samples(model: LigandDiffuser, test_dataset: CrossDockedDataset, n_receptors: int = 10, n_replicates: int = 10):
+def sample_and_analyze(model: LigandDiffuser, test_dataset: CrossDockedDataset, 
+    n_receptors: int = 10, n_replicates: int = 10, rec_enc_batch_size: int = 16, diff_batch_size: int = 32):
 
 
     receptor_idxs = torch.randint(low=0, high=len(test_dataset), size=(n_receptors,))
 
     rec_graphs = [test_dataset[idx][0] for idx in receptor_idxs]
 
+    samples = model.sample_random_sizes(rec_graphs, n_replicates=n_replicates, rec_enc_batch_size=rec_enc_batch_size, diff_batch_size=diff_batch_size)
+
+    # flatten the list of samples and separate into "positions" and "features"
+    lig_pos = []
+    lig_feat = []
+    for rec_list in samples:
+        lig_pos.extend([ lig_dict['positions'] for lig_dict in rec_list ])
+        lig_feat.extend([ lig_dict['features'] for lig_dict in rec_list ])
+
     
+
+    
+
+
         
 
 def main():

@@ -7,6 +7,7 @@ from typing import Dict
 import dgl
 import pickle
 import numpy as np
+from rdkit import Chem
 from collections import defaultdict
 
 from data_processing.pdbbind_processing import (build_receptor_graph,
@@ -71,6 +72,7 @@ if __name__ == "__main__":
         dataset_idx = 0
         data = defaultdict(list)
         ligand_size_counter = defaultdict(int)
+        smiles = set()
         atom_type_counts = None
         for pair_idx, input_pair in enumerate(dataset_index[split_key]):
 
@@ -139,6 +141,14 @@ if __name__ == "__main__":
             data['rec_files'].append(str(rec_file))
             data['lig_files'].append(str(lig_file))
 
+            # compute/record smiles
+            try:
+                smi = Chem.MolToSmiles(ligand)
+            except:
+                print('failed to convert to smiles', flush=True)
+            if smi is not None:
+                smiles.add(smi)
+
             # update atom counts
             # NOTE: we are assuming that ligand atom features are strictly one-hots of atom type so.
             # this might not always be the case, for example, maybe we want partial charges to be an atom-features
@@ -155,7 +165,6 @@ if __name__ == "__main__":
             dataset_idx += 1
 
         # compute/save atom type counts
-        atom_type_counts = torch.concat(data['lig_atom_features'], dim=0).sum(dim=0)
         type_counts_file = output_dir / f'{split_key}_type_counts.pkl'
         with open(type_counts_file, 'wb') as f:
             pickle.dump(atom_type_counts, f)
@@ -173,3 +182,8 @@ if __name__ == "__main__":
         lig_size_file = output_dir / f'{split_key}_ligand_sizes.pkl'
         with open(lig_size_file, 'wb') as f:
             pickle.dump(ligand_size_counter, f)
+
+        # save smiles
+        smiles_file = output_dir / f'{split_key}_smiles.pkl'
+        with open(smiles_file, 'wb') as f:
+            pickle.dump(smiles, f)
