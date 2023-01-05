@@ -146,6 +146,7 @@ if __name__ == "__main__":
                 smi = Chem.MolToSmiles(ligand)
             except:
                 print('failed to convert to smiles', flush=True)
+                
             if smi is not None:
                 smiles.add(smi)
 

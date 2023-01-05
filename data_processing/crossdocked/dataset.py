@@ -31,9 +31,6 @@ class CrossDockedDataset(dgl.data.DGLDataset):
         # define filepath of data
         self.data_file: Path = Path(processed_data_file)
 
-        # create ligand type distribution object
-        self.lig_type_dist = LigandTypeDistribution(self.data_file)
-
         # TODO: remove this line, this was only for debugging
         # data_split = self.data_file.stem
         # filenames_file = self.data_file.parent / f'{data_split}_filenames.pkl'

@@ -17,11 +17,11 @@ class LigandSizeDistribution:
 
         idx_to_size, probs = list(zip(*n_node_probs.items()))
         self.idx_to_size = torch.Tensor(idx_to_size).int()
+        probs = torch.Tensor(probs)
 
         self.dist = torch.distributions.Categorical(probs=probs)
 
     def sample(self, size) -> torch.Tensor:
-
         sampled_idxs = self.dist.sample(sample_shape=size)
         sampled_sizes = self.idx_to_size[sampled_idxs]
         return sampled_sizes

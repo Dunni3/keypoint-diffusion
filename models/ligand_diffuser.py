@@ -1,6 +1,6 @@
 from math import ceil
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import dgl
 import dgl.function as dglfn
@@ -160,7 +160,7 @@ class LigandDiffuser(nn.Module):
         return sigma2_t_given_s, sigma_t_given_s, alpha_t_given_s
 
     @torch.no_grad()
-    def _sample(self, receptors: List[dgl.DGLGraph], n_lig_atoms: List[List[int]], rec_enc_batch_size: int = 32, diff_batch_size: int = 32) -> List[List[Tuple[torch.Tensor]]]:
+    def _sample(self, receptors: List[dgl.DGLGraph], n_lig_atoms: List[List[int]], rec_enc_batch_size: int = 32, diff_batch_size: int = 32) -> List[List[Dict[str, torch.Tensor]]]:
         """Sample multiple receptors with multiple ligands per receptor.
 
         Args:
@@ -224,7 +224,7 @@ class LigandDiffuser(nn.Module):
                 sampling_com = init_kp_com_src[rec_idx]
             else:
                 sampling_com = init_rec_atom_com_src[rec_idx]
-            com_free_kp_pos = kp_feat_src[rec_idx] - sampling_com
+            com_free_kp_pos = kp_pos_src[rec_idx] - sampling_com
 
             # get n_ligand copies of receptor keypoint positions
             rec_kp_pos = [ com_free_kp_pos.detach().clone() for _ in range(n_ligands) ]

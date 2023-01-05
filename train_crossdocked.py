@@ -13,6 +13,7 @@ from data_processing.crossdocked.dataset import CrossDockedDataset, get_dataload
 from models.dynamics import LigRecDynamics
 from models.receptor_encoder import ReceptorEncoder
 from models.ligand_diffuser import LigandDiffuser
+from analysis.metrics import ModelAnalyzer
 import torch
 import numpy as np
 
@@ -117,31 +118,6 @@ def test_model(model, test_dataloader, args, device):
         'ot_loss': np.array(ot_losses).mean()
     }
     return loss_dict
-
-
-@torch.no_grad()
-def sample_and_analyze(model: LigandDiffuser, test_dataset: CrossDockedDataset, 
-    n_receptors: int = 10, n_replicates: int = 10, rec_enc_batch_size: int = 16, diff_batch_size: int = 32):
-
-
-    receptor_idxs = torch.randint(low=0, high=len(test_dataset), size=(n_receptors,))
-
-    rec_graphs = [test_dataset[idx][0] for idx in receptor_idxs]
-
-    samples = model.sample_random_sizes(rec_graphs, n_replicates=n_replicates, rec_enc_batch_size=rec_enc_batch_size, diff_batch_size=diff_batch_size)
-
-    # flatten the list of samples and separate into "positions" and "features"
-    lig_pos = []
-    lig_feat = []
-    for rec_list in samples:
-        lig_pos.extend([ lig_dict['positions'] for lig_dict in rec_list ])
-        lig_feat.extend([ lig_dict['features'] for lig_dict in rec_list ])
-
-    
-
-    
-
-
         
 
 def main():
@@ -207,6 +183,7 @@ def main():
     model = LigandDiffuser(
         n_lig_feat, 
         n_kp_feat,
+        processed_dataset_dir=Path(args['dataset']['location']), # TODO: on principle, i don't like that our model needs access to the processed data dir for which it was trained.. need to fix/reorganize to avoid this
         n_timesteps=args['diffusion']['n_timesteps'],
         keypoint_centered=args['diffusion']['keypoint_centered'],
         dynamics_config=args['dynamics'], 
@@ -219,6 +196,10 @@ def main():
         model.parameters(), 
         lr=args["training"]['learning_rate'],
         weight_decay=args["training"]['weight_decay'])
+
+
+    # create model analyzer
+    model_analyzer = ModelAnalyzer(model=model, dataset=test_dataset, device=device)
 
     # check if we are using cylic learning rates
     use_cyclic_lr = args['training']['cyclic_lr']['use_cyclic_lr']
@@ -263,6 +244,7 @@ def main():
     test_report_marker = 0 # measured in epochs
     train_report_marker = 0 # measured in epochs
     save_marker = 0
+    sample_eval_marker = 0
 
     # record start time for training
     training_start = time.time()
@@ -312,6 +294,17 @@ def main():
                 most_recent_model = output_dir / 'model.pt' # filepath of most recently saved model - note this is always the same path
                 torch.save(model.state_dict(), str(file_path)) # save current model
                 torch.save(model.state_dict(), str(most_recent_model)) # save most recent model
+
+            # evaluate the quality of sampled molecules, if necessary
+            if current_epoch - sample_eval_marker >= args['training']['sample_interval'] or current_epoch == 0:
+                molecule_quality_metrics = model_analyzer.sample_and_analyze(**args['sampling_config'])
+                molecule_quality_metrics['epoch_exact'] = current_epoch
+
+                print('molecule quality metrics')
+                print(*[ f'{k} = {v:.2f}' for k,v in molecule_quality_metrics.items()], sep='\n', flush=True)
+                print('\n')
+
+                wandb.log(molecule_quality_metrics)
 
             # test the model if necessary
             if current_epoch - test_report_marker >= args['training']['test_interval'] or current_epoch == 0:

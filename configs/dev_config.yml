@@ -55,11 +55,12 @@ training:
   weight_decay: 1.0e-12
   clip_grad: False
   clip_value: 1.5
-  epochs: 1
+  epochs: 3
   batch_size: 8
   test_interval: 0.5 # measured in epochs
   train_metrics_interval: 0.5 # epochs
   save_interval: 0.5 # epoch
+  sample_interval: 1 # number of epochs between sampling/testing molecules
   test_epochs: 2 # number of epochs to run when evaluating on the test set
   num_workers: 1
   cyclic_lr: # settings regarding a cyclic learning rate
@@ -67,3 +68,9 @@ training:
     base_lr: 1.0e-5
     max_lr: 1.0e-4
     step_size_up_frac: 0.25 # we specify step_size_up as a fraction of iterations_per_epoch
+
+sampling_config:
+  n_receptors: 2
+  n_replicates: 2
+  rec_enc_batch_size: 32
+  diff_batch_size: 32

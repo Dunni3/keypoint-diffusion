@@ -1,5 +1,4 @@
 import openbabel
-import rdkit
 from rdkit.Chem import AllChem as Chem
 from rdkit.Chem import rdDetermineBonds
 import tempfile
@@ -56,4 +55,3 @@ def make_mol_rdkit(positions, atom_types, atom_decoder):
     mol = Chem.SDMolSupplier(tmp_file, sanitize=False)[0]
 
     return mol
-
