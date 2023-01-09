@@ -57,9 +57,9 @@ training:
   clip_value: 1.5
   epochs: 3
   batch_size: 8
-  test_interval: 0.5 # measured in epochs
+  test_interval: 10 # measured in epochs
   train_metrics_interval: 0.5 # epochs
-  save_interval: 0.5 # epoch
+  save_interval: 10 # epoch
   sample_interval: 1 # number of epochs between sampling/testing molecules
   test_epochs: 2 # number of epochs to run when evaluating on the test set
   num_workers: 1

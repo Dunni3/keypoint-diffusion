@@ -8,6 +8,7 @@ from torch.nn.functional import one_hot
 from models.ligand_diffuser import LigandDiffuser
 from data_processing.crossdocked.dataset import CrossDockedDataset
 from analysis.molecule_builder import make_mol_openbabel
+from constants import allowed_bonds
 
 class ModelAnalyzer:
 
@@ -41,7 +42,7 @@ class ModelAnalyzer:
             rec_enc_batch_size=rec_enc_batch_size, 
             diff_batch_size=diff_batch_size)
 
-        # flatten the list of samples and separate into "positions" and "features"
+        # flatten the list of samples into "positions" and "features"
         lig_pos = []
         lig_feat = []
         for rec_dict in samples:
@@ -59,17 +60,24 @@ class ModelAnalyzer:
             mol = make_mol_openbabel(lig_pos_i, atom_elements)
             unprocessed_mols.append(mol)
 
+        # get metrics that operate on imperfect molecules
+        atom_validity = self.check_atom_valency(unprocessed_mols)
+        avg_frag_frac = self.compute_avg_frag_size(unprocessed_mols)
+
         # compute connectivity, validity, uniqueness, and novelty
-        connected_mols, frac_connected = self.compute_connectivity(unprocessed_mols)
-        valid_mol_smiles, frac_valid = self.compute_validity(connected_mols)
-        unique_smiles, frac_unique = self.compute_uniqueness(valid_mol_smiles)
-        novel_smiles, frac_novel = self.compute_novelty(unique_smiles)
+        valid_mols, validity = self.compute_validity(unprocessed_mols)
+        connected_smiles, connectivity = self.compute_connectivity(valid_mols)
+        unique_smiles, uniqueness = self.compute_uniqueness(connected_smiles)
+        _, novelty = self.compute_novelty(unique_smiles)
 
         metrics = dict(
-            atom_type_kldiv=atom_type_kldiv, 
-            frac_valid=frac_valid, 
-            frac_unique=frac_unique, 
-            frac_novel=frac_novel)
+            atom_type_kldiv=atom_type_kldiv,
+            atom_validity=atom_validity,
+            avg_frag_frac=avg_frag_frac, 
+            validity=validity,
+            connectivity=connectivity, 
+            uniqueness=uniqueness, 
+            novelty=novelty)
 
         return metrics
 
@@ -78,32 +86,32 @@ class ModelAnalyzer:
             return [], 0.0
 
         # compute frac connected
-        connected_mols = []
+        connected_smiles = []
         for mol in mols:
             mol_frags = Chem.rdmolops.GetMolFrags(mol, asMols=True)
             largest_mol = \
                 max(mol_frags, default=mol, key=lambda m: m.GetNumAtoms())
             if largest_mol.GetNumAtoms() / mol.GetNumAtoms() >= self.connectivity_thresh:
-                connected_mols.append(largest_mol)
+                smiles = Chem.MolToSmiles(largest_mol)
+                if smiles is not None:
+                    connected_smiles.append(smiles)
 
-        return connected_mols, len(connected_mols)/len(mols)
+        return connected_smiles, len(connected_smiles)/len(mols)
 
     def compute_validity(self, mols):
         if len(mols) == 0:
             return [], 0.0
 
         # compute validity
-        valid_mol_smiles = []
+        valid_mols = []
         for mol in mols:
             try:
                 Chem.SanitizeMol(mol)
             except ValueError:
                 continue
-            smiles = Chem.MolToSmiles(mol)
-            if smiles is not None:
-                valid_mol_smiles.append(mol)
+            valid_mols.append(mol)
 
-        return valid_mol_smiles, len(valid_mol_smiles)/len(mols)
+        return valid_mols, len(valid_mols)/len(mols)
 
 
     def compute_uniqueness(self, smiles: List[str]):
@@ -119,6 +127,62 @@ class ModelAnalyzer:
 
         novel_smiles = [ smi for smi in smiles if smi in self.train_smiles ]
         return novel_smiles, len(novel_smiles) / len(smiles)
+
+    def detect_chemistry_problems(self, mols):
+        # note this method is presently unused
+
+        for mol in mols:
+            problems = Chem.DetectChemistryProblems(mol)
+            print(problems)
+
+    def check_atom_valency(self, mols) -> float:
+        """Checks the valency of individual atoms and returns the fraction which have valid valencies.
+
+        The valency of an atom is considered invalid if an atom's explicit valency is 0 or greater than
+        the maximum allowable valency. For example, carbon can have 4 bonds. In practice, since we don't generate hydrogens,
+        if a carbon atom has 2 bonds, this is plausible bc it could have 2 implicit hydrogens. But if a carbon atom has 0 or 5 explicit bonds,
+        this is obviously wrong and so such atoms would be marked as "invalid".
+        """
+
+        n_invalid_atoms = 0
+        n_atoms = 0
+        for mol in mols:
+
+            n_atoms += mol.GetNumAtoms()
+
+            for atom in mol.GetAtoms():
+
+                # get the atom element as a string and its explicit valence
+                element: str = atom.GetSymbol()
+                explicit_valence: int = atom.GetExplicitValence()
+
+                # get the maximum number of allowable bonds for this element
+                if isinstance(allowed_bonds[element], int):
+                    max_bonds = allowed_bonds[element]
+                else:
+                    max_bonds = max(allowed_bonds[element])
+
+                if explicit_valence == 0 or explicit_valence > max_bonds:
+                    n_invalid_atoms += 1
+
+        
+        atom_validity = 1 - n_invalid_atoms/n_atoms
+        return atom_validity
+
+    def compute_avg_frag_size(self, mols) -> float:
+        """Returns the average fraction of atoms that belong to the largest fragment of a molecule."""
+
+        frag_fracs = []
+        for mol in mols:
+            # get fragments
+            mol_frags = Chem.rdmolops.GetMolFrags(mol, asMols=True)
+            # get largest fragment
+            largest_mol = max(mol_frags, default=mol, key=lambda m: m.GetNumAtoms())
+            frag_fracs.append(largest_mol.GetNumAtoms() / mol.GetNumAtoms())
+
+        return sum(frag_fracs) / len(frag_fracs)
+                
+
 
 # adapted from DiffSBDD's CategoricalDistribution class in their Metrics file
 class LigandTypeDistribution:
@@ -144,6 +208,6 @@ class LigandTypeDistribution:
         q = sample_counts / sample_counts.sum()
         q = q.to(self.p.device)
 
-        kl_div = -torch.sum(self.p* torch.log(q / self.p + self.EPS ))
+        kl_div = -torch.sum(self.p* torch.log(q / (self.p + self.EPS) ))
 
         return float(kl_div)

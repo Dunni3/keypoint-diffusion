@@ -296,14 +296,21 @@ def main():
                 torch.save(model.state_dict(), str(most_recent_model)) # save most recent model
 
             # evaluate the quality of sampled molecules, if necessary
-            if current_epoch - sample_eval_marker >= args['training']['sample_interval'] or current_epoch == 0:
+            if current_epoch - sample_eval_marker >= args['training']['sample_interval']:
+
+                # reset marker
+                sample_eval_marker = current_epoch
+
+                # sample molecules / compute metrics of their quality
                 molecule_quality_metrics = model_analyzer.sample_and_analyze(**args['sampling_config'])
                 molecule_quality_metrics['epoch_exact'] = current_epoch
 
+                # print metrics
                 print('molecule quality metrics')
                 print(*[ f'{k} = {v:.2f}' for k,v in molecule_quality_metrics.items()], sep='\n', flush=True)
                 print('\n')
 
+                # log metrics to wandb
                 wandb.log(molecule_quality_metrics)
 
             # test the model if necessary
@@ -366,10 +373,6 @@ def main():
                         train_metrics_wandb[new_key] = train_metrics_wandb[key]
                         del train_metrics_wandb[key]
                 wandb.log(train_metrics_wandb)
-
-                # TODO: remove this line, for debugging only!!
-                # if max(train_losses) > 1e4:
-                #     sys.exit()
 
                 train_losses, train_l2_losses, train_ot_losses, = [], [], []
                 
