@@ -2,7 +2,9 @@ from pathlib import Path
 import torch
 import pickle
 from typing import List
-from rdkit import Chem
+from rdkit import Chem, DataStructs
+from rdkit.Chem import Descriptors, Crippen, Lipinski, QED
+from analysis.SA_Score.sascorer import calculateScore
 from torch.nn.functional import one_hot
 import time
 
@@ -216,3 +218,97 @@ class LigandTypeDistribution:
         kl_div = -torch.sum(self.p* torch.log(q / (self.p + self.EPS) ))
 
         return float(kl_div)
+
+# this class is taken from DiffSBDD
+class MoleculeProperties:
+
+    @staticmethod
+    def calculate_qed(rdmol):
+        return QED.qed(rdmol)
+
+    @staticmethod
+    def calculate_sa(rdmol):
+        sa = calculateScore(rdmol)
+        return round((10 - sa) / 9, 2)  # from pocket2mol
+
+    @staticmethod
+    def calculate_logp(rdmol):
+        return Crippen.MolLogP(rdmol)
+
+    @staticmethod
+    def calculate_lipinski(rdmol):
+        rule_1 = Descriptors.ExactMolWt(rdmol) < 500
+        rule_2 = Lipinski.NumHDonors(rdmol) <= 5
+        rule_3 = Lipinski.NumHAcceptors(rdmol) <= 10
+        rule_4 = (logp := Crippen.MolLogP(rdmol) >= -2) & (logp <= 5)
+        rule_5 = Chem.rdMolDescriptors.CalcNumRotatableBonds(rdmol) <= 10
+        return np.sum([int(a) for a in [rule_1, rule_2, rule_3, rule_4, rule_5]])
+
+    @classmethod
+    def calculate_diversity(cls, pocket_mols):
+        if len(pocket_mols) < 2:
+            return 0.0
+
+        div = 0
+        total = 0
+        for i in range(len(pocket_mols)):
+            for j in range(i + 1, len(pocket_mols)):
+                div += 1 - cls.similarity(pocket_mols[i], pocket_mols[j])
+                total += 1
+        return div / total
+
+    @staticmethod
+    def similarity(mol_a, mol_b):
+        # fp1 = AllChem.GetMorganFingerprintAsBitVect(
+        #     mol_a, 2, nBits=2048, useChirality=False)
+        # fp2 = AllChem.GetMorganFingerprintAsBitVect(
+        #     mol_b, 2, nBits=2048, useChirality=False)
+        fp1 = Chem.RDKFingerprint(mol_a)
+        fp2 = Chem.RDKFingerprint(mol_b)
+        return DataStructs.TanimotoSimilarity(fp1, fp2)
+
+    def evaluate(self, pocket_rdmols):
+        """
+        Run full evaluation
+        Args:
+            pocket_rdmols: list of lists, the inner list contains all RDKit
+                molecules generated for a pocket
+        Returns:
+            QED, SA, LogP, Lipinski (per molecule), and Diversity (per pocket)
+        """
+
+        for pocket in pocket_rdmols:
+            for mol in pocket:
+                Chem.SanitizeMol(mol)
+                assert mol is not None, "only evaluate valid molecules"
+
+        all_qed = []
+        all_sa = []
+        all_logp = []
+        all_lipinski = []
+        per_pocket_diversity = []
+        for pocket in tqdm(pocket_rdmols):
+            all_qed.append([self.calculate_qed(mol) for mol in pocket])
+            all_sa.append([self.calculate_sa(mol) for mol in pocket])
+            all_logp.append([self.calculate_logp(mol) for mol in pocket])
+            all_lipinski.append([self.calculate_lipinski(mol) for mol in pocket])
+            per_pocket_diversity.append(self.calculate_diversity(pocket))
+
+        print(f"{sum([len(p) for p in pocket_rdmols])} molecules from "
+              f"{len(pocket_rdmols)} pockets evaluated.")
+
+        qed_flattened = [x for px in all_qed for x in px]
+        print(f"QED: {np.mean(qed_flattened):.3f} \pm {np.std(qed_flattened):.2f}")
+
+        sa_flattened = [x for px in all_sa for x in px]
+        print(f"SA: {np.mean(sa_flattened):.3f} \pm {np.std(sa_flattened):.2f}")
+
+        logp_flattened = [x for px in all_logp for x in px]
+        print(f"LogP: {np.mean(logp_flattened):.3f} \pm {np.std(logp_flattened):.2f}")
+
+        lipinski_flattened = [x for px in all_lipinski for x in px]
+        print(f"Lipinski: {np.mean(lipinski_flattened):.3f} \pm {np.std(lipinski_flattened):.2f}")
+
+        print(f"Diversity: {np.mean(per_pocket_diversity):.3f} \pm {np.std(per_pocket_diversity):.2f}")
+
+        return all_qed, all_sa, all_logp, all_lipinski, per_pocket_diversity
