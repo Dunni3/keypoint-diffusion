@@ -1,6 +1,6 @@
 import openbabel
 from rdkit.Chem import AllChem as Chem
-from rdkit.Chem import rdDetermineBonds
+# from rdkit.Chem import rdDetermineBonds
 import tempfile
 
 # this is taken from DiffSBDD, minor modification to return the file contents without writing to disk if filename=None 

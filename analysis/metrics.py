@@ -4,6 +4,7 @@ import pickle
 from typing import List
 from rdkit import Chem
 from torch.nn.functional import one_hot
+import time
 
 from models.ligand_diffuser import LigandDiffuser
 from data_processing.crossdocked.dataset import CrossDockedDataset
@@ -36,11 +37,15 @@ class ModelAnalyzer:
         rec_graphs = [self.dataset[int(idx)][0].to(device=self.device) for idx in receptor_idxs]
 
         # sample n_replicates ligands in each receptor
+        sampling_start = time.time()
         samples = self.model.sample_random_sizes(
             rec_graphs, 
             n_replicates=n_replicates, 
             rec_enc_batch_size=rec_enc_batch_size, 
             diff_batch_size=diff_batch_size)
+        sample_time = time.time() - sampling_start
+        print(f'sampling {n_receptors=} and {n_replicates=}')
+        print(f'sampling time per molecule = {sample_time/(n_receptors*n_replicates):.2f} s', flush=True)
 
         # flatten the list of samples into "positions" and "features"
         lig_pos = []
@@ -125,7 +130,7 @@ class ModelAnalyzer:
         if len(smiles) == 0:
             return [], 0.0
 
-        novel_smiles = [ smi for smi in smiles if smi in self.train_smiles ]
+        novel_smiles = [ smi for smi in smiles if smi not in self.train_smiles ]
         return novel_smiles, len(novel_smiles) / len(smiles)
 
     def detect_chemistry_problems(self, mols):
@@ -175,7 +180,7 @@ class ModelAnalyzer:
         frag_fracs = []
         for mol in mols:
             # get fragments
-            mol_frags = Chem.rdmolops.GetMolFrags(mol, asMols=True)
+            mol_frags = Chem.rdmolops.GetMolFrags(mol, asMols=True, sanitizeFrags=False)
             # get largest fragment
             largest_mol = max(mol_frags, default=mol, key=lambda m: m.GetNumAtoms())
             frag_fracs.append(largest_mol.GetNumAtoms() / mol.GetNumAtoms())
@@ -202,7 +207,7 @@ class LigandTypeDistribution:
     def kl_divergence(self, sample_atom_types: List[torch.Tensor]):
 
         sample_concat = torch.concat(sample_atom_types, dim=0)
-        sample_onehot = one_hot(sample_concat.argmax(dim=1))
+        sample_onehot = one_hot(sample_concat.argmax(dim=1), sample_concat.shape[1])
 
         sample_counts = sample_onehot.sum(dim=0)
         q = sample_counts / sample_counts.sum()

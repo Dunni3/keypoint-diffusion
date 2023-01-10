@@ -6,8 +6,8 @@ parameters:
   n_keypoints:
     values:
       - 5
-      - 10
       - 20
+      - 60
   n_convs_encoder:
     values:
       - 2
@@ -23,17 +23,17 @@ parameters:
   kp_feat_scale:
     values:
       - 1.0
-      - 0.5
+      - 0.33
+      - 3.0
   n_convs_dynamics:
     values:
       - 2
       - 6
   rec_encoder_loss_weight:
     values:
-      - 0
-      - 0.001
       - 0.1
-      - 0.3
+      - 1
+      - 2
   lr:
     values:
       - 1.0e-4
@@ -41,10 +41,10 @@ parameters:
   weight_decay:
     values:
       - 1.0e-12
-      - 1.0e-7
+      - 1.0e-8
   clip_value:
     values:
-      - 1
+      - 1.5
       - 0.5
 program: train_crossdocked.py
 command:

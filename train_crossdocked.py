@@ -8,6 +8,7 @@ from datetime import datetime
 import time
 import shutil
 import wandb
+import uuid
 
 from data_processing.crossdocked.dataset import CrossDockedDataset, get_dataloader
 from models.dynamics import LigRecDynamics
@@ -124,10 +125,20 @@ def main():
     script_args, args = parse_arguments()
     # torch.autograd.set_detect_anomaly(True)
 
+    # initialize wandb
+    wandb_init_kwargs = args['wandb']['init_kwargs']
+    wandb_init_kwargs['name'] = args['experiment']['name']
+    wandb.init(config=args, settings=dict(start_method="thread"), **wandb_init_kwargs)
+
+    # if an experiment name was not given in the config file, weights and biases will have assigned a random name
+    if args['experiment']['name'] is None and wandb.run is not None: 
+        args['experiment']['name'] = wandb.run.name
+
     # create output directory
     now = datetime.now().strftime('%m%d%H%M%S')
     results_dir = Path(args['experiment']['results_dir'])
-    output_dir_name = f"{args['experiment']['name']}_{now}"
+    random_id = str(uuid.uuid1())[:4]
+    output_dir_name = f"{args['experiment']['name']}_{now}_{random_id}"
     output_dir = results_dir / output_dir_name
     output_dir.mkdir()
 
@@ -213,11 +224,6 @@ def main():
             step_size_up=int(iterations_per_epoch*cyclic_args['step_size_up_frac']),
             cycle_momentum=False)
 
-    # initialize wandb
-    wandb_init_kwargs = args['wandb']['init_kwargs']
-    wandb_init_kwargs['name'] = args['experiment']['name']
-    wandb.init(config=args, settings=dict(start_method="thread"), **wandb_init_kwargs)
-
     # watch model if desired
     if args['wandb']['watch_model']:
         wandb.watch(model, **args['wandb']['watch_kwargs'])
@@ -302,8 +308,10 @@ def main():
                 sample_eval_marker = current_epoch
 
                 # sample molecules / compute metrics of their quality
+                model.eval()
                 molecule_quality_metrics = model_analyzer.sample_and_analyze(**args['sampling_config'])
                 molecule_quality_metrics['epoch_exact'] = current_epoch
+                model.train()
 
                 # print metrics
                 print('molecule quality metrics')
