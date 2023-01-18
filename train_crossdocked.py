@@ -154,11 +154,6 @@ def main():
     output_dir = results_dir / output_dir_name
     output_dir.mkdir()
 
-    # copy input config file to output directory
-    input_config_file = Path(script_args.config).resolve()
-    new_configfile_loc = output_dir / 'config.yml'
-    shutil.copy(input_config_file, new_configfile_loc)
-
     # create metrics files and lists to store metrics
     test_metrics_file = output_dir / 'test_metrics.pkl'
     train_metrics_file = output_dir / 'train_metrics.pkl'
@@ -252,6 +247,11 @@ def main():
         'n_lig_feat': n_lig_feat,
         'n_rec_atom_feat': n_rec_atom_features
     }
+
+    # write the model configuration to the output directory
+    new_configfile_loc = output_dir / 'config.yml'
+    with open(new_configfile_loc, 'w') as f:
+        yaml.dump(args, f)
 
     # save args to output dir
     arg_fp = output_dir / 'args.pkl'
