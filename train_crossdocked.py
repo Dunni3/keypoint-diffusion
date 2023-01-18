@@ -119,6 +119,16 @@ def test_model(model, test_dataloader, args, device):
         'ot_loss': np.array(ot_losses).mean()
     }
     return loss_dict
+
+def make_multiplier_func(start: int, stop: int, multiplier: float):
+
+    def lr_multiplier(epoch):
+        if epoch < start or epoch >= stop:
+            return 1
+            
+        return multiplier**(epoch - start + 1)
+
+    return lr_multiplier
         
 
 def main():
@@ -214,8 +224,9 @@ def main():
     # create model analyzer
     model_analyzer = ModelAnalyzer(model=model, dataset=test_dataset, device=device)
 
-    # check if we are using cylic learning rates
+    # check if we are scheduling learning rates
     use_cyclic_lr = args['training']['cyclic_lr']['use_cyclic_lr']
+    use_lambda_lr = args['training']['lambda_lr']['use_lambda_lr']
 
     # create learning rate schedulers
     if use_cyclic_lr:
@@ -225,6 +236,11 @@ def main():
             max_lr=cyclic_args['max_lr'],
             step_size_up=int(iterations_per_epoch*cyclic_args['step_size_up_frac']),
             cycle_momentum=False)
+
+    if use_lambda_lr:
+        lr_config = args['training']['lambda_lr']
+        multipliter_func = make_multiplier_func(lr_config['epoch_start'],  lr_config['last_epoch'], lr_config['multiplier'])
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optimizer, lr_lambda=multipliter_func)
 
     # watch model if desired
     if args['wandb']['watch_model']:
@@ -371,6 +387,13 @@ def main():
                     'iter': iter_idx,
                     'time_passed': time.time() - training_start
                 }
+
+                # record learning rate if we are using a learning rate scheduler
+                if use_lambda_lr:
+                    train_metrics_row['learning_rate'] = scheduler.get_lr()[0]
+                elif use_cyclic_lr:
+                    train_metrics_row['learning_rate'] = cyclic_lr_sched.get_lr()[0]
+
                 train_metrics.append(train_metrics_row)
                 with open(train_metrics_file, 'wb') as f:
                     pickle.dump(train_metrics, f)
@@ -394,6 +417,12 @@ def main():
             # apply cyclic LR update if necessary
             if use_cyclic_lr:
                 cyclic_lr_sched.step()
+
+        # at the end of each epoch, we update the learning rate, if using the lambdaLR scheduler
+        if use_lambda_lr:
+            scheduler.step()
+            print('LEARNING RATE = ',scheduler.get_last_lr())
+
 
     # after exiting the training loop, save the final model file
     most_recent_model = output_dir / 'model.pt'

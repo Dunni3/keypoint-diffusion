@@ -68,6 +68,11 @@ training:
     base_lr: 1.0e-5
     max_lr: 1.0e-4
     step_size_up_frac: 0.25 # we specify step_size_up as a fraction of iterations_per_epoch
+  lambda_lr: # settings for using the lambdaLR schule
+    use_lambda_lr: True
+    epoch_start: 100
+    last_epoch: 200
+    multiplier: 0.98
 
 sampling_config:
   n_receptors: 10

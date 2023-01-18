@@ -60,7 +60,7 @@ training:
   test_interval: 10 # measured in epochs
   train_metrics_interval: 0.5 # epochs
   save_interval: 10 # epoch
-  sample_interval: 1 # number of epochs between sampling/testing molecules
+  sample_interval: 10 # number of epochs between sampling/testing molecules
   test_epochs: 2 # number of epochs to run when evaluating on the test set
   num_workers: 1
   cyclic_lr: # settings regarding a cyclic learning rate
@@ -68,6 +68,11 @@ training:
     base_lr: 1.0e-5
     max_lr: 1.0e-4
     step_size_up_frac: 0.25 # we specify step_size_up as a fraction of iterations_per_epoch
+  lambda_lr: # settings for using the lambdaLR schule
+    use_lambda_lr: True
+    epoch_start: 0
+    last_epoch: 10
+    multiplier: 0.98
 
 sampling_config:
   n_receptors: 2
