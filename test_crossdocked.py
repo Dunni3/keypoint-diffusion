@@ -126,14 +126,10 @@ def main():
     test_dataset = CrossDockedDataset(name='test', processed_data_file=test_dataset_path, **args['dataset'])
 
     # get number of ligand and receptor atom features
-    test_rec_graph, test_lig_pos, test_lig_feat = test_dataset[0]
-    n_rec_atom_features = test_rec_graph.ndata['h_0'].shape[1]
-    n_lig_feat = test_lig_feat.shape[1]
+    n_lig_feat = args['reconstruction']['n_lig_feat']
     n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
 
     rec_encoder_config = args["rec_encoder"]
-    rec_encoder_config["in_n_node_feat"] = n_rec_atom_features
-    args["rec_encoder"]["in_n_node_feat"] = n_rec_atom_features
 
     # create diffusion model
     model = LigandDiffuser(
@@ -155,49 +151,51 @@ def main():
     # load model weights
     model.load_state_dict(torch.load(model_weights_file))
     model.eval()
+
+    ################# start of sampling for previous script / where we don't really need to borrow from anymore
     
     # get dataset indexes for complexes we are going to sample
-    if cmd_args.random:
-        dataset_idxs = rng.choice(len(test_dataset), size=cmd_args.n_complexes, replace=False)
-    else:
-        dataset_idxs = np.arange(cmd_args.n_complexes)
+    # if cmd_args.random:
+    #     dataset_idxs = rng.choice(len(test_dataset), size=cmd_args.n_complexes, replace=False)
+    # else:
+    #     dataset_idxs = np.arange(cmd_args.n_complexes)
 
-    ref_complex_idx = []
-    complex_output_dirs = {}
-    for idx in dataset_idxs:
+    # ref_complex_idx = []
+    # complex_output_dirs = {}
+    # for idx in dataset_idxs:
 
-        # create files with the reference ligand/receptor, center them appropriately so that their coordinates
-        # align with the output of the diffusion model -> these steps are done by make_reference_files
-        # the function make_reference_files then returns the location where the reference files have been written
-        complex_output_dir = make_reference_files(idx, test_dataset, output_dir, remove_hydrogen=args['dataset']['remove_hydrogen'])
-        complex_output_dirs[idx] = complex_output_dir
+    #     # create files with the reference ligand/receptor, center them appropriately so that their coordinates
+    #     # align with the output of the diffusion model -> these steps are done by make_reference_files
+    #     # the function make_reference_files then returns the location where the reference files have been written
+    #     complex_output_dir = make_reference_files(idx, test_dataset, output_dir, remove_hydrogen=args['dataset']['remove_hydrogen'])
+    #     complex_output_dirs[idx] = complex_output_dir
 
-        # get the data for the reference complex
-        rec_graph, ref_lig_pos, ref_lig_feat = test_dataset[idx]
+    #     # get the data for the reference complex
+    #     rec_graph, ref_lig_pos, ref_lig_feat = test_dataset[idx]
 
-        # move data to correct device
-        rec_graph = rec_graph.to(device)
+    #     # move data to correct device
+    #     rec_graph = rec_graph.to(device)
 
-        # get array specifying the number of nodes in each ligand we sample
-        n_nodes = torch.ones(size=(cmd_args.n_replicates,), dtype=int, device=device)*ref_lig_pos.shape[0]
+    #     # get array specifying the number of nodes in each ligand we sample
+    #     n_nodes = torch.ones(size=(cmd_args.n_replicates,), dtype=int, device=device)*ref_lig_pos.shape[0]
 
-        # get receptor keypoints
-        # note the diffusion model does receptor encoding internally,
-        # so for sampling this is not strictly necessary, but i would like to visualize the position of the keypoints
-        kp_pos, kp_feat = model.rec_encoder(rec_graph)
-        kp_pos, kp_feat = kp_pos[0], kp_feat[0] # the keypoints and features are returned as lists of length batch_size, but now our batch size is just 1
+    #     # get receptor keypoints
+    #     # note the diffusion model does receptor encoding internally,
+    #     # so for sampling this is not strictly necessary, but i would like to visualize the position of the keypoints
+    #     kp_pos, kp_feat = model.rec_encoder(rec_graph)
+    #     kp_pos, kp_feat = kp_pos[0], kp_feat[0] # the keypoints and features are returned as lists of length batch_size, but now our batch size is just 1
 
-        # sample ligands
-        lig_pos, lig_feat = model.sample_given_pocket(rec_graph, n_nodes)
+    #     # sample ligands
+    #     lig_pos, lig_feat = model.sample_given_pocket(rec_graph, n_nodes)
 
-        # write sampled ligands
-        write_sampled_ligands(lig_pos, lig_feat, output_dir=complex_output_dir, dataset=test_dataset)
+    #     # write sampled ligands
+    #     write_sampled_ligands(lig_pos, lig_feat, output_dir=complex_output_dir, dataset=test_dataset)
 
-        # write keypoints to an xyz file
-        kp_file = complex_output_dir / 'keypoints.xyz'
-        kp_pos = kp_pos.detach().cpu()
-        kp_elements = ['C' for _ in range(kp_pos.shape[0]) ]
-        write_xyz_file(kp_pos, kp_elements, kp_file)
+    #     # write keypoints to an xyz file
+    #     kp_file = complex_output_dir / 'keypoints.xyz'
+    #     kp_pos = kp_pos.detach().cpu()
+    #     kp_elements = ['C' for _ in range(kp_pos.shape[0]) ]
+    #     write_xyz_file(kp_pos, kp_elements, kp_file)
 
 
 if __name__ == "__main__":
