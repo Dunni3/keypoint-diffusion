@@ -254,6 +254,8 @@ def main():
     save_marker = 0
     sample_eval_marker = 0
 
+    rec_encoder_loss_weight = args['training']['rec_encoder_loss_weight']
+
     # record start time for training
     training_start = time.time()
 
@@ -265,9 +267,8 @@ def main():
 
             current_epoch = epoch_idx + iter_idx/iterations_per_epoch
 
-            # TODO: remove this later. I'm just keeping it right now for debugging purposes. There is a bug 
-            # where the training loop hangs on the first iteration. Haven't been able to reproduce yet.
-            if iter_idx < 25:
+            # TODO: remove this, its just for debugging purposes
+            if iter_idx < 10:
                 print(f'{iter_idx=}, {time.time() - training_start:.2f} seconds since start', flush=True)
 
             rec_graphs = rec_graphs.to(device)
@@ -281,7 +282,10 @@ def main():
             noise_loss, ot_loss = model(rec_graphs, lig_atom_positions, lig_atom_features)
 
             # combine losses
-            loss = noise_loss + ot_loss*args['training']['rec_encoder_loss_weight']
+            if rec_encoder_loss_weight > 0:
+                loss = noise_loss + ot_loss*rec_encoder_loss_weight
+            else:
+                loss = noise_loss
 
             # record losses for this batch
             train_losses.append(loss.detach().cpu())
