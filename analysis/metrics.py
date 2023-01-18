@@ -215,7 +215,7 @@ class LigandTypeDistribution:
         q = sample_counts / sample_counts.sum()
         q = q.to(self.p.device)
 
-        kl_div = -torch.sum(self.p* torch.log(q / (self.p + self.EPS) ))
+        kl_div = -torch.sum(self.p* torch.log(q / (self.p + self.EPS) + self.EPS ))
 
         return float(kl_div)
 

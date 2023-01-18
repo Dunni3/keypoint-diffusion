@@ -264,7 +264,6 @@ class ReceptorEncoder(nn.Module):
         for graph_idx, graph in enumerate(dgl.unbatch(rec_graph)):
 
             # compute equivariant keypoints
-            # embedded_node_features = self.node_feat_embedding(graph.ndata['h']) # shape (n_pocket_atoms, n_node_features)
             mean_node_feature = self.node_feat_embedding(graph.ndata['h']).mean(dim=0) # shape (1, n_node_features)
             eqv_queries = self.eqv_keypoint_key_fn(mean_node_feature).view(self.n_keypoints, self.out_n_node_feat) # shape (n_attn_heads, n_node_feautres)
             eqv_keys = self.eqv_keypoint_query_fn(graph.ndata['h']).view(-1, self.n_keypoints, self.out_n_node_feat) # (n_nodes, n_attn_heads, n_node_features)
