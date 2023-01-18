@@ -71,6 +71,6 @@ training:
 
 sampling_config:
   n_receptors: 10
-  n_replicates: 10
+  n_replicates: 15
   rec_enc_batch_size: 32
   diff_batch_size: 64

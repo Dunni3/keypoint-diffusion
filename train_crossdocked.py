@@ -134,6 +134,8 @@ def main():
     if args['experiment']['name'] is None and wandb.run is not None: 
         args['experiment']['name'] = wandb.run.name
 
+    print(f"running experiment {args['experiment']['name']}", flush=True)
+
     # create output directory
     now = datetime.now().strftime('%m%d%H%M%S')
     results_dir = Path(args['experiment']['results_dir'])
