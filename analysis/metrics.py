@@ -7,6 +7,8 @@ from rdkit.Chem import Descriptors, Crippen, Lipinski, QED
 from analysis.SA_Score.sascorer import calculateScore
 from torch.nn.functional import one_hot
 import time
+import numpy as np
+import tqdm
 
 from models.ligand_diffuser import LigandDiffuser
 from data_processing.crossdocked.dataset import CrossDockedDataset
@@ -251,21 +253,14 @@ class MoleculeProperties:
 
         div = 0
         total = 0
-        for i in range(len(pocket_mols)):
-            for j in range(i + 1, len(pocket_mols)):
-                div += 1 - cls.similarity(pocket_mols[i], pocket_mols[j])
-                total += 1
-        return div / total
+        fps = [ Chem.RDKFingerprint(mol) for mol in pocket_mols ]
+        for i in range(1, len(pocket_mols)):
+            similarities = DataStructs.BulkTanimotoSimilarity(fps[i],fps[:i])
+            dissimilarities = [ 1 - x for x in similarities]
+            div += sum(dissimilarities)
+            total += len(dissimilarities)
 
-    @staticmethod
-    def similarity(mol_a, mol_b):
-        # fp1 = AllChem.GetMorganFingerprintAsBitVect(
-        #     mol_a, 2, nBits=2048, useChirality=False)
-        # fp2 = AllChem.GetMorganFingerprintAsBitVect(
-        #     mol_b, 2, nBits=2048, useChirality=False)
-        fp1 = Chem.RDKFingerprint(mol_a)
-        fp2 = Chem.RDKFingerprint(mol_b)
-        return DataStructs.TanimotoSimilarity(fp1, fp2)
+        return div / total
 
     def evaluate(self, pocket_rdmols):
         """

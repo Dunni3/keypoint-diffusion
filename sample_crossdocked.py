@@ -35,8 +35,9 @@ def make_reference_files(dataset_idx: int, dataset: CrossDockedDataset, output_d
     output_dir.mkdir(exist_ok=True)
 
     # get original receptor and ligand files
-    ref_rec_file = Path(dataset.filenames['rec_files'][dataset_idx])
-    ref_lig_file = Path(dataset.filenames['lig_files'][dataset_idx])
+    ref_rec_file, ref_lig_file = dataset.get_files(dataset_idx)
+    ref_rec_file = Path(ref_rec_file)
+    ref_lig_file = Path(ref_lig_file)
 
     # # get receptor object and atom coordinates
     # rec: prody.AtomGroup = prody.parsePDB(str(ref_rec_file))
@@ -132,19 +133,16 @@ def main():
     test_dataset = CrossDockedDataset(name='test', processed_data_file=test_dataset_path, **args['dataset'])
 
     # get number of ligand and receptor atom features
-    test_rec_graph, test_lig_pos, test_lig_feat = test_dataset[0]
-    n_rec_atom_features = test_rec_graph.ndata['h_0'].shape[1]
-    n_lig_feat = test_lig_feat.shape[1]
+    n_lig_feat = args['reconstruction']['n_lig_feat']
     n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
 
     rec_encoder_config = args["rec_encoder"]
-    rec_encoder_config["in_n_node_feat"] = n_rec_atom_features
-    args["rec_encoder"]["in_n_node_feat"] = n_rec_atom_features
 
     # create diffusion model
     model = LigandDiffuser(
         n_lig_feat, 
         n_kp_feat,
+        processed_dataset_dir=Path(args['dataset']['location']),
         n_timesteps=args['diffusion']['n_timesteps'],
         keypoint_centered=args['diffusion']['keypoint_centered'],
         dynamics_config=args['dynamics'], 

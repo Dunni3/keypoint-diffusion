@@ -89,6 +89,11 @@ class CrossDockedDataset(dgl.data.DGLDataset):
     def dataset_dir(self) -> Path:
         return self.data_file.parent
 
+    def get_files(self, idx: int):
+        """Given an index of the dataset, return the filepath of the receptor pdb and ligand sdf."""
+
+        return self.data['rec_files'][idx], self.data['lig_files'][idx]
+
         
 def collate_fn(examples: list):
 

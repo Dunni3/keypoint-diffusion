@@ -159,6 +159,46 @@ class LigandDiffuser(nn.Module):
 
         return sigma2_t_given_s, sigma_t_given_s, alpha_t_given_s
 
+    def encode_receptors(self, receptors: List[dgl.DGLGraph]):
+
+        device = receptors[0].device
+        n_receptors = len(receptors)
+        
+        # encode the receptors
+        # kp_pos_src = []
+        # kp_feat_src = []
+        # init_rec_atom_com_src = []
+        # init_kp_com_src = []
+        # for batch_idx in range(ceil(n_receptors / rec_enc_batch_size)):
+
+        # determine number of receptors that will be in this batch
+        # n_samples_batch = min(rec_enc_batch_size, n_receptors - len(kp_pos_src))
+
+        # select receptors for this batch
+        # batch_idx_start = batch_idx*rec_enc_batch_size
+        # batch_idx_end = batch_idx_start + n_samples_batch
+        # batch_receptors = receptors[batch_idx_start:batch_idx_end]
+
+        # compute initial receptor atom COM
+        init_rec_atom_com = [ g.ndata["x_0"].mean(dim=0, keepdim=True) for g in receptors ]
+
+        # get keypoints positions/features
+        kp_pos, kp_feat = self.rec_encoder(dgl.batch(receptors))
+
+        # get initial keypoint center of mass
+        init_kp_com = [ x.mean(dim=0, keepdim=True) for x in kp_pos ]
+
+
+        # remove (receptor atom COM, or keypoint COM) from receptor keypoints
+        if self.keypoint_centered:
+            sampling_com = init_kp_com
+        else:
+            sampling_com = init_rec_atom_com
+        kp_pos = [  kp_pos[i] - sampling_com[i] for i in range(len(kp_pos)) ]
+
+        return kp_pos, kp_feat, init_rec_atom_com, init_kp_com
+
+    
     @torch.no_grad()
     def _sample(self, receptors: List[dgl.DGLGraph], n_lig_atoms: List[List[int]], rec_enc_batch_size: int = 32, diff_batch_size: int = 32) -> List[List[Dict[str, torch.Tensor]]]:
         """Sample multiple receptors with multiple ligands per receptor.
@@ -186,66 +226,42 @@ class LigandDiffuser(nn.Module):
             # determine number of receptors that will be in this batch
             n_samples_batch = min(rec_enc_batch_size, n_receptors - len(kp_pos_src))
 
-
             # select receptors for this batch
             batch_idx_start = batch_idx*rec_enc_batch_size
             batch_idx_end = batch_idx_start + n_samples_batch
             batch_receptors = receptors[batch_idx_start:batch_idx_end]
 
-            # compute initial receptor atom COM
-            init_rec_atom_com_src.extend([ g.ndata["x_0"].mean(dim=0, keepdim=True) for g in batch_receptors ])
+            # encode receptors and get COM of receptor atoms and keypoint positions
+            batch_kp_pos, batch_kp_feat, batch_init_rec_atom_com, batch_init_kp_com = self.encode_receptors(batch_receptors)
 
-            # get keypoints positions/features
-            batch_kp_pos, batch_kp_feat = self.rec_encoder(dgl.batch(batch_receptors))
+            # concat the encoded receptor information from this batch with those from previous batches
+            init_rec_atom_com_src.extend(batch_init_rec_atom_com)
+            init_kp_com_src.extend(batch_init_kp_com)
             kp_pos_src.extend(batch_kp_pos)
             kp_feat_src.extend(batch_kp_feat)
 
-            # get initial keypoint center of mass
-            init_kp_com_src.extend([ x.mean(dim=0, keepdim=True) for x in batch_kp_pos ])
-
         # generate list of receptor/ligand pairs
         kp_pos, kp_feat = [], []
-        init_atom_com = []
+        init_rec_atom_com = []
         init_kp_com = []
-        lig_pos, lig_feat = [], []
+        n_lig_atoms_flattened = [] # this will be a list of integers, each integer is the number of ligand atoms for a complex
         for rec_idx in range(n_receptors):
             
-            n_ligands = len(n_lig_atoms[rec_idx])
+            n_ligands = len(n_lig_atoms[rec_idx]) # number of ligands to be sampled for this receptor
 
-            # sample positions and features for each ligand
-            rec_lig_pos = [] # ligand positions for this receptor
-            rec_lig_feat = [] # ligand features for this receptor
-            for lig_idx in range(n_ligands):
-                rec_lig_pos.append(torch.randn((n_lig_atoms[rec_idx][lig_idx], 3), device=device))
-                rec_lig_feat.append(torch.randn((n_lig_atoms[rec_idx][lig_idx], self.n_lig_features), device=device))
-
-            # remove (receptor atom COM, or keypoint COM) from receptor keypoints
-            if self.keypoint_centered:
-                sampling_com = init_kp_com_src[rec_idx]
-            else:
-                sampling_com = init_rec_atom_com_src[rec_idx]
-            com_free_kp_pos = kp_pos_src[rec_idx] - sampling_com
-
-            # get n_ligand copies of receptor keypoint positions
-            rec_kp_pos = [ com_free_kp_pos.detach().clone() for _ in range(n_ligands) ]
-
-            # remove ligand COM from combined keypoint/ligand system
-            rec_kp_pos, rec_lig_pos = self.remove_com(rec_kp_pos, rec_lig_pos, com='ligand')
-
-            # extend lig_pos and lig_feat by the positions/features for all ligands in sampled for this receptor
-            lig_pos.extend(rec_lig_pos)
-            lig_feat.extend(rec_lig_feat)
+            n_lig_atoms_flattened.extend(n_lig_atoms[rec_idx]) # build n_lig_atoms_flattened
 
             # extend kp_pos, kp_feat, and COM lists by the values for this receptor copied n_ligand times
-            kp_pos.extend(rec_kp_pos)
+            kp_pos.extend([ kp_pos_src[rec_idx].detach().clone() for _ in range(n_ligands) ])
             kp_feat.extend([ kp_feat_src[rec_idx].detach().clone() for _ in range(n_ligands) ])
-            init_atom_com.extend([ init_rec_atom_com_src[rec_idx].detach().clone() for _ in range(n_ligands) ])
+            init_rec_atom_com.extend([ init_rec_atom_com_src[rec_idx].detach().clone() for _ in range(n_ligands) ])
             init_kp_com.extend([ init_kp_com_src[rec_idx].detach().clone() for _ in range(n_ligands) ])
 
 
         # proceed to batched sampling
         n_complexes = len(kp_pos)
         n_complexes_sampled = 0
+        lig_pos, lig_feat = [], []
         for batch_idx in range(ceil(n_complexes / diff_batch_size)):
 
             # determine number of complexes that will be in this batch
@@ -256,32 +272,15 @@ class LigandDiffuser(nn.Module):
 
             batch_kp_pos = kp_pos[start_idx:end_idx]
             batch_kp_feat = kp_feat[start_idx:end_idx]
-            batch_lig_pos = lig_pos[start_idx:end_idx]
-            batch_lig_feat = lig_feat[start_idx:end_idx]
-            # batch_init_kp_com = init_kp_com[start_idx:end_idx]
+            batch_n_atoms = n_lig_atoms_flattened[start_idx:end_idx]
+            batch_init_kp_com = init_kp_com[start_idx:end_idx]
+            batch_init_rec_atom_com = init_rec_atom_com[start_idx:end_idx]
 
-            # Iteratively sample p(z_s | z_t) for t = 1, ..., T, with s = t - 1.
-            for s in reversed(range(0, self.n_timesteps)):
-                s_arr = torch.full(size=(n_samples_batch,), fill_value=s, device=device)
-                t_arr = s_arr + 1
-                s_arr = s_arr / self.n_timesteps
-                t_arr = t_arr / self.n_timesteps
+            batch_lig_pos, batch_lig_feat = self.sample_from_encoded_receptors(batch_kp_pos, batch_kp_feat, batch_init_rec_atom_com, batch_init_kp_com, batch_n_atoms)
+            lig_pos.extend(batch_lig_pos)
+            lig_feat.extend(batch_lig_feat)
 
-                batch_lig_feat, batch_lig_pos = self.sample_p_zs_given_zt(s_arr, t_arr, batch_kp_pos, batch_kp_feat, batch_lig_pos, batch_lig_feat)
-
-            # remove final keypoint COM from system after generation
-            batch_kp_pos, batch_lig_pos = self.remove_com(batch_kp_pos, batch_lig_pos, com='receptor')
-
-            # update original list of ligand positions/feature
-            lig_pos[start_idx:end_idx] = batch_lig_pos
-            lig_feat[start_idx:end_idx] = batch_lig_feat
-
-            # update number of complexes sampled
             n_complexes_sampled += n_samples_batch
-
-        # add initial keypoint COM to system, bringing us back into the input frame of reference
-        for i in range(n_complexes):
-            lig_pos[i] += init_kp_com[i]
 
         # group sampled ligands by receptor
         samples = []
@@ -298,6 +297,42 @@ class LigandDiffuser(nn.Module):
             })
 
         return samples
+
+    @torch.no_grad()
+    def sample_from_encoded_receptors(self, kp_pos: List[torch.Tensor], kp_feat: List[torch.Tensor], init_atom_com: List[torch.Tensor], init_kp_com: List[torch.Tensor], n_lig_atoms: List[int]):
+
+        device = kp_pos[0].device
+        n_complexes = len(kp_pos)
+
+        # sample initial positions/features of ligands
+        lig_pos, lig_feat = [], []
+        for complex_idx in range(n_complexes):
+            lig_pos.append(torch.randn((n_lig_atoms[complex_idx], 3), device=device)) 
+            lig_feat.append(torch.randn((n_lig_atoms[complex_idx], self.n_lig_features), device=device))
+
+        # remove ligand com from every receptor/ligand complex
+        kp_pos, lig_pos = self.remove_com(kp_pos, lig_pos, com='ligand')
+
+        # Iteratively sample p(z_s | z_t) for t = 1, ..., T, with s = t - 1.
+        for s in reversed(range(0, self.n_timesteps)):
+            s_arr = torch.full(size=(n_complexes,), fill_value=s, device=device)
+            t_arr = s_arr + 1
+            s_arr = s_arr / self.n_timesteps
+            t_arr = t_arr / self.n_timesteps
+
+            lig_feat, lig_pos = self.sample_p_zs_given_zt(s_arr, t_arr, kp_pos, kp_feat, lig_pos, lig_feat)
+
+        # remove keypoint COM from system after generation
+        kp_pos, lig_pos = self.remove_com(kp_pos, lig_pos, com='receptor')
+
+        # TODO: model P(x0 | x1)?
+
+        # add initial keypoint COM to system, bringing us back into the input frame of reference
+        for i in range(n_complexes):
+            lig_pos[i] += init_kp_com[i]
+            # kp_pos[i] += init_kp_com[i]
+
+        return lig_pos, lig_feat
 
 
     @torch.no_grad()
@@ -316,6 +351,7 @@ class LigandDiffuser(nn.Module):
         lig_feat = samples[0]['features'] 
 
         return lig_pos, lig_feat
+        
 
     @torch.no_grad()
     def sample_random_sizes(self, receptors: List[dgl.DGLGraph], n_replicates: int = 10, rec_enc_batch_size: int = 32, diff_batch_size: int = 32):
