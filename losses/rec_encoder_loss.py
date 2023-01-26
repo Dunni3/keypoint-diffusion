@@ -18,17 +18,25 @@ def compute_ot_emd(cost_mat, device):
 
 class ReceptorEncoderLoss(nn.Module):
 
-    def __init__(self, use_boltzmann_weights=False):
-        self.use_boltzmann_weights = use_boltzmann_weights
-
+    def __init__(self, loss_type='optimal_transport'):
         super().__init__()
 
-    def forward(self, keypoint_positions: List[torch.Tensor], rec_graphs: dgl.DGLGraph, boltzmann_weights=None):
-        # TODO: incorporate boltzmann-weights into cost matrix
-        # compute cost matrix
+        self.loss_type = loss_type
+
+        if self.loss_type not in ['optimal_transport', 'gaussian_repulsion']:
+            raise ValueError
+
+    def forward(self, keypoint_positions: List[torch.Tensor] = None, batched_rec_graphs: dgl.DGLGraph = None):
+
+        if self.loss_type == "optimal_transport":
+            return self.compute_ot_loss(keypoint_positions=keypoint_positions, batched_rec_graphs=batched_rec_graphs)
+        elif self.loss_type == 'gaussian_repulsion':
+            return self.compute_repulsion_loss(keypoint_positions=keypoint_positions)
+
+    def compute_ot_loss(self, keypoint_positions: List[torch.Tensor], batched_rec_graphs: dgl.DGLGraph):
         ot_loss = 0
 
-        unbatched_graphs = dgl.unbatch(rec_graphs)
+        unbatched_graphs = dgl.unbatch(batched_rec_graphs)
 
         for kp_pos, rec_graph in zip(keypoint_positions, unbatched_graphs):
             # compute cost matrix
@@ -41,3 +49,22 @@ class ReceptorEncoderLoss(nn.Module):
         ot_loss = ot_loss / len(unbatched_graphs)
 
         return ot_loss
+
+    def compute_repulsion_loss(self, keypoint_positions: List[torch.Tensor]):
+
+        batch_size = len(keypoint_positions)
+        n_keypoints = keypoint_positions[0].shape[0]
+        n_pairs = n_keypoints*(n_keypoints - 1)/2
+
+        repulsion_loss = 0
+        for kp_pos in keypoint_positions:
+            pairwise_distances = torch.cdist(kp_pos, kp_pos)
+            pairwise_repulsion = torch.exp(-1*pairwise_distances)
+
+            # compute loss as the sum of off-diagonal pairwise distances for only the top half
+            repulsion_loss += torch.triu(pairwise_repulsion, diagonal=1).sum()
+
+        # normalize by batch size and number of keypoint pairs
+        repulsion_loss = repulsion_loss / batch_size / n_pairs
+        
+        return repulsion_loss

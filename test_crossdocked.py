@@ -8,6 +8,7 @@ import prody
 from rdkit import Chem
 import shutil
 import pickle
+import tqdm
 
 from data_processing.crossdocked.dataset import CrossDockedDataset
 from models.ligand_diffuser import LigandDiffuser
@@ -202,7 +203,6 @@ def main():
 
                 if mol is not None:
                     mols.append(mol)
-
 
             # stop generating molecules if we've made enough
             if len(mols) >= args.samples_per_pocket:

@@ -27,10 +27,12 @@ def parse_arguments():
     rec_encoder_group = p.add_argument_group('receptor encoder')
     rec_encoder_group.add_argument('--n_keypoints', type=int, default=None, help="number of keypoints produced by receptor encoder module")
     rec_encoder_group.add_argument('--n_convs_encoder', type=int, default=None, help="number of graph convolutions in receptor encoder")
-    rec_encoder_group.add_argument('--encoder_hidden_feats', type=int, default=None, help="number of hidden features in receptor encoder")
     rec_encoder_group.add_argument('--keypoint_feats', type=int, default=None, help='number of features for receptor keypoints')
     rec_encoder_group.add_argument('--kp_feat_scale', type=float, default=None, help='scaling value for rec encoder keypoint feature attention')
-    
+    rec_encoder_group.add_argument('--use_keypoint_feat_mha', type=bool, default=None)
+    rec_encoder_group.add_argument('--feat_mha_heads', type=int, deafult=None)
+    rec_encoder_group.add_argument('--rec_enc_loss_type', type=str, default=None)
+
     dynamics_group = p.add_argument_group('dynamics')
     dynamics_group.add_argument('--n_convs_dynamics', type=int, default=None, help='number of graph convolutions in the dynamics model')
     # dynamics_group.add_argument('--keypoint_k', type=int, default=6, help='K for keypoint -> ligand KNN graph')
@@ -64,17 +66,25 @@ def parse_arguments():
     if args.n_convs_encoder is not None:
         config_dict['rec_encoder']['n_convs'] = args.n_convs_encoder
 
-    if args.encoder_hidden_feats is not None:
-        config_dict['rec_encoder']['hidden_n_node_feat'] = args.encoder_hidden_feats
-
+    # NOTE: this is a design choice: we are only exploring rec_encoder architectures where n_hidden_feats == n_output_feats
     if args.keypoint_feats is not None:
         config_dict['rec_encoder']['out_n_node_feat'] = args.keypoint_feats
+        config_dict['rec_encoder']['hidden_n_node_feat'] = args.keypoint_feats
 
     if args.n_convs_dynamics is not None:
         config_dict['dynamics']['n_layers'] = args.n_convs_dynamics
 
     if args.kp_feat_scale is not None:
         config_dict['rec_encoder']['kp_feat_scale'] = args.kp_feat_scale
+
+    if args.use_keypoint_feat_mha is not None:
+        config_dict['rec_encoder']['use_keypoint_feat_mha'] = args.use_keypoint_feat_mha
+
+    if args.feat_mha_heads is not None:
+        config_dict['rec_encoder']['feat_mha_heads'] = args.feat_mha_heads
+
+    if args.rec_enc_loss_type is not None:
+        config_dict['rec_encoder_loss']['loss_type'] = args.rec_enc_loss_type
 
     if args.rec_encoder_loss_weight is not None:
         config_dict['training']['rec_encoder_loss_weight'] = args.rec_encoder_loss_weight
@@ -95,7 +105,7 @@ def test_model(model, test_dataloader, args, device):
 
     l2_losses = []
     losses = []
-    ot_losses = []
+    rec_encoder_losses = []
 
     for _ in range(args['training']['test_epochs']):
         for rec_graphs, lig_atom_positions, lig_atom_features in test_dataloader:
@@ -104,20 +114,27 @@ def test_model(model, test_dataloader, args, device):
             lig_atom_positions = [ arr.to(device) for arr in lig_atom_positions ]
             lig_atom_features = [ arr.to(device) for arr in lig_atom_features ]
 
-            noise_loss, ot_loss = model(rec_graphs, lig_atom_positions, lig_atom_features)
+            noise_loss, rec_encoder_loss = model(rec_graphs, lig_atom_positions, lig_atom_features)
 
             # combine losses
-            loss = noise_loss + ot_loss*args['training']['rec_encoder_loss_weight']
+            loss = noise_loss + rec_encoder_loss*args['training']['rec_encoder_loss_weight']
 
             l2_losses.append(noise_loss.detach().cpu())
             losses.append(loss.detach().cpu())
-            ot_losses.append(ot_loss.detach().cpu())
+            rec_encoder_losses.append(rec_encoder_loss.detach().cpu())
 
     loss_dict = {
         'l2_loss': np.array(l2_losses).mean(),
-        'total_loss': np.array(losses).mean(),
-        'ot_loss': np.array(ot_losses).mean()
+        'total_loss': np.array(losses).mean()
     }
+
+    if args['rec_encoder_loss']['loss_type'] == 'optimal_transport':
+        rec_encoder_loss_name = 'ot_loss'
+    elif args['rec_encoder_loss']['loss_type'] == 'gaussian_repulsion':
+        rec_encoder_loss_name = 'repulsion_loss'
+
+    loss_dict[rec_encoder_loss_name] = np.array(rec_encoder_losses).mean()
+
     return loss_dict
 
 def make_multiplier_func(start: int, stop: int, multiplier: float):
@@ -261,9 +278,14 @@ def main():
     # create empty lists to record per-batch losses
     train_losses = []
     train_l2_losses = []
-    train_ot_losses = []
-    
+    train_encoder_losses = []
 
+
+    if args['rec_encoder_loss']['loss_type'] == 'optimal_transport':
+        rec_encoder_loss_name = 'ot_loss'
+    elif args['rec_encoder_loss']['loss_type'] == 'gaussian_repulsion':
+        rec_encoder_loss_name = 'repulsion_loss'
+    
     # create markers for deciding when to evaluate on the test set, report training metrics, save the model
     test_report_marker = 0 # measured in epochs
     train_report_marker = 0 # measured in epochs
@@ -295,18 +317,18 @@ def main():
             # TODO: add random translations to the complex positions
 
             # encode receptor, add noise to ligand and predict noise
-            noise_loss, ot_loss = model(rec_graphs, lig_atom_positions, lig_atom_features)
+            noise_loss, rec_encoder_loss = model(rec_graphs, lig_atom_positions, lig_atom_features)
 
             # combine losses
-            if rec_encoder_loss_weight > 0:
-                loss = noise_loss + ot_loss*rec_encoder_loss_weight
-            else:
+            if rec_encoder_loss_weight == 0:
                 loss = noise_loss
+            else:
+                loss = noise_loss + rec_encoder_loss*rec_encoder_loss_weight
 
             # record losses for this batch
             train_losses.append(loss.detach().cpu())
             train_l2_losses.append(noise_loss.detach().cpu())
-            train_ot_losses.append(ot_loss.detach().cpu())
+            train_encoder_losses.append(rec_encoder_loss.detach().cpu())
 
             loss.backward()
             if args['training']['clip_grad']:
@@ -381,7 +403,7 @@ def main():
                 train_metrics_row = {
                     'total_loss': np.array(train_losses).mean(),
                     'l2_loss': np.array(train_l2_losses).mean(),
-                    'ot_loss': np.array(train_ot_losses).mean(),
+                    rec_encoder_loss_name: np.array(train_encoder_losses).mean(),
                     'epoch': epoch_idx,
                     'epoch_exact': current_epoch,
                     'iter': iter_idx,
@@ -411,7 +433,7 @@ def main():
                         del train_metrics_wandb[key]
                 wandb.log(train_metrics_wandb)
 
-                train_losses, train_l2_losses, train_ot_losses, = [], [], []
+                train_losses, train_l2_losses, train_encoder_losses, = [], [], []
                 
 
             # apply cyclic LR update if necessary

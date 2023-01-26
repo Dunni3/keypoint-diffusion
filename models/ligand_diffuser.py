@@ -59,7 +59,7 @@ class LigandDiffuser(nn.Module):
         rec_pos, rec_feat = self.rec_encoder(rec_graphs)
 
         # compute receptor encoding loss
-        ot_loss = self.rec_encoder_loss_fn(rec_pos, rec_graphs)
+        rec_encoder_loss = self.rec_encoder_loss_fn(rec_pos, rec_graphs)
 
         # if we are keypoint centered, we need to remove the keypoint COM from the system
         if self.keypoint_centered:
@@ -94,7 +94,7 @@ class LigandDiffuser(nn.Module):
         h_loss = (eps_h - eps_h_pred).square().sum()
         l2_loss = (x_loss + h_loss) / (eps_x.numel() + eps_h.numel())
 
-        return l2_loss, ot_loss
+        return l2_loss, rec_encoder_loss
 
     def remove_com(self, kp_pos: List[torch.Tensor], lig_pos: List[torch.Tensor], com: str = None):
         """Remove center of mass from ligand atom positions and receptor keypoint positions.
