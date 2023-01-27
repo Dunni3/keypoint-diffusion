@@ -30,7 +30,7 @@ def parse_arguments():
     rec_encoder_group.add_argument('--keypoint_feats', type=int, default=None, help='number of features for receptor keypoints')
     rec_encoder_group.add_argument('--kp_feat_scale', type=float, default=None, help='scaling value for rec encoder keypoint feature attention')
     rec_encoder_group.add_argument('--use_keypoint_feat_mha', type=bool, default=None)
-    rec_encoder_group.add_argument('--feat_mha_heads', type=int, deafult=None)
+    rec_encoder_group.add_argument('--feat_mha_heads', type=int, default=None)
     rec_encoder_group.add_argument('--rec_enc_loss_type', type=str, default=None)
 
     dynamics_group = p.add_argument_group('dynamics')

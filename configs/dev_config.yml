@@ -28,8 +28,8 @@ dataset:
 rec_encoder:
   n_keypoints: 20
   n_convs: 6
-  hidden_n_node_feat: 256 
-  out_n_node_feat: 256
+  hidden_n_node_feat: 128 
+  out_n_node_feat: 128
   use_tanh: True
   coords_range: 10
   kp_feat_scale: 1.0
