@@ -140,10 +140,15 @@ def test_model(model, test_dataloader, args, device):
 def make_multiplier_func(start: int, stop: int, multiplier: float):
 
     def lr_multiplier(epoch):
-        if epoch < start or epoch >= stop:
+        if epoch < start:
+            # before the start of LR reduction
             return 1
-            
-        return multiplier**(epoch - start + 1)
+        elif epoch >= start and epoch < stop:
+            # during the LR reduction phase
+            return multiplier**(epoch - start + 1)
+        else:
+            # when we are done reducing LR, we hold it constant at the final value
+            return multiplier**(stop - start + 1)
 
     return lr_multiplier
         
