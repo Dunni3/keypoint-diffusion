@@ -33,7 +33,7 @@ rec_encoder:
   use_tanh: True
   coords_range: 10
   kp_feat_scale: 1.0
-  use_keypoint_feat_mha: True
+  use_keypoint_feat_mha: False
   feat_mha_heads: 3
 
 diffusion:
@@ -49,7 +49,7 @@ dynamics:
 
 
 rec_encoder_loss:
-  loss_type: 'optimal_transport' # can be optimal_transport or gaussian_repulsion
+  loss_type: 'gaussian_repulsion' # can be optimal_transport or gaussian_repulsion
 
 training:
   rec_encoder_loss_weight: 0.1
