@@ -2,6 +2,10 @@
 data/PDBbind
 data/crossdock_processed
 data/PDBbind_processed
+*.slurm
+*.out
+*.stderr
+*.stdout
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
