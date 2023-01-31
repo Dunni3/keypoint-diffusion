@@ -8,7 +8,7 @@ import prody
 from rdkit import Chem
 import shutil
 import pickle
-import tqdm
+from tqdm import trange
 
 from data_processing.crossdocked.dataset import CrossDockedDataset
 from models.ligand_diffuser import LigandDiffuser
@@ -22,23 +22,22 @@ def parse_arguments():
     p.add_argument('--model_file', type=str, default=None, help='Path to file containing model weights. If not specified, the most recently saved weights file in model_dir will be used')
     p.add_argument('--samples_per_pocket', type=int, default=100)
     p.add_argument('--avg_validity', type=float, default=1, help='average fraction of generated molecules which are valid')
-    p.add_argument('--max_batch_size', type=int, deafult=128, help='maximum feasible batch size due to memory constraints')
+    p.add_argument('--max_batch_size', type=int, default=128, help='maximum feasible batch size due to memory constraints')
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--output_dir', type=str, default='test_results/')
     p.add_argument('--max_tries', type=int, default=3, help='maximum number of batches to sample per pocket')
+    p.add_argument('--dataset_size', type=int, default=None, help='truncate test dataset, for debugging only')
     
     args = p.parse_args()
 
     return args
 
-def make_reference_files(dataset_idx: int, dataset: CrossDockedDataset, output_dir: Path, remove_hydrogen: bool) -> Path:
-
-    output_dir = output_dir / str(dataset_idx)
-    output_dir.mkdir(exist_ok=True)
+def make_reference_files(dataset_idx: int, dataset: CrossDockedDataset, output_dir: Path) -> Path:
 
     # get original receptor and ligand files
-    ref_rec_file = Path(dataset.filenames['rec_files'][dataset_idx])
-    ref_lig_file = Path(dataset.filenames['lig_files'][dataset_idx])
+    ref_rec_file, ref_lig_file = dataset.get_files(dataset_idx)
+    ref_rec_file = Path(ref_rec_file)
+    ref_lig_file = Path(ref_lig_file)
 
     # # get receptor object and atom coordinates
     # rec: prody.AtomGroup = prody.parsePDB(str(ref_rec_file))
@@ -130,6 +129,7 @@ def main():
     model = LigandDiffuser(
         n_lig_feat, 
         n_kp_feat,
+        processed_dataset_dir=Path(args['dataset']['location']),
         n_timesteps=args['diffusion']['n_timesteps'],
         keypoint_centered=args['diffusion']['keypoint_centered'],
         dynamics_config=args['dynamics'], 
@@ -150,7 +150,16 @@ def main():
 
     pocket_mols = []
     pocket_sampling_times = []
-    for dataset_idx in len(test_dataset):
+    keypoints = []
+
+    # truncate the dataset if we need to (we only do this for debugging purposes)
+    if cmd_args.dataset_size is not None:
+        dataset_size = cmd_args.dataset_size
+    else:
+        dataset_size = len(test_dataset)
+
+    # iterate over dataset and draw samples for each pocket
+    for dataset_idx in trange(dataset_size):
 
         pocket_sample_start = time.time()
 
@@ -159,29 +168,29 @@ def main():
         rec_file_path, ref_lig_file_path = test_dataset.get_files(dataset_idx) # get original rec/lig files
 
         # move data to gpu
-        rec_graph.to(device)
+        rec_graph = rec_graph.to(device)
         # ref_lig_pos.to(device)
         # ref_lig_feat.to(device)
         
         n_lig_atoms: int = ref_lig_pos.shape[0] # get number of atoms in the ligand
-        atoms_per_ligand = torch.ones(size=(args.max_batch_size,), dtype=int, device=device)*n_lig_atoms # input to sampling function 
+        atoms_per_ligand = torch.ones(size=(cmd_args.max_batch_size,), dtype=int, device=device)*n_lig_atoms # input to sampling function 
 
         # encode the receptor
         kp_pos, kp_feat, init_rec_atom_com, init_kp_com = model.encode_receptors([rec_graph])
 
         # create batch_size copies of the encoded receptor
-        kp_pos = [ kp_pos[0].detach().clone() for _ in range(args.max_batch_size) ]
-        kp_feat = [ kp_feat[0].detach().clone() for _ in range(args.max_batch_size) ]
-        init_rec_atom_com = [ init_rec_atom_com[0].detach().clone() for _ in range(args.max_batch_size) ]
-        init_kp_com = [ init_kp_com[0].detach().clone() for _ in range(args.max_batch_size) ]
+        kp_pos = [ kp_pos[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
+        kp_feat = [ kp_feat[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
+        init_rec_atom_com = [ init_rec_atom_com[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
+        init_kp_com = [ init_kp_com[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
 
         mols = []
 
-        for attempt_idx in range(args.max_tries):
+        for attempt_idx in range(cmd_args.max_tries):
 
-            n_mols_needed = args.samples_per_pocket - len(mols)
-            n_mols_to_generate = int( n_mols_needed / (args.avg_validity*0.95) ) + 1
-            batch_size = min(n_mols_to_generate, args.max_batch_size)
+            n_mols_needed = cmd_args.samples_per_pocket - len(mols)
+            n_mols_to_generate = int( n_mols_needed / (cmd_args.avg_validity*0.95) ) + 1
+            batch_size = min(n_mols_to_generate, cmd_args.max_batch_size)
 
             # sample ligand atom positions/features
             batch_lig_pos, batch_lig_feat = model.sample_from_encoded_receptors(
@@ -192,7 +201,7 @@ def main():
                 atoms_per_ligand[:batch_size])
 
             # convert positions/features to rdkit molecules
-            for lig_idx in range(args.batch_size):
+            for lig_idx in range(batch_size):
 
                 # convert lig atom features to atom elements
                 element_idxs = torch.argmax(batch_lig_feat[lig_idx], dim=1).tolist()
@@ -205,12 +214,18 @@ def main():
                     mols.append(mol)
 
             # stop generating molecules if we've made enough
-            if len(mols) >= args.samples_per_pocket:
+            if len(mols) >= cmd_args.samples_per_pocket:
                 break
 
         pocket_sample_time = time.time() - pocket_sample_start
         pocket_sampling_times.append(pocket_sample_time)
         pocket_mols.append(mols)
+
+        # remove KP COM, add back in init_kp_com, then save keypoint positions
+        keypoint_positions = kp_pos[0]
+        keypoint_positions = keypoint_positions - keypoint_positions.mean(dim=0, keepdims=True) + init_kp_com[0]
+        keypoints.append(keypoint_positions.detach().cpu())
+
         
 
     # compute metrics on the sampled molecules
@@ -221,19 +236,44 @@ def main():
 
     # save computed metrics
     metrics = {
-        'qed': all_qed, 'sa': all_sa, 'logp': all_logp, 'lipinski': all_lipinski, 'diversity': per_pocket_diversity
+        'qed': all_qed, 'sa': all_sa, 'logp': all_logp, 'lipinski': all_lipinski, 'diversity': per_pocket_diversity,
+        'pocket_sampling_time': pocket_sampling_times
     }
 
     metrics_file = output_dir / 'metrics.pkl'
     with open(metrics_file, 'wb') as f:
         pickle.dump(metrics, f)
 
-    # save all the sampled molecules
+    # save all the sampled molecules, reference files, and keypoints
     mols_dir = output_dir / 'sampled_mols'
+    mols_dir.mkdir(exist_ok=True)
     for i, mols in enumerate(pocket_mols):
-        pocket_ligands_file = mols_dir / f'pocket_{i}_ligands.sdf'
-        write_ligands(mols, pocket_ligands_file)
+        pocket_dir = mols_dir / f'pocket_{i}'
+        pocket_dir.mkdir(exist_ok=True)
+        pocket_ligands_file = pocket_dir / f'pocket_{i}_ligands.sdf'
+        write_ligands(mols, pocket_ligands_file) # write ligands
+        make_reference_files(i, test_dataset, pocket_dir) # write receptor and reference ligand
+        
+        # write keypoints to an xyz file
+        kp_file = pocket_dir / 'keypoints.xyz'
+        kpi = keypoints[i]
+        kp_elements = ['C' for _ in range(kpi.shape[0]) ]
+        write_xyz_file(kpi, kp_elements, kp_file)
 
+    # create a summary file
+    summary_file = output_dir / 'summary.txt'
+    summary_file_contents = ''
+    for metric_name in metrics.keys():
+        metric = metrics[metric_name]
+        if metric_name in ['diversity', 'pocket_sampling_time']:
+            metric_flattened = metric
+        else:
+            metric_flattened = [x for px in metric for x in px]
+        metric_mean = np.mean(metric_flattened)
+        metric_std = np.std(metric_flattened)
+        summary_file_contents += f'{metric_name} = {metric_mean:.3f} \pm {metric_std:.2f}\n'
+    with open(summary_file, 'w') as f:
+        f.write(summary_file_contents)
 
 if __name__ == "__main__":
 

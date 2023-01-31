@@ -8,7 +8,7 @@ from analysis.SA_Score.sascorer import calculateScore
 from torch.nn.functional import one_hot
 import time
 import numpy as np
-import tqdm
+from tqdm import tqdm
 
 from models.ligand_diffuser import LigandDiffuser
 from data_processing.crossdocked.dataset import CrossDockedDataset
