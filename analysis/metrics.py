@@ -67,6 +67,9 @@ class ModelAnalyzer:
             element_idxs = torch.argmax(lig_feat_i, dim=1).tolist()
             atom_elements = self.dataset.lig_atom_idx_to_element(element_idxs)
             mol = make_mol_openbabel(lig_pos_i, atom_elements)
+            if mol is None:
+                print('Warning: making an unprocessed molecule failed.', flush=True)
+                continue
             unprocessed_mols.append(mol)
 
         # get metrics that operate on imperfect molecules

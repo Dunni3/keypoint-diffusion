@@ -1,12 +1,12 @@
 experiment:
   name:
-  results_dir: sweep_mha_runs/
+  results_dir: sweep_repulsion_runs/
 
 wandb:
   init_kwargs:
     mode: online # options: online, offline, disabled
     project: ligdiff_cluster
-    group: sweep_mha
+    group: sweep_repulsion
   watch_model: False
   watch_kwargs:
     log: all # (str) One of "gradients", "parameters", "all", or None
