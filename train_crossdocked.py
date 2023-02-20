@@ -226,7 +226,7 @@ def main():
         processed_dataset_dir=Path(args['dataset']['location']), # TODO: on principle, i don't like that our model needs access to the processed data dir for which it was trained.. need to fix/reorganize to avoid this
         dynamics_config=args['dynamics'], 
         rec_encoder_config=rec_encoder_config, 
-        rec_encoder_loss_config=args['rec_encoder_loss']
+        rec_encoder_loss_config=args['rec_encoder_loss'],
         **args['diffusion']).to(device=device)
 
     # create optimizer
