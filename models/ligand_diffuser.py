@@ -17,19 +17,20 @@ from models.n_nodes_dist import LigandSizeDistribution
 class LigandDiffuser(nn.Module):
 
     def __init__(self, atom_nf, rec_nf, processed_dataset_dir: Path, n_timesteps: int = 1000, keypoint_centered=False, 
-    dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}):
+    dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, precision=1e-4, lig_feat_norm_constant=1):
         super().__init__()
 
         self.n_lig_features = atom_nf
         self.n_kp_feat = rec_nf
         self.keypoint_centered = keypoint_centered
         self.n_timesteps = n_timesteps
+        self.lig_feat_norm_constant = lig_feat_norm_constant
 
         # create ligand node distribution for sampling
         self.lig_size_dist = LigandSizeDistribution(processed_dataset_dir=processed_dataset_dir)
 
         # create noise schedule and dynamics model
-        self.gamma = PredefinedNoiseSchedule(noise_schedule='polynomial_2', timesteps=n_timesteps, precision=1e-4)
+        self.gamma = PredefinedNoiseSchedule(noise_schedule='polynomial_2', timesteps=n_timesteps, precision=precision)
         self.dynamics = LigRecDynamics(atom_nf, rec_nf, **dynamics_config)
 
         # create receptor encoder and its loss function
@@ -38,7 +39,8 @@ class LigandDiffuser(nn.Module):
 
     def forward(self, rec_graphs, lig_atom_positions, lig_atom_features):
         """Computes loss."""
-        # TODO: normalize values. specifically, atom features are normalized by a value of 4
+        # normalize values. specifically, atom features are normalized by a value of 4
+        self.normalize(lig_atom_positions, lig_atom_features)
 
         batch_size = len(lig_atom_positions)
         device = lig_atom_positions[0].device
@@ -95,6 +97,14 @@ class LigandDiffuser(nn.Module):
         l2_loss = (x_loss + h_loss) / (eps_x.numel() + eps_h.numel())
 
         return l2_loss, rec_encoder_loss
+    
+    def normalize(self, lig_pos, lig_features):
+        lig_features = [ x/self.lig_feat_norm_constant for x in lig_features ]
+        return lig_pos, lig_features
+
+    def unnormalize(self, lig_pos, lig_features):
+        lig_features = [ x*self.lig_feat_norm_constant for x in lig_features ]
+        return lig_pos, lig_features
 
     def remove_com(self, kp_pos: List[torch.Tensor], lig_pos: List[torch.Tensor], com: str = None):
         """Remove center of mass from ligand atom positions and receptor keypoint positions.
@@ -331,6 +341,9 @@ class LigandDiffuser(nn.Module):
         for i in range(n_complexes):
             lig_pos[i] += init_kp_com[i]
             # kp_pos[i] += init_kp_com[i]
+
+        # unnormalize features
+        lig_pos, lig_feat = self.unnormalize(lig_pos, lig_feat)
 
         return lig_pos, lig_feat
 

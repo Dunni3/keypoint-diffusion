@@ -39,6 +39,8 @@ rec_encoder:
 diffusion:
   n_timesteps: 1000
   keypoint_centered: False # when t=T, are atoms centered at COM of binding pocket keypoints? If true, then yes, if false, then atoms are at COM of binding pocket atoms when t=T
+  precision: 1.0e-5
+  lig_feat_norm_constant: 1
 
 dynamics:
   n_layers: 6
