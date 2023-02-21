@@ -24,6 +24,10 @@ from dgl.dataloading import GraphDataLoader
 def parse_arguments():
     p = argparse.ArgumentParser()
 
+    diff_group = p.add_argument_group('diffusion')
+    diff_group.add_argument('--precision', type=float, default=None)
+    diff_group.add_argument('--feat_norm_constant', type=float, default=None)
+
     rec_encoder_group = p.add_argument_group('receptor encoder')
     rec_encoder_group.add_argument('--n_keypoints', type=int, default=None, help="number of keypoints produced by receptor encoder module")
     rec_encoder_group.add_argument('--n_convs_encoder', type=int, default=None, help="number of graph convolutions in receptor encoder")
@@ -32,9 +36,14 @@ def parse_arguments():
     rec_encoder_group.add_argument('--use_keypoint_feat_mha', type=bool, default=None)
     rec_encoder_group.add_argument('--feat_mha_heads', type=int, default=None)
     rec_encoder_group.add_argument('--rec_enc_loss_type', type=str, default=None)
+    rec_encoder_group.add_argument('--apply_kp_wise_mlp', type=bool, default=None)
 
     dynamics_group = p.add_argument_group('dynamics')
     dynamics_group.add_argument('--n_convs_dynamics', type=int, default=None, help='number of graph convolutions in the dynamics model')
+    dynamics_group.add_argument('--dynamics_feats', type=int, default=None)
+    dynamics_group.add_argument('--h_skip_connections', type=bool, default=None)
+    dynamics_group.add_argument('--agg_across_edge_types', type=bool, default=None)
+    dynamics_group.add_argument('--dynamics_rec_enc_multiplier', type=int, default=None)
     # dynamics_group.add_argument('--keypoint_k', type=int, default=6, help='K for keypoint -> ligand KNN graph')
     # dynamics_group.add_argument('--ligand_k', type=int, default=8, help='K for ligand -> ligand KNN graph')
     # dynamics_group.add_argument('--use_tanh', type=bool, default=True, help='whether to place tanh activation on coordinate MLP output')
@@ -51,7 +60,7 @@ def parse_arguments():
     # training_group.add_argument('--train_metrics_interval', type=float, default=1, help="report training metrics every train_metrics_interval epochs")
     # training_group.add_argument('--test_epochs', type=float, default=2, help='number of epochs to run on test set evaluation')
     # training_group.add_argument('--num_workers', type=int, default=1, help='num_workers argument for pytorch dataloader')
-    # TODO: how do i merge commandline arguments with config file arguments?
+
 
     p.add_argument('--config', type=str, required=True)
     args = p.parse_args()
@@ -60,6 +69,12 @@ def parse_arguments():
         config_dict = yaml.load(f, Loader=yaml.FullLoader)
 
     # override config file args with command line args
+    if args.precision is not None:
+        config_dict['diffusion']['precision'] = args.precision
+
+    if args.feat_norm_constant is not None:
+        config_dict['diffusion']['lig_feat_norm_constant'] = args.feat_norm_constant
+
     if args.n_keypoints is not None:
         config_dict['rec_encoder']['n_keypoints'] = args.n_keypoints
 
@@ -71,8 +86,8 @@ def parse_arguments():
         config_dict['rec_encoder']['out_n_node_feat'] = args.keypoint_feats
         config_dict['rec_encoder']['hidden_n_node_feat'] = args.keypoint_feats
 
-    if args.n_convs_dynamics is not None:
-        config_dict['dynamics']['n_layers'] = args.n_convs_dynamics
+    if args.apply_kp_wise_mlp is not None:
+        config_dict['rec_encoder']['apply_kp_wise_mlp'] = args.apply_kp_wise_mlp
 
     if args.kp_feat_scale is not None:
         config_dict['rec_encoder']['kp_feat_scale'] = args.kp_feat_scale
@@ -85,6 +100,21 @@ def parse_arguments():
 
     if args.rec_enc_loss_type is not None:
         config_dict['rec_encoder_loss']['loss_type'] = args.rec_enc_loss_type
+
+    if args.n_convs_dynamics is not None:
+        config_dict['dynamics']['n_layers'] = args.n_convs_dynamics
+
+    if args.h_skip_connections is not None:
+        config_dict['dynamics']['h_skip_connections'] = args.h_skip_connections
+
+    if args.agg_across_edge_types is not None:
+        config_dict['dynamics']['agg_across_edge_types'] = args.agg_across_edge_types
+
+    if args.dynamics_rec_enc_multiplier is not None:
+        config_dict['dynamics']['rec_enc_multiplier'] = args.dynamics_rec_enc_multiplier
+
+    if args.dynamics_feats is not None:
+        config_dict['dynamics']['hidden_nf'] = args.dynamics_feats
 
     if args.rec_encoder_loss_weight is not None:
         config_dict['training']['rec_encoder_loss_weight'] = args.rec_encoder_loss_weight
