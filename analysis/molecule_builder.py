@@ -5,7 +5,7 @@ import torch
 import numpy as np
 from rdkit import Chem
 from rdkit.Chem.rdForceFieldHelpers import UFFOptimizeMolecule, UFFHasAllMoleculeParams
-import openbabel
+from openbabel import openbabel
 
 from utils import write_xyz_file
 

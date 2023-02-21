@@ -23,6 +23,9 @@ def parse_arguments():
     p.add_argument('--random', action='store_true')
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--output_dir', type=str, default='sampled_mols/')
+
+
+    p.add_argument('--visualize', action='store_true')
     
 
     args = p.parse_args()
@@ -31,7 +34,7 @@ def parse_arguments():
 
 def make_reference_files(dataset_idx: int, dataset: CrossDockedDataset, output_dir: Path, remove_hydrogen: bool) -> Path:
 
-    output_dir = output_dir / str(dataset_idx)
+    output_dir = output_dir / f'pocket_{dataset_idx}'
     output_dir.mkdir(exist_ok=True)
 
     # get original receptor and ligand files
@@ -82,12 +85,15 @@ def make_reference_files(dataset_idx: int, dataset: CrossDockedDataset, output_d
 
     return output_dir
 
-def write_sampled_ligands(lig_pos, lig_feat, output_dir: Path, dataset: CrossDockedDataset):
+def write_sampled_ligands(lig_pos, lig_feat, output_dir: Path, dataset: CrossDockedDataset, name: str = None):
 
     lig_pos = [ arr.detach().cpu() for arr in lig_pos ]
     lig_feat = [ arr.detach().cpu() for arr in lig_feat ]
 
-    sdf_file = output_dir / 'sampled_mols.sdf'
+    if name is None:
+        name = 'sampled_mols'
+
+    sdf_file = output_dir / f'{name}.sdf'
     writer = Chem.SDWriter(str(sdf_file))
 
     for lig_idx in range(len(lig_pos)):
@@ -143,12 +149,10 @@ def main():
         n_lig_feat, 
         n_kp_feat,
         processed_dataset_dir=Path(args['dataset']['location']),
-        n_timesteps=args['diffusion']['n_timesteps'],
-        keypoint_centered=args['diffusion']['keypoint_centered'],
         dynamics_config=args['dynamics'], 
         rec_encoder_config=rec_encoder_config, 
-        rec_encoder_loss_config=args['rec_encoder_loss']
-        ).to(device=device)
+        rec_encoder_loss_config=args['rec_encoder_loss'],
+        **args['diffusion']).to(device=device)
 
     # get file for model weights
     if cmd_args.model_file is None:
@@ -192,10 +196,17 @@ def main():
         kp_pos, kp_feat = kp_pos[0], kp_feat[0] # the keypoints and features are returned as lists of length batch_size, but now our batch size is just 1
 
         # sample ligands
-        lig_pos, lig_feat = model.sample_given_pocket(rec_graph, n_nodes)
+        lig_pos, lig_feat = model.sample_given_pocket(rec_graph, n_nodes, visualize=cmd_args.visualize)
 
         # write sampled ligands
-        write_sampled_ligands(lig_pos, lig_feat, output_dir=complex_output_dir, dataset=test_dataset)
+        if cmd_args.visualize:
+            for lig_idx in range(len(lig_pos)):
+                position_frames = lig_pos[lig_idx]
+                feature_frames = lig_feat[lig_idx]
+                name = f'lig_{lig_idx}_frames'
+                write_sampled_ligands(position_frames, feature_frames, output_dir=complex_output_dir, dataset=test_dataset, name=name)
+        else:
+            write_sampled_ligands(lig_pos, lig_feat, output_dir=complex_output_dir, dataset=test_dataset)
 
         # write keypoints to an xyz file
         kp_file = complex_output_dir / 'keypoints.xyz'
