@@ -210,7 +210,7 @@ class LigandDiffuser(nn.Module):
 
     
     @torch.no_grad()
-    def _sample(self, receptors: List[dgl.DGLGraph], n_lig_atoms: List[List[int]], rec_enc_batch_size: int = 32, diff_batch_size: int = 32) -> List[List[Dict[str, torch.Tensor]]]:
+    def _sample(self, receptors: List[dgl.DGLGraph], n_lig_atoms: List[List[int]], rec_enc_batch_size: int = 32, diff_batch_size: int = 32, visualize=False) -> List[List[Dict[str, torch.Tensor]]]:
         """Sample multiple receptors with multiple ligands per receptor.
 
         Args:
@@ -286,7 +286,7 @@ class LigandDiffuser(nn.Module):
             batch_init_kp_com = init_kp_com[start_idx:end_idx]
             batch_init_rec_atom_com = init_rec_atom_com[start_idx:end_idx]
 
-            batch_lig_pos, batch_lig_feat = self.sample_from_encoded_receptors(batch_kp_pos, batch_kp_feat, batch_init_rec_atom_com, batch_init_kp_com, batch_n_atoms)
+            batch_lig_pos, batch_lig_feat = self.sample_from_encoded_receptors(batch_kp_pos, batch_kp_feat, batch_init_rec_atom_com, batch_init_kp_com, batch_n_atoms, visualize=visualize)
             lig_pos.extend(batch_lig_pos)
             lig_feat.extend(batch_lig_feat)
 
@@ -309,7 +309,7 @@ class LigandDiffuser(nn.Module):
         return samples
 
     @torch.no_grad()
-    def sample_from_encoded_receptors(self, kp_pos: List[torch.Tensor], kp_feat: List[torch.Tensor], init_atom_com: List[torch.Tensor], init_kp_com: List[torch.Tensor], n_lig_atoms: List[int]):
+    def sample_from_encoded_receptors(self, kp_pos: List[torch.Tensor], kp_feat: List[torch.Tensor], init_atom_com: List[torch.Tensor], init_kp_com: List[torch.Tensor], n_lig_atoms: List[int], visualize=False):
 
         device = kp_pos[0].device
         n_complexes = len(kp_pos)
@@ -319,6 +319,14 @@ class LigandDiffuser(nn.Module):
         for complex_idx in range(n_complexes):
             lig_pos.append(torch.randn((n_lig_atoms[complex_idx], 3), device=device)) 
             lig_feat.append(torch.randn((n_lig_atoms[complex_idx], self.n_lig_features), device=device))
+
+        if visualize:
+            init_kp_com_cpu = [ x.detach().cpu() for x in init_kp_com ]
+            # convert positions and features to cpu
+            # convert positions to input frame of reference: remove current kp com and add original init kp com
+            # note that this function assumes that the keypoints passed as arguments have the keypoint COM removed from them already, so all we need to do is add back in the initial keypoint COM
+            lig_pos_frames = [ [ x.detach().cpu() + init_kp_com_cpu[i] for i, x in enumerate(lig_pos) ] ]
+            lig_feat_frames = [ [ x.detach().cpu() for x in lig_feat ] ]
 
         # remove ligand com from every receptor/ligand complex
         kp_pos, lig_pos = self.remove_com(kp_pos, lig_pos, com='ligand')
@@ -331,6 +339,19 @@ class LigandDiffuser(nn.Module):
             t_arr = t_arr / self.n_timesteps
 
             lig_feat, lig_pos, kp_pos = self.sample_p_zs_given_zt(s_arr, t_arr, kp_pos, kp_feat, lig_pos, lig_feat)
+
+            if visualize:
+
+                # convert keypoints positions, ligand atom positions, and ligand features to the cpu
+                kp_pos_cpu = [ x.detach().cpu() for x in kp_pos ]
+                frame_pos = [ x.detach().cpu() for x in lig_pos ]
+                frame_feat = [ x.detach().cpu() for x in lig_feat ]
+
+                # move ligand atoms back to initial frame of reference
+                frame_pos = [ x - kp_pos_cpu[i].mean(dim=0, keepdim=True) + init_kp_com_cpu[i]  for i,x in enumerate(frame_pos) ]
+                lig_pos_frames.append(frame_pos)
+                lig_feat_frames.append(frame_feat)
+
 
         # remove keypoint COM from system after generation
         kp_pos, lig_pos = self.remove_com(kp_pos, lig_pos, com='receptor')
@@ -345,11 +366,20 @@ class LigandDiffuser(nn.Module):
         # unnormalize features
         lig_pos, lig_feat = self.unnormalize(lig_pos, lig_feat)
 
+        if visualize:
+            # reorganize our frames
+            # right now, we have a list where each element correponds to a frame. and each element is a list of position of all ligands at that frame.
+            # what we want is a list where each element corresponds to a single ligand. and that element will be a list of ligand positions at every frame
+            lig_pos_frames = list(zip(*lig_pos_frames))
+            lig_feat_frames = list(zip(*lig_feat_frames))
+
+            return lig_pos_frames, lig_feat_frames
+
         return lig_pos, lig_feat
 
 
     @torch.no_grad()
-    def sample_given_pocket(self, rec_graph: dgl.DGLGraph, n_lig_atoms: torch.Tensor, rec_enc_batch_size: int = 32, diff_batch_size: int = 32):
+    def sample_given_pocket(self, rec_graph: dgl.DGLGraph, n_lig_atoms: torch.Tensor, rec_enc_batch_size: int = 32, diff_batch_size: int = 32, visualize=False):
         """Sample multiple ligands for a single binding pocket.
 
         Args:
@@ -359,7 +389,7 @@ class LigandDiffuser(nn.Module):
         Returns:
             _type_: _description_
         """        
-        samples = self._sample([rec_graph], n_lig_atoms=[n_lig_atoms], rec_enc_batch_size=rec_enc_batch_size, diff_batch_size=diff_batch_size)
+        samples = self._sample([rec_graph], n_lig_atoms=[n_lig_atoms], rec_enc_batch_size=rec_enc_batch_size, diff_batch_size=diff_batch_size, visualize=visualize)
         lig_pos = samples[0]['positions']
         lig_feat = samples[0]['features'] 
 
