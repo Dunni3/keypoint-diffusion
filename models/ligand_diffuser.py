@@ -330,7 +330,7 @@ class LigandDiffuser(nn.Module):
             s_arr = s_arr / self.n_timesteps
             t_arr = t_arr / self.n_timesteps
 
-            lig_feat, lig_pos = self.sample_p_zs_given_zt(s_arr, t_arr, kp_pos, kp_feat, lig_pos, lig_feat)
+            lig_feat, lig_pos, kp_pos = self.sample_p_zs_given_zt(s_arr, t_arr, kp_pos, kp_feat, lig_pos, lig_feat)
 
         # remove keypoint COM from system after generation
         kp_pos, lig_pos = self.remove_com(kp_pos, lig_pos, com='receptor')
@@ -422,7 +422,7 @@ class LigandDiffuser(nn.Module):
         # remove ligand COM from system
         rec_pos, zs_pos = self.remove_com(rec_pos, zs_pos, com='ligand')
 
-        return zs_feat, zs_pos
+        return zs_feat, zs_pos, rec_pos
 
 
 
