@@ -309,7 +309,7 @@ class LigandDiffuser(nn.Module):
         return samples
 
     @torch.no_grad()
-    def sample_from_encoded_receptors(self, kp_pos: List[torch.Tensor], kp_feat: List[torch.Tensor], init_atom_com: List[torch.Tensor], init_kp_com: List[torch.Tensor], n_lig_atoms: List[int]):
+    def sample_from_encoded_receptors(self, kp_pos: List[torch.Tensor], kp_feat: List[torch.Tensor], init_atom_com: List[torch.Tensor], init_kp_com: List[torch.Tensor], n_lig_atoms: List[int], visualize=False):
 
         device = kp_pos[0].device
         n_complexes = len(kp_pos)
@@ -319,6 +319,13 @@ class LigandDiffuser(nn.Module):
         for complex_idx in range(n_complexes):
             lig_pos.append(torch.randn((n_lig_atoms[complex_idx], 3), device=device)) 
             lig_feat.append(torch.randn((n_lig_atoms[complex_idx], self.n_lig_features), device=device))
+
+        if visualize:
+            init_kp_com_cpu = [ x.detach().cpu() for x in init_kp_com ]
+            # convert positions and features to cpu
+            # convert positions to input frame of reference: remove current kp com and add original init kp com
+            lig_pos_frames = [ [ x.detach().cpu() + init_kp_com[i] for i, x in enumerate(lig_pos) ] ]
+            lig_feat_frames = [ [ x.detach().cpu() for x in lig_feat ] ]
 
         # remove ligand com from every receptor/ligand complex
         kp_pos, lig_pos = self.remove_com(kp_pos, lig_pos, com='ligand')
@@ -331,6 +338,10 @@ class LigandDiffuser(nn.Module):
             t_arr = t_arr / self.n_timesteps
 
             lig_feat, lig_pos = self.sample_p_zs_given_zt(s_arr, t_arr, kp_pos, kp_feat, lig_pos, lig_feat)
+
+            if visualize:
+                frame_pos = [ x.detach().cpu() for x in lig_pos ]
+                frame_feat = [ x.detach().cpu() for x in lig_feat ]
 
         # remove keypoint COM from system after generation
         kp_pos, lig_pos = self.remove_com(kp_pos, lig_pos, com='receptor')
