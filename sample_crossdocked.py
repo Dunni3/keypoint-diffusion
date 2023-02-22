@@ -103,7 +103,11 @@ def write_sampled_ligands(lig_pos, lig_feat, output_dir: Path, dataset: CrossDoc
 
         mol = make_mol_openbabel(lig_pos[lig_idx], atom_elements)
 
-        writer.write(mol)
+        # TODO: sometimes an invariant violation occurs when writing noisy molecules but I have to reproduce/figure out why this happens
+        try:
+            writer.write(mol)
+        except:
+            print(f'failed to write ligand {lig_idx} into {sdf_file}')
 
     writer.close()
 
