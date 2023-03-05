@@ -13,7 +13,7 @@ from tqdm import trange
 from data_processing.crossdocked.dataset import CrossDockedDataset
 from models.ligand_diffuser import LigandDiffuser
 from utils import write_xyz_file
-from analysis.molecule_builder import build_molecule
+from analysis.molecule_builder import build_molecule, make_mol_openbabel
 from analysis.metrics import MoleculeProperties
 
 def parse_arguments():

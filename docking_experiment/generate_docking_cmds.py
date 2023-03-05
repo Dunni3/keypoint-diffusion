@@ -17,7 +17,9 @@ def parse_arguments():
 
 def parse_pocket_dir(pocket_dir: Path):
 
+        pocket_dir = pocket_dir.resolve()
         pocket_files = list(pocket_dir.iterdir())
+        # pocket_files = [ x.resolve() for x in pocket_files ]
 
         # find the receptor pdb file within this directory
         rec_pdb_file = None
@@ -72,8 +74,8 @@ def get_dst_lig_idxs(src_lig_idxs: np.ndarray, atoms_per_ligand: np.ndarray, ref
         dst_lig_idx = dst_lig_candidate_idxs[np.argmin(similarities)] # select most dissimilar ligand
         selected_dst_idxs.append(dst_lig_idx)
 
-        # dst_lig_atoms = atoms_per_ligand[dst_lig_idx]
-        # print(f'src lig atoms: {n_atoms_src} --> dist lig atoms: {dst_lig_atoms}')
+        dst_lig_atoms = atoms_per_ligand[dst_lig_idx]
+        print(f'src lig atoms: {n_atoms_src} --> dist lig atoms: {dst_lig_atoms}')
 
     return np.array(selected_dst_idxs)
 
@@ -84,7 +86,7 @@ if __name__ == "__main__":
 
     rng = np.random.default_rng(args.seed)
 
-    test_result_dir = Path(args.test_result_dir)
+    test_result_dir = Path(args.test_result_dir).resolve()
     sampled_mols_dir = test_result_dir / 'sampled_mols'
 
     pocket_files = [ parse_pocket_dir(pocket_dir) for pocket_dir in sampled_mols_dir.iterdir() ]
