@@ -27,6 +27,9 @@ def parse_arguments():
     p.add_argument('--output_dir', type=str, default='test_results/')
     p.add_argument('--max_tries', type=int, default=3, help='maximum number of batches to sample per pocket')
     p.add_argument('--dataset_size', type=int, default=None, help='truncate test dataset, for debugging only')
+
+    p.add_argument('--no_metrics', action='store_true')
+    p.add_argument('--no_minimization', action='store_true')
     
     args = p.parse_args()
 
@@ -208,7 +211,12 @@ def main():
                 atom_elements = test_dataset.lig_atom_idx_to_element(element_idxs)
 
                 # build molecule
-                mol = build_molecule(batch_lig_pos[lig_idx], atom_elements, add_hydrogens=True, sanitize=True, largest_frag=True, relax_iter=200)
+                if cmd_args.no_minimization:
+                    relax_iter = 0
+                else:
+                    relax_iter = 200
+
+                mol = build_molecule(batch_lig_pos[lig_idx], atom_elements, add_hydrogens=True, sanitize=True, largest_frag=True, relax_iter=relax_iter)
 
                 if mol is not None:
                     mols.append(mol)
@@ -229,20 +237,21 @@ def main():
         
 
     # compute metrics on the sampled molecules
-    mol_metrics = MoleculeProperties()
-    all_qed, all_sa, all_logp, all_lipinski, per_pocket_diversity = \
-        mol_metrics.evaluate(pocket_mols)
+    if not cmd_args.no_metrics:
+        mol_metrics = MoleculeProperties()
+        all_qed, all_sa, all_logp, all_lipinski, per_pocket_diversity = \
+            mol_metrics.evaluate(pocket_mols)
 
 
-    # save computed metrics
-    metrics = {
-        'qed': all_qed, 'sa': all_sa, 'logp': all_logp, 'lipinski': all_lipinski, 'diversity': per_pocket_diversity,
-        'pocket_sampling_time': pocket_sampling_times
-    }
+        # save computed metrics
+        metrics = {
+            'qed': all_qed, 'sa': all_sa, 'logp': all_logp, 'lipinski': all_lipinski, 'diversity': per_pocket_diversity,
+            'pocket_sampling_time': pocket_sampling_times
+        }
 
-    metrics_file = output_dir / 'metrics.pkl'
-    with open(metrics_file, 'wb') as f:
-        pickle.dump(metrics, f)
+        metrics_file = output_dir / 'metrics.pkl'
+        with open(metrics_file, 'wb') as f:
+            pickle.dump(metrics, f)
 
     # save all the sampled molecules, reference files, and keypoints
     mols_dir = output_dir / 'sampled_mols'

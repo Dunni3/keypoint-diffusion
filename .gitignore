@@ -6,6 +6,7 @@ data/PDBbind_processed
 *.out
 *.stderr
 *.stdout
+experiments/minimization_experiment/results/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
