@@ -3,16 +3,20 @@ from rdkit.Chem import AllChem as Chem
 from pathlib import Path
 import gzip
 import argparse
+import pandas as pd
 
 def parse_arguments():
     p = argparse.ArgumentParser()
     p.add_argument('--rec_file', type=str, help='filepath of receptor')
     p.add_argument('--lig_file', type=str, help='SDF file containing ligand(s)')
-    p.add_argument('--output_file', type=str, help='output file path. defaults to {--lig_file}_rec_uff.sdf.gz', default=None)
+    p.add_argument('--output_file', type=str, help='output file path for ligands. defaults to {--lig_file}_rec_uff.sdf.gz', default=None)
     
     args = p.parse_args()
 
     return args
+
+def compute_rmsd(mol1, mol2):
+    return Chem.CalcRMS(mol1, mol2)
 
 if __name__ == "__main__":
 
@@ -27,11 +31,16 @@ if __name__ == "__main__":
     #     lig = next(Chem.SDMolSupplier(sys.argv[2],sanitize=False))
 
     ligands = list( Chem.SDMolSupplier(args.lig_file, sanitize=False) )
+    ligands = [ Chem.AddHs(lig, addCoords=True) for lig in ligands ]
 
     minimized_ligands = []
-    for lig_idx, lig in enumerate(ligands):
+    rmsd_table_rows = []
+    for lig_idx, ref_lig in enumerate(ligands):
 
         print(f'minimizing {lig_idx+1}/{len(ligands)}', flush=True)
+
+        # create a copy of the original ligand
+        lig = Chem.Mol(ref_lig)
 
         if lig is None:
             continue
@@ -66,6 +75,14 @@ if __name__ == "__main__":
         for (i,xyz) in enumerate(cpos[-lig.GetNumAtoms():]):
             conf.SetAtomPosition(i,xyz)
 
+        # compute rmsd between original and minimized ligand
+        rmsd = compute_rmsd(ref_lig, lig)
+        print(f'RMSD: {rmsd:.2f}')
+
+        row = {'lig_idx': lig_idx, 'rmsd': rmsd}
+        rmsd_table_rows.append(row)
+
+        # save the minimized ligand
         lig.SetProp('_Name', f'lig_idx_{lig_idx}')
         minimized_ligands.append(lig)
 
@@ -83,3 +100,8 @@ if __name__ == "__main__":
         out.write(lig)
     out.close()
     outfile.close()
+
+    # write rmsd table out as a csv
+    rmsd_file_path = Path(args.lig_file).parent / 'minimization_rmsds.csv'
+    rmsd_df = pd.DataFrame(rmsd_table_rows)
+    rmsd_df.to_csv(rmsd_file_path, index=False)
