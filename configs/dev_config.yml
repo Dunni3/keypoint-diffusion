@@ -1,6 +1,6 @@
 experiment:
   name: baseline
-  results_dir: experiments/
+  results_dir: runs/
 
 wandb:
   init_kwargs:
@@ -38,9 +38,9 @@ rec_encoder:
 
 diffusion:
   n_timesteps: 1000
-  keypoint_centered: False # when t=T, are atoms centered at COM of binding pocket keypoints? If true, then yes, if false, then atoms are at COM of binding pocket atoms when t=T
   precision: 1.0e-5
   lig_feat_norm_constant: 1
+  rl_dist_threshold: 2
 
 dynamics:
   n_layers: 6
@@ -51,22 +51,23 @@ dynamics:
 
 
 rec_encoder_loss:
-  loss_type: 'gaussian_repulsion' # can be optimal_transport or gaussian_repulsion
+  loss_type: 'hinge' # can be optimal_transport, gaussian_repulsion, or hinge
 
 training:
-  rec_encoder_loss_weight: 0.1
+  rec_encoder_loss_weight: 5.0
+  rl_hinge_loss_weight: 1
   learning_rate: 1.0e-4
   weight_decay: 1.0e-12
   clip_grad: False
   clip_value: 1.5
-  epochs: 3
+  epochs: 15
   batch_size: 8
-  test_interval: 10 # measured in epochs
-  train_metrics_interval: 0.5 # epochs
-  save_interval: 10 # epoch
-  sample_interval: 10 # number of epochs between sampling/testing molecules
+  test_interval: 100 # measured in epochs
+  train_metrics_interval: 1.0 # epochs
+  save_interval: 100 # epoch
+  sample_interval: 100 # number of epochs between sampling/testing molecules
   test_epochs: 2 # number of epochs to run when evaluating on the test set
-  num_workers: 1
+  num_workers: 0
   cyclic_lr: # settings regarding a cyclic learning rate
     use_cyclic_lr: False
     base_lr: 1.0e-5
@@ -74,8 +75,8 @@ training:
     step_size_up_frac: 0.25 # we specify step_size_up as a fraction of iterations_per_epoch
   lambda_lr: # settings for using the lambdaLR schule
     use_lambda_lr: True
-    epoch_start: 0
-    last_epoch: 10
+    epoch_start: 100
+    last_epoch: 200
     multiplier: 0.98
 
 sampling_config:

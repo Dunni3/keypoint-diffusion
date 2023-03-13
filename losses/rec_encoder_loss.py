@@ -5,6 +5,7 @@ import dgl
 import ot
 from typing import List
 import numpy as np
+from losses.dist_hinge_loss import DistanceHingeLoss
 
 # this function is taken from equibind
 def compute_ot_emd(cost_mat, device):
@@ -18,13 +19,16 @@ def compute_ot_emd(cost_mat, device):
 
 class ReceptorEncoderLoss(nn.Module):
 
-    def __init__(self, loss_type='optimal_transport'):
+    def __init__(self, loss_type='optimal_transport', hinge_threshold: float = 4):
         super().__init__()
 
         self.loss_type = loss_type
 
-        if self.loss_type not in ['optimal_transport', 'gaussian_repulsion']:
+        if self.loss_type not in ['optimal_transport', 'gaussian_repulsion', 'hinge']:
             raise ValueError
+        
+        if self.loss_type == 'hinge':
+            self._hinge_loss = DistanceHingeLoss(distance_threshold=hinge_threshold)
 
     def forward(self, keypoint_positions: List[torch.Tensor] = None, batched_rec_graphs: dgl.DGLGraph = None):
 
@@ -32,6 +36,8 @@ class ReceptorEncoderLoss(nn.Module):
             return self.compute_ot_loss(keypoint_positions=keypoint_positions, batched_rec_graphs=batched_rec_graphs)
         elif self.loss_type == 'gaussian_repulsion':
             return self.compute_repulsion_loss(keypoint_positions=keypoint_positions)
+        elif self.loss_type == 'hinge':
+            return self.compute_hinge_loss(keypoint_positions=keypoint_positions)
 
     def compute_ot_loss(self, keypoint_positions: List[torch.Tensor], batched_rec_graphs: dgl.DGLGraph):
         ot_loss = 0
@@ -68,3 +74,16 @@ class ReceptorEncoderLoss(nn.Module):
         repulsion_loss = repulsion_loss / batch_size / n_pairs
         
         return repulsion_loss
+    
+    def compute_hinge_loss(self, keypoint_positions: List[torch.Tensor]):
+
+        batch_size = len(keypoint_positions)
+        n_keypoints = keypoint_positions[0].shape[0]
+        n_pairs = n_keypoints*(n_keypoints - 1)/2
+
+        loss = 0
+        for kp_pos in keypoint_positions:
+            loss += self._hinge_loss(kp_pos)
+
+        loss = loss / batch_size / n_pairs
+        return loss

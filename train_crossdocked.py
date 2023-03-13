@@ -9,6 +9,7 @@ import time
 import shutil
 import wandb
 import uuid
+from collections import defaultdict
 
 from data_processing.crossdocked.dataset import CrossDockedDataset, get_dataloader
 from models.dynamics import LigRecDynamics
@@ -133,9 +134,8 @@ def parse_arguments():
 @torch.no_grad()
 def test_model(model, test_dataloader, args, device):
 
-    l2_losses = []
-    losses = []
-    rec_encoder_losses = []
+    # create data structure to record all losses
+    losses = defaultdict(list)
 
     for _ in range(args['training']['test_epochs']):
         for rec_graphs, lig_atom_positions, lig_atom_features in test_dataloader:
@@ -144,28 +144,34 @@ def test_model(model, test_dataloader, args, device):
             lig_atom_positions = [ arr.to(device) for arr in lig_atom_positions ]
             lig_atom_features = [ arr.to(device) for arr in lig_atom_features ]
 
-            noise_loss, rec_encoder_loss = model(rec_graphs, lig_atom_positions, lig_atom_features)
+            # do forward pass / get losses for this batch
+            loss_dict = model(rec_graphs, lig_atom_positions, lig_atom_features)
 
-            # combine losses
-            loss = noise_loss + rec_encoder_loss*args['training']['rec_encoder_loss_weight']
+            # append losses for this batch into lists of all per-batch losses computed so far
+            for k,v in loss_dict.items():
+                losses[k].append(v.detach().cpu())
 
-            l2_losses.append(noise_loss.detach().cpu())
-            losses.append(loss.detach().cpu())
-            rec_encoder_losses.append(rec_encoder_loss.detach().cpu())
+            # combine losses into total loss
+            total_loss = loss_dict['l2'] + loss_dict['rec_encoder']*args['training']['rec_encoder_loss_weight']
 
-    loss_dict = {
-        'l2_loss': np.array(l2_losses).mean(),
-        'total_loss': np.array(losses).mean()
-    }
+            # add receptor-ligand hinge loss if it is being computed
+            if 'rl_hinge' in loss_dict:
+                total_loss = total_loss + loss_dict['rl_hinge']*args['training']['rl_hinge_loss_weight']
+
+            losses['total'].append(total_loss.detach().cpu())
+
+    output_losses = { f'{k}_loss': np.mean(v)  for k,v in losses.items() if k != 'rec_encoder'}
 
     if args['rec_encoder_loss']['loss_type'] == 'optimal_transport':
         rec_encoder_loss_name = 'ot_loss'
     elif args['rec_encoder_loss']['loss_type'] == 'gaussian_repulsion':
         rec_encoder_loss_name = 'repulsion_loss'
+    elif args['rec_encoder_loss']['loss_type'] == 'hinge':
+        rec_encoder_loss_name = 'rec_hinge_loss'
 
-    loss_dict[rec_encoder_loss_name] = np.array(rec_encoder_losses).mean()
+    output_losses[rec_encoder_loss_name] = np.mean(losses['rec_encoder'])
 
-    return loss_dict
+    return output_losses
 
 def make_multiplier_func(start: int, stop: int, multiplier: float):
 
@@ -309,15 +315,18 @@ def main():
         pickle.dump(args, f)
     
     # create empty lists to record per-batch losses
-    train_losses = []
-    train_l2_losses = []
-    train_encoder_losses = []
+    # train_losses = []
+    # train_l2_losses = []
+    # train_encoder_losses = []
+    losses = defaultdict(list)
 
 
     if args['rec_encoder_loss']['loss_type'] == 'optimal_transport':
         rec_encoder_loss_name = 'ot_loss'
     elif args['rec_encoder_loss']['loss_type'] == 'gaussian_repulsion':
         rec_encoder_loss_name = 'repulsion_loss'
+    elif args['rec_encoder_loss']['loss_type'] == 'hinge':
+        rec_encoder_loss_name = 'rec_hinge_loss'
     
     # create markers for deciding when to evaluate on the test set, report training metrics, save the model
     test_report_marker = 0 # measured in epochs
@@ -347,30 +356,37 @@ def main():
             lig_atom_features = [ arr.to(device) for arr in lig_atom_features ]
 
             optimizer.zero_grad()
-            # TODO: add random translations to the complex positions
+            # TODO: add random translations to the complex positions??
 
             # encode receptor, add noise to ligand and predict noise
-            noise_loss, rec_encoder_loss = model(rec_graphs, lig_atom_positions, lig_atom_features)
+            # noise_loss, rec_encoder_loss = model(rec_graphs, lig_atom_positions, lig_atom_features)
+            loss_dict = model(rec_graphs, lig_atom_positions, lig_atom_features)
+            # noise_loss, rec_encoder_loss = loss_dict['l2'], loss_dict['rec_encoder']
+
+            # append losses for this batch into lists of all per-batch losses computed so far
+            for k,v in loss_dict.items():
+                losses[k].append(v.detach().cpu())
 
             # combine losses
-            if rec_encoder_loss_weight == 0:
-                loss = noise_loss
-            else:
-                loss = noise_loss + rec_encoder_loss*rec_encoder_loss_weight
+            total_loss = loss_dict['l2']
+            if rec_encoder_loss_weight > 0:
+                total_loss = total_loss + loss_dict['rec_encoder']*rec_encoder_loss_weight
+
+            if 'rl_hinge' in loss_dict:
+                total_loss = total_loss + loss_dict['rl_hinge']*args['training']['rl_hinge_loss_weight']
 
             # record losses for this batch
-            train_losses.append(loss.detach().cpu())
-            train_l2_losses.append(noise_loss.detach().cpu())
-            train_encoder_losses.append(rec_encoder_loss.detach().cpu())
+            # train_losses.append(total_loss.detach().cpu())
+            # train_l2_losses.append(noise_loss.detach().cpu())
+            # train_encoder_losses.append(rec_encoder_loss.detach().cpu())
 
-            loss.backward()
+            total_loss.backward()
             if args['training']['clip_grad']:
                 torch.nn.utils.clip_grad_value_(model.parameters(), clip_value=args['training']['clip_value'])
             optimizer.step()
 
             # save the model if necessary
             if current_epoch - save_marker >= args['training']['save_interval']:
-            # if iter_idx % args['training']['save_interval'] == 0 and iter_idx > 0:
                 save_marker = current_epoch # update save marker
                 file_name = f'model_epoch_{epoch_idx}_iter_{iter_idx}.pt' # where to save current model
                 file_path = output_dir / file_name 
@@ -392,7 +408,7 @@ def main():
 
                 # print metrics
                 print('molecule quality metrics')
-                print(*[ f'{k} = {v:.2f}' for k,v in molecule_quality_metrics.items()], sep='\n', flush=True)
+                print(*[ f'{k} = {v:.3E}' for k,v in molecule_quality_metrics.items()], sep='\n', flush=True)
                 print('\n')
 
                 # log metrics to wandb
@@ -415,7 +431,7 @@ def main():
                     pickle.dump(test_metrics, f)
 
                 print('test metrics')
-                print(*[ f'{k} = {v:.2f}' for k,v in test_metrics_row.items()], sep='\n', flush=True)
+                print(*[ f'{k} = {v:.3E}' for k,v in test_metrics_row.items()], sep='\n', flush=True)
                 print('\n')
 
                 # log test metrics to wandb
@@ -432,16 +448,17 @@ def main():
             if current_epoch - train_report_marker >= args['training']['train_metrics_interval']:
                 train_report_marker = current_epoch
 
+                # TODO: edit this to use the new method of reporting losses from the ligand diffusion model!!
+                train_metrics_row = { f'{k}_loss': np.mean(v) for k,v in losses.items() if k != 'rec_encoder' }
 
-                train_metrics_row = {
-                    'total_loss': np.array(train_losses).mean(),
-                    'l2_loss': np.array(train_l2_losses).mean(),
-                    rec_encoder_loss_name: np.array(train_encoder_losses).mean(),
+                train_metrics_row[rec_encoder_loss_name] = np.mean(losses['rec_encoder'])
+
+                train_metrics_row.update({
                     'epoch': epoch_idx,
                     'epoch_exact': current_epoch,
                     'iter': iter_idx,
                     'time_passed': time.time() - training_start
-                }
+                })
 
                 # record learning rate if we are using a learning rate scheduler
                 if use_lambda_lr:
@@ -454,7 +471,7 @@ def main():
                     pickle.dump(train_metrics, f)
 
                 print('training metrics')
-                print(*[ f'{k} = {v:.2f}' for k,v in train_metrics_row.items()], sep='\n', flush=True)
+                print(*[ f'{k} = {v:.3E}' for k,v in train_metrics_row.items()], sep='\n', flush=True)
                 print('\n')
 
                 # log train metrics to wandb
@@ -466,7 +483,8 @@ def main():
                         del train_metrics_wandb[key]
                 wandb.log(train_metrics_wandb)
 
-                train_losses, train_l2_losses, train_encoder_losses, = [], [], []
+                # reset the record losses to empty dicts
+                losses = defaultdict(list)
                 
 
             # apply cyclic LR update if necessary
@@ -476,7 +494,6 @@ def main():
         # at the end of each epoch, we update the learning rate, if using the lambdaLR scheduler
         if use_lambda_lr:
             scheduler.step()
-            print('LEARNING RATE = ',scheduler.get_last_lr())
 
 
     # after exiting the training loop, save the final model file

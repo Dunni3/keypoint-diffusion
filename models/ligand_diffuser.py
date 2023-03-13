@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as fn
 
 from losses.rec_encoder_loss import ReceptorEncoderLoss
+from losses.dist_hinge_loss import DistanceHingeLoss
 from models.dynamics import LigRecDynamics
 from models.receptor_encoder import ReceptorEncoder
 from models.n_nodes_dist import LigandSizeDistribution
@@ -17,7 +18,7 @@ from models.n_nodes_dist import LigandSizeDistribution
 class LigandDiffuser(nn.Module):
 
     def __init__(self, atom_nf, rec_nf, processed_dataset_dir: Path, n_timesteps: int = 1000, keypoint_centered=False, 
-    dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, precision=1e-4, lig_feat_norm_constant=1):
+    dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, precision=1e-4, lig_feat_norm_constant=1, rl_dist_threshold=0):
         super().__init__()
 
         self.n_lig_features = atom_nf
@@ -25,6 +26,13 @@ class LigandDiffuser(nn.Module):
         self.keypoint_centered = keypoint_centered
         self.n_timesteps = n_timesteps
         self.lig_feat_norm_constant = lig_feat_norm_constant
+        
+        # create the receptor -> ligand hinge loss if called for
+        if rl_dist_threshold > 0:
+            self.apply_rl_hinge_loss = True
+            self.rl_hinge_loss_fn = DistanceHingeLoss(distance_threshold=rl_dist_threshold)
+        else:
+            self.apply_rl_hinge_loss_fn = False
 
         # create ligand node distribution for sampling
         self.lig_size_dist = LigandSizeDistribution(processed_dataset_dir=processed_dataset_dir)
@@ -40,32 +48,42 @@ class LigandDiffuser(nn.Module):
     def forward(self, rec_graphs, lig_atom_positions, lig_atom_features):
         """Computes loss."""
         # normalize values. specifically, atom features are normalized by a value of 4
+        losses = {}
+
         self.normalize(lig_atom_positions, lig_atom_features)
 
         batch_size = len(lig_atom_positions)
         device = lig_atom_positions[0].device
 
         # if we are not keypoint centered, we are receptor atom centered. We must remove COM of binding pocket atoms from the system.
-        if not self.keypoint_centered:
-            unbatched_graphs = dgl.unbatch(rec_graphs)
-            rec_atom_pos = [ g.ndata["x_0"] for g in unbatched_graphs ] # get positions of all receptor atoms
-            rec_atom_pos, lig_atom_positions = self.remove_com(rec_atom_pos, lig_atom_positions, com='receptor') # remove receptor atom COM
+        # if not self.keypoint_centered:
+        #     unbatched_graphs = dgl.unbatch(rec_graphs)
+        #     rec_atom_pos = [ g.ndata["x_0"] for g in unbatched_graphs ] # get positions of all receptor atoms
+        #     rec_atom_pos, lig_atom_positions = self.remove_com(rec_atom_pos, lig_atom_positions, com='receptor') # remove receptor atom COM
 
-            for i in range(batch_size):
-                unbatched_graphs[i].ndata["x_0"] = rec_atom_pos[i] # apply new positions to the receptor graph objects
+        #     for i in range(batch_size):
+        #         unbatched_graphs[i].ndata["x_0"] = rec_atom_pos[i] # apply new positions to the receptor graph objects
             
-            # re-batch the receptor graphs
-            rec_graphs = dgl.batch(unbatched_graphs)
+        #     # re-batch the receptor graphs
+        #     rec_graphs = dgl.batch(unbatched_graphs)
                 
         # encode the receptor
-        rec_pos, rec_feat = self.rec_encoder(rec_graphs)
+        kp_pos, kp_feat = self.rec_encoder(rec_graphs)
+
+        # if we are applying the RL hinge loss, we will need to be able to put receptor atoms and the ligand into the same
+        # referance frame. in order to do this, we need the initial COM of the keypoints
+        if self.apply_rl_hinge_loss:
+            init_kp_com = [ x.mean(dim=0, keepdims=True) for x in kp_pos ]
 
         # compute receptor encoding loss
-        rec_encoder_loss = self.rec_encoder_loss_fn(rec_pos, rec_graphs)
+        losses['rec_encoder'] = self.rec_encoder_loss_fn(kp_pos, rec_graphs)
+
+        # remove ligand COM from receptor/ligand complex
+        kp_pos, lig_atom_positions = self.remove_com(kp_pos, lig_atom_positions, com='ligand')
 
         # if we are keypoint centered, we need to remove the keypoint COM from the system
-        if self.keypoint_centered:
-            rec_pos, lig_atom_positions = self.remove_com(rec_pos, lig_atom_positions, com='receptor')
+        # if self.keypoint_centered:
+        #     rec_pos, lig_atom_positions = self.remove_com(rec_pos, lig_atom_positions, com='receptor')
 
         # sample timepoints for each item in the batch
         t = torch.randint(0, self.n_timesteps, size=(len(lig_atom_positions),), device=device).float() # timesteps
@@ -82,10 +100,41 @@ class LigandDiffuser(nn.Module):
         
         # construct noisy versions of the ligand
         gamma_t = self.gamma(t).to(device=device)
-        zt_pos, zt_feat, rec_pos = self.noised_representation(lig_atom_positions, lig_atom_features, rec_pos, eps_batch, gamma_t)
+        zt_pos, zt_feat, kp_pos = self.noised_representation(lig_atom_positions, lig_atom_features, kp_pos, eps_batch, gamma_t)
 
         # predict the noise that was added
-        eps_h_pred, eps_x_pred = self.dynamics(zt_pos, zt_feat, rec_pos, rec_feat, t)
+        if self.apply_rl_hinge_loss:
+            unbatch_eps = True
+        else:
+            unbatch_eps = False
+
+        eps_h_pred, eps_x_pred = self.dynamics(zt_pos, zt_feat, kp_pos, kp_feat, t, unbatch_eps=unbatch_eps)
+
+        # compute hinge loss if necessary
+        if self.apply_rl_hinge_loss:
+            # predict denoised ligand
+            x0_pos_pred, _ = self.denoised_representation(zt_pos, zt_feat, eps_x_pred, eps_h_pred, gamma_t)
+
+            # translate ligand back to intitial frame of reference
+            _, x0_pos_pred = self.remove_com(kp_pos, x0_pos_pred, com='receptor')
+            x0_pos_pred = [ x+init_kp_com[i] for i,x in enumerate(x0_pos_pred) ]
+
+            # get atom positions for all receptors
+            rec_atom_positions = [g.ndata["x_0"] for g in dgl.unbatch(rec_graphs)]
+
+            # compute hinge loss between ligand atom position and receptor atom positions
+            rl_hinge_loss = 0
+            n_pairs = 0
+            for denoised_lig_pos, rec_atom_pos in zip(x0_pos_pred, rec_atom_positions):
+                rl_hinge_loss += self.rl_hinge_loss_fn(denoised_lig_pos, rec_atom_pos)
+                n_pairs += denoised_lig_pos.shape[0]*rec_atom_pos.shape[0]
+
+            losses['rl_hinge'] = rl_hinge_loss / n_pairs
+
+            # concat eps_h_pred and eps_x_pred along batch dim 
+            # this is so that the computaton of l2 loss is unaffected
+            eps_x_pred = torch.concat(eps_x_pred, dim=0)
+            eps_h_pred = torch.concat(eps_h_pred, dim=0)
 
         # concatenate the added the noises together
         eps_x = torch.concat([ eps_dict['x'] for eps_dict in eps_batch ], dim=0)
@@ -94,9 +143,9 @@ class LigandDiffuser(nn.Module):
         # compute l2 loss on noise
         x_loss = (eps_x - eps_x_pred).square().sum()
         h_loss = (eps_h - eps_h_pred).square().sum()
-        l2_loss = (x_loss + h_loss) / (eps_x.numel() + eps_h.numel())
+        losses['l2'] = (x_loss + h_loss) / (eps_x.numel() + eps_h.numel())
 
-        return l2_loss, rec_encoder_loss
+        return losses
     
     def normalize(self, lig_pos, lig_features):
         lig_features = [ x/self.lig_feat_norm_constant for x in lig_features ]
@@ -146,6 +195,18 @@ class LigandDiffuser(nn.Module):
         rec_pos, zt_pos = self.remove_com(rec_pos, zt_pos, com='ligand')
         
         return zt_pos, zt_feat, rec_pos
+    
+    def denoised_representation(self, zt_pos, zt_feat, eps_x_pred, eps_h_pred, gamma_t):
+        # assuming the input ligand COM is zero, we compute the denoised verison of the ligand
+        alpha_t = self.alpha(gamma_t)
+        sigma_t = self.sigma(gamma_t)
+
+        x0_pos, x0_feat = [], []
+        for i in range(len(gamma_t)):
+            x0_pos.append( (zt_pos[i] - sigma_t[i]*eps_x_pred[i])/alpha_t[i] )
+            x0_feat.append( (zt_feat[i] - sigma_t[i]*eps_h_pred[i])/alpha_t[i] )
+
+        return x0_pos, x0_feat
 
     def sigma(self, gamma):
         """Computes sigma given gamma."""
