@@ -28,6 +28,7 @@ def parse_arguments():
     diff_group = p.add_argument_group('diffusion')
     diff_group.add_argument('--precision', type=float, default=None)
     diff_group.add_argument('--feat_norm_constant', type=float, default=None)
+    diff_group.add_argument('--rl_dist_threshold', type=float, default=None, help='distsance threshold for receptor-ligand loss function')
 
     rec_encoder_group = p.add_argument_group('receptor encoder')
     rec_encoder_group.add_argument('--n_keypoints', type=int, default=None, help="number of keypoints produced by receptor encoder module")
@@ -50,6 +51,7 @@ def parse_arguments():
     # dynamics_group.add_argument('--use_tanh', type=bool, default=True, help='whether to place tanh activation on coordinate MLP output')
 
     training_group = p.add_argument_group('training')
+    training_group.add_argument('--rl_hinge_loss_weight', type=float, default=None, help='weight applied to receptor-ligand hinge loss')
     training_group.add_argument('--rec_encoder_loss_weight', type=float, default=None, help='relative weight applied to receptor encoder OT loss')
     training_group.add_argument('--lr', type=float, default=None, help='base learning rate')
     training_group.add_argument('--weight_decay', type=float, default=None)
@@ -75,6 +77,9 @@ def parse_arguments():
 
     if args.feat_norm_constant is not None:
         config_dict['diffusion']['lig_feat_norm_constant'] = args.feat_norm_constant
+
+    if args.rl_dist_threshold is not None:
+        config_dict['diffusion']['rl_dist_threshold'] = args.rl_dist_threshold
 
     if args.n_keypoints is not None:
         config_dict['rec_encoder']['n_keypoints'] = args.n_keypoints
@@ -116,6 +121,9 @@ def parse_arguments():
 
     if args.dynamics_feats is not None:
         config_dict['dynamics']['hidden_nf'] = args.dynamics_feats
+
+    if args.rl_hinge_loss_weight is not None:
+        config_dict['training']['rl_hinge_loss_weight'] = args.rl_hinge_loss_weight
 
     if args.rec_encoder_loss_weight is not None:
         config_dict['training']['rec_encoder_loss_weight'] = args.rec_encoder_loss_weight
@@ -211,6 +219,7 @@ def main():
     output_dir_name = f"{args['experiment']['name']}_{now}_{random_id}"
     output_dir = results_dir / output_dir_name
     output_dir.mkdir()
+    print(f'results are written to this directory: {output_dir}', flush=True)
 
     # create metrics files and lists to store metrics
     test_metrics_file = output_dir / 'test_metrics.pkl'
@@ -315,9 +324,6 @@ def main():
         pickle.dump(args, f)
     
     # create empty lists to record per-batch losses
-    # train_losses = []
-    # train_l2_losses = []
-    # train_encoder_losses = []
     losses = defaultdict(list)
 
 

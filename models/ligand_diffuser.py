@@ -21,9 +21,10 @@ class LigandDiffuser(nn.Module):
     dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, precision=1e-4, lig_feat_norm_constant=1, rl_dist_threshold=0):
         super().__init__()
 
+        # NOTE: keypoint_centered is deprecated. This flag no longer has any effect. It is kept as an argument for backwards compatibility with previously trained models.
+
         self.n_lig_features = atom_nf
         self.n_kp_feat = rec_nf
-        self.keypoint_centered = keypoint_centered
         self.n_timesteps = n_timesteps
         self.lig_feat_norm_constant = lig_feat_norm_constant
         
@@ -54,18 +55,6 @@ class LigandDiffuser(nn.Module):
 
         batch_size = len(lig_atom_positions)
         device = lig_atom_positions[0].device
-
-        # if we are not keypoint centered, we are receptor atom centered. We must remove COM of binding pocket atoms from the system.
-        # if not self.keypoint_centered:
-        #     unbatched_graphs = dgl.unbatch(rec_graphs)
-        #     rec_atom_pos = [ g.ndata["x_0"] for g in unbatched_graphs ] # get positions of all receptor atoms
-        #     rec_atom_pos, lig_atom_positions = self.remove_com(rec_atom_pos, lig_atom_positions, com='receptor') # remove receptor atom COM
-
-        #     for i in range(batch_size):
-        #         unbatched_graphs[i].ndata["x_0"] = rec_atom_pos[i] # apply new positions to the receptor graph objects
-            
-        #     # re-batch the receptor graphs
-        #     rec_graphs = dgl.batch(unbatched_graphs)
                 
         # encode the receptor
         kp_pos, kp_feat = self.rec_encoder(rec_graphs)
@@ -80,10 +69,6 @@ class LigandDiffuser(nn.Module):
 
         # remove ligand COM from receptor/ligand complex
         kp_pos, lig_atom_positions = self.remove_com(kp_pos, lig_atom_positions, com='ligand')
-
-        # if we are keypoint centered, we need to remove the keypoint COM from the system
-        # if self.keypoint_centered:
-        #     rec_pos, lig_atom_positions = self.remove_com(rec_pos, lig_atom_positions, com='receptor')
 
         # sample timepoints for each item in the batch
         t = torch.randint(0, self.n_timesteps, size=(len(lig_atom_positions),), device=device).float() # timesteps
@@ -234,21 +219,6 @@ class LigandDiffuser(nn.Module):
 
         device = receptors[0].device
         n_receptors = len(receptors)
-        
-        # encode the receptors
-        # kp_pos_src = []
-        # kp_feat_src = []
-        # init_rec_atom_com_src = []
-        # init_kp_com_src = []
-        # for batch_idx in range(ceil(n_receptors / rec_enc_batch_size)):
-
-        # determine number of receptors that will be in this batch
-        # n_samples_batch = min(rec_enc_batch_size, n_receptors - len(kp_pos_src))
-
-        # select receptors for this batch
-        # batch_idx_start = batch_idx*rec_enc_batch_size
-        # batch_idx_end = batch_idx_start + n_samples_batch
-        # batch_receptors = receptors[batch_idx_start:batch_idx_end]
 
         # compute initial receptor atom COM
         init_rec_atom_com = [ g.ndata["x_0"].mean(dim=0, keepdim=True) for g in receptors ]
@@ -259,12 +229,8 @@ class LigandDiffuser(nn.Module):
         # get initial keypoint center of mass
         init_kp_com = [ x.mean(dim=0, keepdim=True) for x in kp_pos ]
 
-
         # remove (receptor atom COM, or keypoint COM) from receptor keypoints
-        if self.keypoint_centered:
-            sampling_com = init_kp_com
-        else:
-            sampling_com = init_rec_atom_com
+        sampling_com = init_rec_atom_com
         kp_pos = [  kp_pos[i] - sampling_com[i] for i in range(len(kp_pos)) ]
 
         return kp_pos, kp_feat, init_rec_atom_com, init_kp_com
