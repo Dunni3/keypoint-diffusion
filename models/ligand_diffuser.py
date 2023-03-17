@@ -33,7 +33,7 @@ class LigandDiffuser(nn.Module):
             self.apply_rl_hinge_loss = True
             self.rl_hinge_loss_fn = DistanceHingeLoss(distance_threshold=rl_dist_threshold)
         else:
-            self.apply_rl_hinge_loss_fn = False
+            self.apply_rl_hinge_loss = False
 
         # create ligand node distribution for sampling
         self.lig_size_dist = LigandSizeDistribution(processed_dataset_dir=processed_dataset_dir)
@@ -109,12 +109,10 @@ class LigandDiffuser(nn.Module):
 
             # compute hinge loss between ligand atom position and receptor atom positions
             rl_hinge_loss = 0
-            n_pairs = 0
             for denoised_lig_pos, rec_atom_pos in zip(x0_pos_pred, rec_atom_positions):
                 rl_hinge_loss += self.rl_hinge_loss_fn(denoised_lig_pos, rec_atom_pos)
-                n_pairs += denoised_lig_pos.shape[0]*rec_atom_pos.shape[0]
 
-            losses['rl_hinge'] = rl_hinge_loss / n_pairs
+            losses['rl_hinge'] = rl_hinge_loss
 
             # concat eps_h_pred and eps_x_pred along batch dim 
             # this is so that the computaton of l2 loss is unaffected

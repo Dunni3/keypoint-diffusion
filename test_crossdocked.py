@@ -133,12 +133,10 @@ def main():
         n_lig_feat, 
         n_kp_feat,
         processed_dataset_dir=Path(args['dataset']['location']),
-        n_timesteps=args['diffusion']['n_timesteps'],
-        keypoint_centered=args['diffusion']['keypoint_centered'],
         dynamics_config=args['dynamics'], 
         rec_encoder_config=rec_encoder_config, 
-        rec_encoder_loss_config=args['rec_encoder_loss']
-        ).to(device=device)
+        rec_encoder_loss_config=args['rec_encoder_loss'],
+        **args['diffusion']).to(device=device)
 
     # get file for model weights
     if cmd_args.model_file is None:
@@ -270,19 +268,20 @@ def main():
         write_xyz_file(kpi, kp_elements, kp_file)
 
     # create a summary file
-    summary_file = output_dir / 'summary.txt'
-    summary_file_contents = ''
-    for metric_name in metrics.keys():
-        metric = metrics[metric_name]
-        if metric_name in ['diversity', 'pocket_sampling_time']:
-            metric_flattened = metric
-        else:
-            metric_flattened = [x for px in metric for x in px]
-        metric_mean = np.mean(metric_flattened)
-        metric_std = np.std(metric_flattened)
-        summary_file_contents += f'{metric_name} = {metric_mean:.3f} \pm {metric_std:.2f}\n'
-    with open(summary_file, 'w') as f:
-        f.write(summary_file_contents)
+    if not cmd_args.no_metrics:
+        summary_file = output_dir / 'summary.txt'
+        summary_file_contents = ''
+        for metric_name in metrics.keys():
+            metric = metrics[metric_name]
+            if metric_name in ['diversity', 'pocket_sampling_time']:
+                metric_flattened = metric
+            else:
+                metric_flattened = [x for px in metric for x in px]
+            metric_mean = np.mean(metric_flattened)
+            metric_std = np.std(metric_flattened)
+            summary_file_contents += f'{metric_name} = {metric_mean:.3f} \pm {metric_std:.2f}\n'
+        with open(summary_file, 'w') as f:
+            f.write(summary_file_contents)
 
 if __name__ == "__main__":
 

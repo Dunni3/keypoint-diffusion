@@ -10,6 +10,7 @@ import shutil
 import wandb
 import uuid
 from collections import defaultdict
+from distutils.util import strtobool
 
 from data_processing.crossdocked.dataset import CrossDockedDataset, get_dataloader
 from models.dynamics import LigRecDynamics
@@ -39,6 +40,7 @@ def parse_arguments():
     rec_encoder_group.add_argument('--feat_mha_heads', type=int, default=None)
     rec_encoder_group.add_argument('--rec_enc_loss_type', type=str, default=None)
     rec_encoder_group.add_argument('--apply_kp_wise_mlp', type=bool, default=None)
+    rec_encoder_group.add_argument('--rec_enc_hinge_threshold', type=float, default=None)
 
     dynamics_group = p.add_argument_group('dynamics')
     dynamics_group.add_argument('--n_convs_dynamics', type=int, default=None, help='number of graph convolutions in the dynamics model')
@@ -64,6 +66,7 @@ def parse_arguments():
     # training_group.add_argument('--test_epochs', type=float, default=2, help='number of epochs to run on test set evaluation')
     # training_group.add_argument('--num_workers', type=int, default=1, help='num_workers argument for pytorch dataloader')
 
+    p.add_argument('--use_tanh', type=str, default=None)
 
     p.add_argument('--config', type=str, required=True)
     args = p.parse_args()
@@ -72,6 +75,14 @@ def parse_arguments():
         config_dict = yaml.load(f, Loader=yaml.FullLoader)
 
     # override config file args with command line args
+    if args.use_tanh is not None:
+
+        if args.use_tanh not in ["True", "False"]:
+            raise ValueError()
+
+        config_dict['dynamics']['use_tanh'] = strtobool(args.use_tanh)
+        config_dict['rec_encoder']['use_tanh'] = strtobool(args.use_tanh)
+
     if args.precision is not None:
         config_dict['diffusion']['precision'] = args.precision
 
@@ -106,6 +117,9 @@ def parse_arguments():
 
     if args.rec_enc_loss_type is not None:
         config_dict['rec_encoder_loss']['loss_type'] = args.rec_enc_loss_type
+
+    if args.rec_enc_hinge_threshold is not None:
+        config_dict['rec_encoder_loss']['hinge_threshold'] = args.rec_enc_hinge_threshold
 
     if args.n_convs_dynamics is not None:
         config_dict['dynamics']['n_layers'] = args.n_convs_dynamics

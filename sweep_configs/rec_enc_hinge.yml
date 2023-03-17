@@ -1,0 +1,21 @@
+method: grid
+metric:
+  goal: minimize
+  name: test_l2_loss
+parameters:
+  rec_encoder_loss_weight:
+    values:
+      - 0.1
+      - 1
+      - 10
+  rec_enc_hinge_threshold:
+    values:
+      - 4
+      - 8
+
+program: train_crossdocked.py
+command:
+  - /net/dali/home/mscbio/icd3/.conda/envs/ligdiff/bin/python
+  - ${program}
+  - "--config=configs/rec_enc_hinge.yml"
+  - ${args}

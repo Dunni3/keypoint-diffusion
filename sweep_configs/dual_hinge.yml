@@ -1,0 +1,23 @@
+method: grid
+metric:
+  goal: minimize
+  name: test_l2_loss
+parameters:
+  rl_hinge_loss_weight:
+    values:
+      - 0.1
+      - 1
+      - 5
+  rl_dist_threshold:
+    values:
+      - 3
+      - 5
+      - 7
+
+program: train_crossdocked.py
+command:
+  - /net/dali/home/mscbio/icd3/.conda/envs/ligdiff/bin/python
+  - ${program}
+  - "--config=configs/dual_hinge.yml"
+  - ${args}
+
