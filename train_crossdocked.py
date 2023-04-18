@@ -65,6 +65,7 @@ def parse_arguments():
     # training_group.add_argument('--train_metrics_interval', type=float, default=1, help="report training metrics every train_metrics_interval epochs")
     # training_group.add_argument('--test_epochs', type=float, default=2, help='number of epochs to run on test set evaluation')
     # training_group.add_argument('--num_workers', type=int, default=1, help='num_workers argument for pytorch dataloader')
+    training_group.add_argument('--use_lambda_lr', type=str, default=None)
 
     p.add_argument('--use_tanh', type=str, default=None)
 
@@ -82,6 +83,13 @@ def parse_arguments():
 
         config_dict['dynamics']['use_tanh'] = strtobool(args.use_tanh)
         config_dict['rec_encoder']['use_tanh'] = strtobool(args.use_tanh)
+
+    if args.use_lambda_lr is not None:
+
+        if args.use_lambda_lr not in ["True", "False"]:
+            raise ValueError()
+        
+        config_dict['training']['lambda_lr']['use_lambda_lr'] = strtobool(args.use_lambda_lr)
 
     if args.precision is not None:
         config_dict['diffusion']['precision'] = args.precision

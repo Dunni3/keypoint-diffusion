@@ -155,6 +155,8 @@ class ModelAnalyzer:
         if a carbon atom has 2 bonds, this is plausible bc it could have 2 implicit hydrogens. But if a carbon atom has 0 or 5 explicit bonds,
         this is obviously wrong and so such atoms would be marked as "invalid".
         """
+        if len(mols) == 0:
+            return 0.0
 
         n_invalid_atoms = 0
         n_atoms = 0
@@ -184,6 +186,9 @@ class ModelAnalyzer:
     def compute_avg_frag_size(self, mols) -> float:
         """Returns the average fraction of atoms that belong to the largest fragment of a molecule."""
 
+        if len(mols) == 0:
+            return 0.0
+        
         frag_fracs = []
         for mol in mols:
             # get fragments
