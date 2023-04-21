@@ -6,7 +6,7 @@ data/PDBbind_processed
 *.out
 *.stderr
 *.stdout
-experiments/minimization_experiment/results/
+experiments/results/
 runs/
 
 # Byte-compiled / optimized / DLL files
