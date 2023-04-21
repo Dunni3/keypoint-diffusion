@@ -16,6 +16,7 @@ from data_processing.crossdocked.dataset import CrossDockedDataset, get_dataload
 from models.dynamics import LigRecDynamics
 from models.receptor_encoder import ReceptorEncoder
 from models.ligand_diffuser import LigandDiffuser
+from models.scheduler import Scheduler
 from analysis.metrics import ModelAnalyzer
 import torch
 import numpy as np
@@ -65,7 +66,11 @@ def parse_arguments():
     # training_group.add_argument('--train_metrics_interval', type=float, default=1, help="report training metrics every train_metrics_interval epochs")
     # training_group.add_argument('--test_epochs', type=float, default=2, help='number of epochs to run on test set evaluation')
     # training_group.add_argument('--num_workers', type=int, default=1, help='num_workers argument for pytorch dataloader')
-    training_group.add_argument('--use_lambda_lr', type=str, default=None)
+    training_group.add_argument('--warmup_length', type=float, default=None)
+    training_group.add_argument('--rec_enc_weight_decay_midpoint', type=float, default=None)
+    training_group.add_argument('--rec_enc_weight_decay_scale', type=float, default=None)
+    training_group.add_argument('--restart_interval', type=float, default=None)
+    training_group.add_argument('--restart_type', type=str, default=None)
 
     p.add_argument('--use_tanh', type=str, default=None)
 
@@ -76,6 +81,18 @@ def parse_arguments():
         config_dict = yaml.load(f, Loader=yaml.FullLoader)
 
     # override config file args with command line args
+
+    args_dict = vars(args)
+    scheduler_args = ['warmup_length', 
+                      'rec_enc_weight_decay_midpoint', 
+                      'rec_enc_weight_decay_scale', 
+                      'restart_interval', 
+                      'restart_type']
+    
+    for scheduler_arg in scheduler_args:
+        if args_dict[scheduler_arg] is not None:
+            config_dict['training']['scheduler'][scheduler_arg] = args_dict[scheduler_arg]
+
     if args.use_tanh is not None:
 
         if args.use_tanh not in ["True", "False"]:
@@ -83,13 +100,6 @@ def parse_arguments():
 
         config_dict['dynamics']['use_tanh'] = strtobool(args.use_tanh)
         config_dict['rec_encoder']['use_tanh'] = strtobool(args.use_tanh)
-
-    if args.use_lambda_lr is not None:
-
-        if args.use_lambda_lr not in ["True", "False"]:
-            raise ValueError()
-        
-        config_dict['training']['lambda_lr']['use_lambda_lr'] = strtobool(args.use_lambda_lr)
 
     if args.precision is not None:
         config_dict['diffusion']['precision'] = args.precision
@@ -306,23 +316,14 @@ def main():
     # create model analyzer
     model_analyzer = ModelAnalyzer(model=model, dataset=test_dataset, device=device)
 
-    # check if we are scheduling learning rates
-    use_cyclic_lr = args['training']['cyclic_lr']['use_cyclic_lr']
-    use_lambda_lr = args['training']['lambda_lr']['use_lambda_lr']
-
-    # create learning rate schedulers
-    if use_cyclic_lr:
-        cyclic_args = args['training']['cyclic_lr']
-        cyclic_lr_sched = torch.optim.lr_scheduler.CyclicLR(optimizer, 
-            base_lr=cyclic_args['base_lr'], 
-            max_lr=cyclic_args['max_lr'],
-            step_size_up=int(iterations_per_epoch*cyclic_args['step_size_up_frac']),
-            cycle_momentum=False)
-
-    if use_lambda_lr:
-        lr_config = args['training']['lambda_lr']
-        multipliter_func = make_multiplier_func(lr_config['epoch_start'],  lr_config['last_epoch'], lr_config['multiplier'])
-        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optimizer, lr_lambda=multipliter_func)
+    # initialize learning rate scheduler
+    scheduler_args = args['training']['scheduler']
+    scheduler = Scheduler(
+        optimizer=optimizer,
+        base_lr=args['training']['learning_rate'],
+        rec_enc_loss_weight=args['training']['rec_encoder_loss_weight'],
+        **scheduler_args
+    )
 
     # watch model if desired
     if args['wandb']['watch_model']:
@@ -362,8 +363,6 @@ def main():
     save_marker = 0
     sample_eval_marker = 0
 
-    rec_encoder_loss_weight = args['training']['rec_encoder_loss_weight']
-
     # record start time for training
     training_start = time.time()
 
@@ -374,6 +373,10 @@ def main():
             rec_graphs, lig_atom_positions, lig_atom_features = iter_data
 
             current_epoch = epoch_idx + iter_idx/iterations_per_epoch
+
+            # update learning rate
+            scheduler.step_lr(current_epoch)
+            rec_encoder_loss_weight = scheduler.get_rec_enc_weight(current_epoch)
 
             # TODO: remove this, its just for debugging purposes
             if iter_idx < 10:
@@ -403,10 +406,6 @@ def main():
             if 'rl_hinge' in loss_dict:
                 total_loss = total_loss + loss_dict['rl_hinge']*args['training']['rl_hinge_loss_weight']
 
-            # record losses for this batch
-            # train_losses.append(total_loss.detach().cpu())
-            # train_l2_losses.append(noise_loss.detach().cpu())
-            # train_encoder_losses.append(rec_encoder_loss.detach().cpu())
 
             total_loss.backward()
             if args['training']['clip_grad']:
@@ -485,14 +484,10 @@ def main():
                     'epoch': epoch_idx,
                     'epoch_exact': current_epoch,
                     'iter': iter_idx,
-                    'time_passed': time.time() - training_start
+                    'time_passed': time.time() - training_start,
+                    'rec_enc_loss_weight': rec_encoder_loss_weight,
+                    'learning_rate': scheduler.get_lr()
                 })
-
-                # record learning rate if we are using a learning rate scheduler
-                if use_lambda_lr:
-                    train_metrics_row['learning_rate'] = scheduler.get_lr()[0]
-                elif use_cyclic_lr:
-                    train_metrics_row['learning_rate'] = cyclic_lr_sched.get_lr()[0]
 
                 train_metrics.append(train_metrics_row)
                 with open(train_metrics_file, 'wb') as f:
@@ -505,7 +500,7 @@ def main():
                 # log train metrics to wandb
                 train_metrics_wandb = train_metrics_row.copy()
                 for key in list(train_metrics_wandb): # prepend 'train' onto all loss metrics
-                    if 'loss' in key:
+                    if key.split('_')[-1] == 'loss':
                         new_key = f'train_{key}'
                         train_metrics_wandb[new_key] = train_metrics_wandb[key]
                         del train_metrics_wandb[key]
@@ -513,15 +508,6 @@ def main():
 
                 # reset the record losses to empty dicts
                 losses = defaultdict(list)
-                
-
-            # apply cyclic LR update if necessary
-            if use_cyclic_lr:
-                cyclic_lr_sched.step()
-
-        # at the end of each epoch, we update the learning rate, if using the lambdaLR scheduler
-        if use_lambda_lr:
-            scheduler.step()
 
 
     # after exiting the training loop, save the final model file
