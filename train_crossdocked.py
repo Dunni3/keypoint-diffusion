@@ -379,8 +379,8 @@ def main():
             rec_encoder_loss_weight = scheduler.get_rec_enc_weight(current_epoch)
 
             # TODO: remove this, its just for debugging purposes
-            if iter_idx < 10:
-                print(f'{iter_idx=}, {time.time() - training_start:.2f} seconds since start', flush=True)
+            # if iter_idx < 10:
+            #     print(f'{iter_idx=}, {time.time() - training_start:.2f} seconds since start', flush=True)
 
             rec_graphs = rec_graphs.to(device)
             lig_atom_positions = [ arr.to(device) for arr in lig_atom_positions ]
