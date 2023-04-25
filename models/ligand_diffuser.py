@@ -46,7 +46,7 @@ class LigandDiffuser(nn.Module):
         self.rec_encoder = ReceptorEncoder(**rec_encoder_config)
         self.rec_encoder_loss_fn = ReceptorEncoderLoss(**rec_encoder_loss_config)
 
-    def forward(self, rec_graphs, lig_atom_positions, lig_atom_features):
+    def forward(self, rec_graphs, lig_atom_positions, lig_atom_features, interface_points):
         """Computes loss."""
         # normalize values. specifically, atom features are normalized by a value of 4
         losses = {}
@@ -65,7 +65,7 @@ class LigandDiffuser(nn.Module):
             init_kp_com = [ x.mean(dim=0, keepdims=True) for x in kp_pos ]
 
         # compute receptor encoding loss
-        losses['rec_encoder'] = self.rec_encoder_loss_fn(kp_pos, rec_graphs)
+        losses['rec_encoder'] = self.rec_encoder_loss_fn(kp_pos, interface_points=interface_points)
 
         # remove ligand COM from receptor/ligand complex
         kp_pos, lig_atom_positions = self.remove_com(kp_pos, lig_atom_positions, com='ligand')

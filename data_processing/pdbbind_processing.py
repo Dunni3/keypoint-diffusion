@@ -86,7 +86,9 @@ def parse_ligand(ligand_path: Path, element_map: Dict[str, int], remove_hydrogen
     return ligand, atom_positions, atom_features
 
 def get_pocket_atoms(rec_atoms: prody.Selection, ligand_atom_positions: torch.Tensor, box_padding: Union[int, float], 
-        pocket_cutoff: Union[int, float], element_map: Dict[str, int]):
+        pocket_cutoff: Union[int, float], element_map: Dict[str, int],
+        interface_distance_threshold: float,
+        interface_exclusion_threshold: float):
     # note that pocket_cutoff is in units of angstroms
 
     # get bounding box of ligand
@@ -112,8 +114,8 @@ def get_pocket_atoms(rec_atoms: prody.Selection, ligand_atom_positions: torch.Te
     rec_atom_residx = torch.tensor(rec_atom_residx, dtype=int)[~other_atoms_mask]
 
     # find all protein atoms in padded bounding box
-    above_lower_corner = (rec_atom_positions >= lower_corner).all(axis=1)
-    below_upper_corner = (rec_atom_positions <= upper_corner).all(axis=1)
+    above_lower_corner = (rec_atom_positions >= lower_corner).all(dim=1)
+    below_upper_corner = (rec_atom_positions <= upper_corner).all(dim=1)
     # bounding_box_mask is a boolean array with length equal to number of atoms in receptor structure, indicating whether each atom is in the "bounding box"
     bounding_box_mask = above_lower_corner & below_upper_corner 
 
@@ -122,27 +124,29 @@ def get_pocket_atoms(rec_atoms: prody.Selection, ligand_atom_positions: torch.Te
     box_atom_residx = rec_atom_residx[bounding_box_mask]
 
     # find atoms that come within a threshold distance from a ligand atom
-    all_distances = spa.distance_matrix(box_atom_positions, ligand_atom_positions)
+    all_distances = spa.distance.cdist(box_atom_positions, ligand_atom_positions)
+    all_distances = torch.tensor(all_distances)
     # NOTE: even though the argumenets to distance_matrix were pytorch tensors, the returned array is a numpy array
-    min_dist_to_ligand = all_distances.min(axis=1) # distance from each box atom to closest ligand atom
+    min_dist_to_ligand, _ = all_distances.min(dim=1) # distance from each box atom to closest ligand atom
     pocket_atom_mask = min_dist_to_ligand < pocket_cutoff
-    pocket_atom_mask = torch.tensor(pocket_atom_mask)
 
     # get residue indicies of all pocket atoms
     pocket_atom_residx = box_atom_residx[pocket_atom_mask]
 
     # get a mask of all atoms having a residue index contained in pocket_atom_residx
-    byres_pocket_atom_mask = np.isin(rec_atom_residx, pocket_atom_residx)
+    byres_pocket_atom_mask = torch.isin(rec_atom_residx, pocket_atom_residx)
 
     # get positions + features for pocket atoms
     pocket_atom_positions = rec_atom_positions[byres_pocket_atom_mask]
     pocket_atom_features = rec_atom_features[byres_pocket_atom_mask, :]
 
     # get interface points
-    # TODO: apply clustering algorithm to summarize interface points
-    # for now, the interface points will just be the binding pocket points
+    interface_points = get_interface_points(ligand_atom_positions, box_atom_positions, 
+                                            dist_mat=all_distances.T, 
+                                            distance_threshold=interface_distance_threshold,
+                                            exclusion_threshold=interface_exclusion_threshold)
 
-    return pocket_atom_positions, pocket_atom_features, byres_pocket_atom_mask
+    return pocket_atom_positions, pocket_atom_features, byres_pocket_atom_mask, interface_points
 
 
 def rec_atom_featurizer(rec_atoms: prody.AtomGroup, element_map: Dict[str, int], include_charges=False):
@@ -242,3 +246,35 @@ def center_complex(receptor_graph: dgl.DGLGraph, ligand_atom_positions: torch.Te
     new_lig_pos = ligand_atom_positions - lig_com
 
     return receptor_graph, new_lig_pos
+
+def get_interface_points(ligand_positions: torch.Tensor, rec_positions: torch.Tensor,
+                         dist_mat: torch.Tensor = None, 
+                         distance_threshold: float = 5, 
+                         exclusion_threshold: float = 2):
+    
+    if dist_mat is None:
+        dist_mat = spa.distance.cdist(ligand_positions, rec_positions)
+        dist_mat = torch.cdist(ligand_positions, rec_positions)
+
+    assert dist_mat.shape[0] == ligand_positions.shape[0]
+
+    lig_idx, rec_idx = torch.where(dist_mat < distance_threshold)
+
+    interface_points = (ligand_positions[lig_idx] + rec_positions[rec_idx])/2
+
+    # select a subset of interface points such that all points in the subset have pairwise distances below 
+    # the exclusion_threshold
+    selected_interface_idxs = [0]
+    for idx in range(1, interface_points.shape[0]):
+        selected_points = interface_points[selected_interface_idxs]
+        if len(selected_points.shape) == 1:
+            selected_points = selected_points[None, :]
+
+        candidate_interface_point = interface_points[idx][None, :]
+        dist_to_candidate = torch.cdist(candidate_interface_point, selected_points)
+        if torch.all(dist_to_candidate >= exclusion_threshold):
+            selected_interface_idxs.append(idx)
+
+    interface_points = interface_points[selected_interface_idxs]
+
+    return interface_points

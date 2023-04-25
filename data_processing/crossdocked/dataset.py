@@ -62,7 +62,8 @@ class CrossDockedDataset(dgl.data.DGLDataset):
         rec_graph = self.data['receptor_graph'][i]
         lig_atom_positions = self.data['lig_atom_positions'][i]
         lig_atom_features = self.data['lig_atom_features'][i]
-        return rec_graph, lig_atom_positions, lig_atom_features
+        interface_points = self.data['interface_points'][i]
+        return rec_graph, lig_atom_positions, lig_atom_features, interface_points
 
     def __len__(self):
         return len(self.data['receptor_graph'])
@@ -98,11 +99,11 @@ class CrossDockedDataset(dgl.data.DGLDataset):
 def collate_fn(examples: list):
 
     # break receptor graphs, ligand positions, and ligand features into separate lists
-    receptor_graphs, lig_atom_positions, lig_atom_features = zip(*examples)
+    receptor_graphs, lig_atom_positions, lig_atom_features, interface_points = zip(*examples)
 
     # batch the receptor graphs together
     receptor_graphs = dgl.batch(receptor_graphs)
-    return receptor_graphs, lig_atom_positions, lig_atom_features
+    return receptor_graphs, lig_atom_positions, lig_atom_features, interface_points
 
 def get_dataloader(dataset: CrossDockedDataset, batch_size: int, num_workers: int = 1, **kwargs) -> GraphDataLoader:
 

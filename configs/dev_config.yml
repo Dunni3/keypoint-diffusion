@@ -24,6 +24,8 @@ dataset:
   receptor_k: 8
   dataset_size: 50 # used only for debugging
   use_boltzmann_ot: False
+  interface_distance_threshold: 5
+  interface_exclusion_threshold: 2
 
 rec_encoder:
   n_keypoints: 20
