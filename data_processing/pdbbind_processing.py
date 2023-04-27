@@ -141,10 +141,13 @@ def get_pocket_atoms(rec_atoms: prody.Selection, ligand_atom_positions: torch.Te
     pocket_atom_features = rec_atom_features[byres_pocket_atom_mask, :]
 
     # get interface points
-    interface_points = get_interface_points(ligand_atom_positions, box_atom_positions, 
-                                            dist_mat=all_distances.T, 
-                                            distance_threshold=interface_distance_threshold,
-                                            exclusion_threshold=interface_exclusion_threshold)
+    try:
+        interface_points = get_interface_points(ligand_atom_positions, box_atom_positions, 
+                                                dist_mat=all_distances.T, 
+                                                distance_threshold=interface_distance_threshold,
+                                                exclusion_threshold=interface_exclusion_threshold)
+    except Exception as e:
+        raise InterfacePointException(e)
 
     return pocket_atom_positions, pocket_atom_features, byres_pocket_atom_mask, interface_points
 
@@ -278,3 +281,10 @@ def get_interface_points(ligand_positions: torch.Tensor, rec_positions: torch.Te
     interface_points = interface_points[selected_interface_idxs]
 
     return interface_points
+
+class InterfacePointException(Exception):
+
+    def __init__(self, original_exception: Exception, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.original_exception = original_exception
+

@@ -13,7 +13,7 @@ import torch
 
 from data_processing.pdbbind_processing import (build_receptor_graph,
                                                 get_pocket_atoms, parse_ligand,
-                                                parse_protein, get_ot_loss_weights, center_complex, Unparsable, get_interface_points)
+                                                parse_protein, get_ot_loss_weights, center_complex, Unparsable, get_interface_points, InterfacePointException)
 
 
 prody.confProDy(verbosity='none')
@@ -113,14 +113,19 @@ def main():
 
             # get all protein atoms that form the binding pocket
             # TODO: pocket atom mask is never used...what is it?
-            pocket_atom_positions, pocket_atom_features, pocket_atom_mask, interface_points \
-            = get_pocket_atoms(rec_atoms, 
-                lig_atom_positions, 
-                box_padding=dataset_config["lig_box_padding"], 
-                pocket_cutoff=dataset_config["pocket_cutoff"], 
-                element_map=rec_element_map,
-                interface_distance_threshold=dataset_config['interface_distance_threshold'],
-                interface_exclusion_threshold=dataset_config['interface_exclusion_threshold'])
+            try:
+                pocket_atom_positions, pocket_atom_features, pocket_atom_mask, interface_points \
+                = get_pocket_atoms(rec_atoms, 
+                    lig_atom_positions, 
+                    box_padding=dataset_config["lig_box_padding"], 
+                    pocket_cutoff=dataset_config["pocket_cutoff"], 
+                    element_map=rec_element_map,
+                    interface_distance_threshold=dataset_config['interface_distance_threshold'],
+                    interface_exclusion_threshold=dataset_config['interface_exclusion_threshold'])
+            except InterfacePointException as e:
+                print(f'interface exception occured for {rec_file=} and {lig_file=}')
+                print(e.original_exception)
+                continue
 
             # TODO: sometimes (rarely) pocket_atom_positions is an empty tensor. I'm just going to skip these instances
             # but for future reference, here is a receptor for which this happens:
