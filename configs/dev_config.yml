@@ -40,7 +40,7 @@ diffusion:
   n_timesteps: 1000
   precision: 1.0e-5
   lig_feat_norm_constant: 1
-  rl_dist_threshold: 2
+  rl_dist_threshold: 0
 
 dynamics:
   n_layers: 6

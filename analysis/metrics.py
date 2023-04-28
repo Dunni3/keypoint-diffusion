@@ -64,6 +64,13 @@ class ModelAnalyzer:
         # convert to molecules
         unprocessed_mols = []
         for lig_pos_i, lig_feat_i in zip(lig_pos, lig_feat):
+            element_idxs = torch.argmax(lig_feat_i, dim=1)
+
+            # remove atoms marked as the "not atom" type
+            real_atom_mask = element_idxs != lig_feat_i.shape[1] - 1
+            lig_pos_i = lig_pos_i[real_atom_mask]
+            lig_feat_i = lig_feat_i[real_atom_mask][:, :-1]
+            
             element_idxs = torch.argmax(lig_feat_i, dim=1).tolist()
             atom_elements = self.dataset.lig_atom_idx_to_element(element_idxs)
             mol = make_mol_openbabel(lig_pos_i, atom_elements)
