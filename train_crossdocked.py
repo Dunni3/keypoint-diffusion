@@ -104,13 +104,6 @@ def parse_arguments():
     if args.batch_size is not None:
         config_dict['training']['batch_size'] = args.batch_size
 
-    if args.use_lambda_lr is not None:
-
-        if args.use_lambda_lr not in ["True", "False"]:
-            raise ValueError()
-        
-        config_dict['training']['lambda_lr']['use_lambda_lr'] = strtobool(args.use_lambda_lr)
-
     if args.precision is not None:
         config_dict['diffusion']['precision'] = args.precision
 
