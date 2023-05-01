@@ -61,7 +61,7 @@ def parse_arguments():
     # training_group.add_argument('--clip_grad', type=bool, default=True, help='whether to clip gradients')
     training_group.add_argument('--clip_value', type=float, default=None, help='max gradient value for clipping')
     # training_group.add_argument('--epochs', type=int, default=1000)
-    # training_group.add_argument('--batch_size', type=int, default=32)
+    training_group.add_argument('--batch_size', type=int, default=None)
     # training_group.add_argument('--test_interval', type=float, default=1, help="evaluate on test set every test_interval epochs")
     # training_group.add_argument('--train_metrics_interval', type=float, default=1, help="report training metrics every train_metrics_interval epochs")
     # training_group.add_argument('--test_epochs', type=float, default=2, help='number of epochs to run on test set evaluation')
@@ -100,6 +100,16 @@ def parse_arguments():
 
         config_dict['dynamics']['use_tanh'] = strtobool(args.use_tanh)
         config_dict['rec_encoder']['use_tanh'] = strtobool(args.use_tanh)
+
+    if args.batch_size is not None:
+        config_dict['training']['batch_size'] = args.batch_size
+
+    if args.use_lambda_lr is not None:
+
+        if args.use_lambda_lr not in ["True", "False"]:
+            raise ValueError()
+        
+        config_dict['training']['lambda_lr']['use_lambda_lr'] = strtobool(args.use_lambda_lr)
 
     if args.precision is not None:
         config_dict['diffusion']['precision'] = args.precision

@@ -128,6 +128,10 @@ class LigandDiffuser(nn.Module):
         h_loss = (eps_h - eps_h_pred).square().sum()
         losses['l2'] = (x_loss + h_loss) / (eps_x.numel() + eps_h.numel())
 
+        with torch.no_grad():
+            losses['pos'] = x_loss / eps_x.numel()
+            losses['feat'] = h_loss / eps_h.numel()
+
         return losses
     
     def normalize(self, lig_pos, lig_features):
