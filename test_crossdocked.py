@@ -202,10 +202,17 @@ def main():
                 atoms_per_ligand[:batch_size])
 
             # convert positions/features to rdkit molecules
-            for lig_idx in range(batch_size):
+            for lig_idx, (lig_pos_i, lig_feat_i) in enumerate(zip(batch_lig_pos, batch_lig_feat)):
+
+
+                # remove atoms marked as the "not atom" type
+                element_idxs = torch.argmax(lig_feat_i, dim=1)
+                real_atom_mask = element_idxs != lig_feat_i.shape[1] - 1
+                lig_pos_i = lig_pos_i[real_atom_mask]
+                lig_feat_i = lig_feat_i[real_atom_mask][:, :-1]
 
                 # convert lig atom features to atom elements
-                element_idxs = torch.argmax(batch_lig_feat[lig_idx], dim=1).tolist()
+                element_idxs = torch.argmax(lig_feat_i, dim=1).tolist()
                 atom_elements = test_dataset.lig_atom_idx_to_element(element_idxs)
 
                 # build molecule
@@ -214,7 +221,7 @@ def main():
                 else:
                     relax_iter = 200
 
-                mol = build_molecule(batch_lig_pos[lig_idx], atom_elements, add_hydrogens=True, sanitize=True, largest_frag=True, relax_iter=relax_iter)
+                mol = build_molecule(lig_pos_i, atom_elements, add_hydrogens=True, sanitize=True, largest_frag=True, relax_iter=relax_iter)
 
                 if mol is not None:
                     mols.append(mol)
