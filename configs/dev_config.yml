@@ -52,7 +52,7 @@ dynamics:
 
 
 rec_encoder_loss:
-  loss_type: 'hinge' # can be optimal_transport, gaussian_repulsion, or hinge
+  loss_type: 'optimal_transport' # can be optimal_transport, gaussian_repulsion, or hinge
 
 training:
   rec_encoder_loss_weight: 5.0
@@ -61,24 +61,21 @@ training:
   weight_decay: 1.0e-12
   clip_grad: False
   clip_value: 1.5
-  epochs: 15
+  epochs: 4
   batch_size: 8
   test_interval: 100 # measured in epochs
-  train_metrics_interval: 1.0 # epochs
+  train_metrics_interval: 0.5 # epochs
   save_interval: 100 # epoch
   sample_interval: 100 # number of epochs between sampling/testing molecules
   test_epochs: 2 # number of epochs to run when evaluating on the test set
   num_workers: 0
-  cyclic_lr: # settings regarding a cyclic learning rate
-    use_cyclic_lr: False
-    base_lr: 1.0e-5
-    max_lr: 1.0e-4
-    step_size_up_frac: 0.25 # we specify step_size_up as a fraction of iterations_per_epoch
-  lambda_lr: # settings for using the lambdaLR schule
-    use_lambda_lr: True
-    epoch_start: 100
-    last_epoch: 200
-    multiplier: 0.98
+  scheduler:
+    warmup_length: 1
+    rec_enc_weight_decay_midpoint: 2
+    rec_enc_weight_decay_scale: 0.25
+    restart_interval: 1
+    restart_type: 'linear'
+
 
 sampling_config:
   n_receptors: 2
