@@ -66,7 +66,7 @@ training:
   test_interval: 100 # measured in epochs
   train_metrics_interval: 0.5 # epochs
   save_interval: 100 # epoch
-  sample_interval: 100 # number of epochs between sampling/testing molecules
+  sample_interval: 1 # number of epochs between sampling/testing molecules
   test_epochs: 2 # number of epochs to run when evaluating on the test set
   num_workers: 0
   scheduler:
