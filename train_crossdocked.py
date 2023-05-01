@@ -72,6 +72,8 @@ def parse_arguments():
     training_group.add_argument('--restart_interval', type=float, default=None)
     training_group.add_argument('--restart_type', type=str, default=None)
 
+    p.add_argument('--max_fake_atom_frac', type=float, default=None)
+
     p.add_argument('--use_tanh', type=str, default=None)
 
     p.add_argument('--config', type=str, required=True)
@@ -92,6 +94,9 @@ def parse_arguments():
     for scheduler_arg in scheduler_args:
         if args_dict[scheduler_arg] is not None:
             config_dict['training']['scheduler'][scheduler_arg] = args_dict[scheduler_arg]
+
+    if args.max_fake_atom_frac is not None:
+        config_dict['dataset']['max_fake_atom_frac'] = args.max_fake_atom_frac
 
     if args.use_tanh is not None:
 
