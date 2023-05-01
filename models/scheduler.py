@@ -27,6 +27,8 @@ class Scheduler:
 
         if self.restart_type == 'linear':
             self.restart_fn = self.linear_restart
+        elif self.restart_type == 'cosine':
+            self.restart_fn = self.cosine_restart
         else:
             raise NotImplementedError
 
@@ -64,6 +66,9 @@ class Scheduler:
         new_lr = -1.0*self.base_lr*epochs_into_interval/self.restart_interval + self.base_lr
         return new_lr
 
+    def cosine_restart(self, epochs_into_interval):
+        new_lr = 0.5*self.base_lr*np.cos(epochs_into_interval*np.pi/self.restart_interval)
+        return new_lr
     
     def get_lr(self) -> float:
         return self.optimizer.param_groups[0]['lr']

@@ -66,7 +66,7 @@ training:
   epochs: 4
   batch_size: 8
   test_interval: 100 # measured in epochs
-  train_metrics_interval: 0.5 # epochs
+  train_metrics_interval: 2 # epochs
   save_interval: 100 # epoch
   sample_interval: 1 # number of epochs between sampling/testing molecules
   test_epochs: 2 # number of epochs to run when evaluating on the test set
@@ -76,7 +76,7 @@ training:
     rec_enc_weight_decay_midpoint: 2
     rec_enc_weight_decay_scale: 0.25
     restart_interval: 1
-    restart_type: 'linear'
+    restart_type: 'cosine' # can be either linear or cosine
 
 
 sampling_config:
