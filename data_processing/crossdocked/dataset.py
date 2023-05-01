@@ -11,7 +11,7 @@ from data_processing.pdbbind_processing import (build_receptor_graph,
                                                 get_pocket_atoms, parse_ligand,
                                                 parse_protein, get_ot_loss_weights)
 
-# TODO: figure out what ligand atom elements we would/should actually support. We don't really need to include the metals do we?
+# TODO: with the current implementation of fake atoms, the code will not function properly if max_fake_atom_frac = 0
 
 class CrossDockedDataset(dgl.data.DGLDataset):
 
@@ -71,22 +71,23 @@ class CrossDockedDataset(dgl.data.DGLDataset):
         # add fake atoms to ligand
         if self.max_fake_atom_frac > 0:
 
-            # add extra column for "no atom" type to the atom features
-            lig_atom_features = torch.concat([lig_atom_features, torch.zeros(n_real_atoms, 1, dtype=lig_atom_features.dtype)])
-
             n_real_atoms = lig_atom_positions.shape[0]
+
+            # add extra column for "no atom" type to the atom features
+            lig_atom_features = torch.concat([lig_atom_features, torch.zeros(n_real_atoms, 1, dtype=lig_atom_features.dtype)], dim=1)
+
             n_fake_max = math.ceil(self.max_fake_atom_frac*n_real_atoms) # maximum possible number of fake atoms
-            n_fake = int(torch.randint(0, n_fake_max+1, 1)) # sample number of fake atoms from Uniform(0, n_fake_max)
+            n_fake = int(torch.randint(0, n_fake_max+1, (1,))) # sample number of fake atoms from Uniform(0, n_fake_max)
 
             # if we have decided to add a non-zero number of fake atoms
             if n_fake != 0:
-                max_coords = lig_atom_positions.max(dim=0, keepdim=True)
-                min_coords = lig_atom_positions.min(dim=0, keepdim=True)
+                max_coords, _ = lig_atom_positions.max(dim=0, keepdim=True)
+                min_coords, _ = lig_atom_positions.min(dim=0, keepdim=True)
                 fake_atom_positions = torch.rand(n_fake, 3)*(max_coords - min_coords) + min_coords
 
                 lig_atom_positions = torch.concat([lig_atom_positions, fake_atom_positions], dim=0)
 
-                fake_atom_features = torch.zeros(n_fake, lig_atom_features.shape[1]+1, dtype=lig_atom_features.dtype)
+                fake_atom_features = torch.zeros(n_fake, lig_atom_features.shape[1], dtype=lig_atom_features.dtype)
                 fake_atom_features[:, -1] = 1
 
                 lig_atom_features = torch.concat([lig_atom_features, fake_atom_features], dim=0)

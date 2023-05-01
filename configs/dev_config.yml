@@ -24,6 +24,7 @@ dataset:
   receptor_k: 8
   dataset_size: 50 # used only for debugging
   use_boltzmann_ot: False
+  max_fake_atom_frac: 0.2
 
 rec_encoder:
   n_keypoints: 20
