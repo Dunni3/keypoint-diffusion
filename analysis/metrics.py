@@ -59,13 +59,13 @@ class ModelAnalyzer:
             lig_feat.extend(rec_dict['features'])
 
         # remove atoms marked as the "not atom" type
-        for idx, lig_pos_i, lig_feat_i in enumerate(zip(lig_pos, lig_feat)):
+        for idx, (lig_pos_i, lig_feat_i) in enumerate(zip(lig_pos, lig_feat)):
             element_idxs = torch.argmax(lig_feat_i, dim=1)
 
             # remove atoms marked as the "not atom" type
             real_atom_mask = element_idxs != lig_feat_i.shape[1] - 1
-            lig_pos_i = lig_pos_i[real_atom_mask]
-            lig_feat_i = lig_feat_i[real_atom_mask][:, :-1]
+            lig_pos_i = lig_pos_i[real_atom_mask] # remove fake atoms from positions
+            lig_feat_i = lig_feat_i[real_atom_mask][:, :-1] # remove fake from features and slice off the "no atom" type
             lig_pos[idx] = lig_pos_i
             lig_feat[idx] = lig_feat_i
 
