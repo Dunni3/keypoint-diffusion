@@ -8,6 +8,14 @@ data/PDBbind_processed
 *.stdout
 experiments/results/
 runs/
+analysis_diffsbdd
+wandb
+sweep_mha_runs/
+sweep_repulsion_runs/
+data/crossdock_*
+data/PDBbind
+analyze_sweep/
+test_results/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
