@@ -129,8 +129,8 @@ class LigandDiffuser(nn.Module):
         losses['l2'] = (x_loss + h_loss) / (eps_x.numel() + eps_h.numel())
 
         with torch.no_grad():
-            losses['pos_loss'] = x_loss / eps_x.numel()
-            losses['feat_loss'] = h_loss / eps_h.numel()
+            losses['pos'] = x_loss / eps_x.numel()
+            losses['feat'] = h_loss / eps_h.numel()
 
         return losses
     
