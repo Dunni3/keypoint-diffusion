@@ -75,11 +75,23 @@ def parse_arguments():
 
     p.add_argument('--use_tanh', type=str, default=None)
 
-    p.add_argument('--config', type=str, required=True)
+    p.add_argument('--config', type=str, default=None)
+    p.add_argument('--resume', default=None)
     args = p.parse_args()
 
-    with open(args.config, 'r') as f:
+    if args.config is not None and args.resume is not None:
+        raise ValueError('only specify a config file or a resume file but not both')
+
+    if args.config is not None:
+        config_file = args.config
+    elif args.resume is not None:
+        config_file = Path(args.resume).parent / 'config.yml'
+
+    with open(config_file, 'r') as f:
         config_dict = yaml.load(f, Loader=yaml.FullLoader)
+
+    if args.resume is not None:
+        config_dict['experiment']['name'] = f"{config_dict['experiment']['name']}_resumed"
 
     # override config file args with command line args
 
@@ -221,6 +233,9 @@ def main():
     script_args, args = parse_arguments()
     # torch.autograd.set_detect_anomaly(True)
 
+    # determine if we are resuming from a previous run
+    resume = script_args.resume is not None
+
     # initialize wandb
     wandb_init_kwargs = args['wandb']['init_kwargs']
     wandb_init_kwargs['name'] = args['experiment']['name']
@@ -293,6 +308,10 @@ def main():
         rec_encoder_config=rec_encoder_config, 
         rec_encoder_loss_config=args['rec_encoder_loss'],
         **args['diffusion']).to(device=device)
+    
+    if resume:
+        state_file = script_args.resume
+        model.load_state_dict(torch.load(state_file))
 
     # create optimizer
     optimizer = torch.optim.Adam(
