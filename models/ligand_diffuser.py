@@ -121,18 +121,20 @@ class LigandDiffuser(nn.Module):
 
         # construct real atom mask
         real_atom_mask = torch.concat([ ~(lig_feat[:, -1].bool()) for lig_feat in lig_atom_features ])[:, None]
+        n_real_atoms = real_atom_mask.sum()
 
         # concatenate the added the noises together
         eps_x = torch.concat([ eps_dict['x'] for eps_dict in eps_batch ], dim=0)
         eps_h = torch.concat([ eps_dict['h'] for eps_dict in eps_batch ], dim=0)
 
         # compute l2 loss on noise
+        n_x_loss_terms = n_real_atoms*3
         x_loss = ((eps_x - eps_x_pred)*real_atom_mask).square().sum() # mask out loss on predicted position of fake atoms
         h_loss = (eps_h - eps_h_pred).square().sum()
-        losses['l2'] = (x_loss + h_loss) / (eps_x.numel() + eps_h.numel())
+        losses['l2'] = (x_loss + h_loss) / (n_x_loss_terms + eps_h.numel())
 
         with torch.no_grad():
-            losses['pos'] = x_loss / eps_x.numel()
+            losses['pos'] = x_loss / n_x_loss_terms
             losses['feat'] = h_loss / eps_h.numel()
 
         return losses
