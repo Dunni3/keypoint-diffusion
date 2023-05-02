@@ -67,7 +67,7 @@ class Scheduler:
         return new_lr
 
     def cosine_restart(self, epochs_into_interval):
-        new_lr = 0.5*self.base_lr*np.cos(epochs_into_interval*np.pi/self.restart_interval)
+        new_lr = 0.5*self.base_lr*(1+np.cos(epochs_into_interval*np.pi/self.restart_interval))
         return new_lr
     
     def get_lr(self) -> float:
