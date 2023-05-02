@@ -2,6 +2,8 @@ import openbabel
 from rdkit.Chem import AllChem as Chem
 # from rdkit.Chem import rdDetermineBonds
 import tempfile
+import torch
+from pathlib import Path
 
 # this is taken from DiffSBDD, minor modification to return the file contents without writing to disk if filename=None 
 def write_xyz_file(coords, atom_types, filename = None):
@@ -55,3 +57,8 @@ def make_mol_rdkit(positions, atom_types, atom_decoder):
     mol = Chem.SDMolSupplier(tmp_file, sanitize=False)[0]
 
     return mol
+
+# its kind of dumb to have this one-liner, but i save the model in multiple places thorughout the codebase so i thought i would centralize the 
+# model saving code incase i want to change it later
+def save_model(model, output_file: Path):
+    torch.save(model.state_dict(), str(output_file))
