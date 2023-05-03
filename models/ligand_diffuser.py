@@ -512,6 +512,7 @@ class LigandDiffuser(nn.Module):
             lig_feat_i = lig_feat_i[real_atom_mask][:, :-1] # remove fake from features and slice off the "no atom" type
             lig_pos[idx] = lig_pos_i
             lig_feat[idx] = lig_feat_i
+        return lig_pos, lig_feat
 
 # noise schedules are taken from DiffSBDD: https://github.com/arneschneuing/DiffSBDD
 def cosine_beta_schedule(timesteps, s=0.008, raise_to_power: float = 1):
