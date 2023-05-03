@@ -1,23 +1,30 @@
 from torch.optim import Optimizer
 import numpy as np
+from pathlib import Path
+from utils import save_model
+from models.ligand_diffuser import LigandDiffuser
 
 class Scheduler:
 
-    def __init__(self, 
+    def __init__(self,
+                 model: LigandDiffuser,
                  optimizer: Optimizer, 
-                 base_lr: float, 
-                 warmup_length: float, 
+                 base_lr: float,
+                 output_dir: Path, 
+                 warmup_length: float = 0, 
                  rec_enc_loss_weight: float = 0.1,
                  rec_enc_weight_decay_midpoint: float = 0,
                  rec_enc_weight_decay_scale: float = 1,
                  restart_interval: float = 0, 
                  restart_type: str = 'linear'):
         
+        self.model = model
         self.optimizer = optimizer
         self.base_lr = base_lr
         self.restart_interval = restart_interval
         self.restart_type = restart_type
         self.warmup_length = warmup_length
+        self.output_dir = output_dir
 
         self.rec_enc_loss_weight = rec_enc_loss_weight
         self.rec_enc_weight_decay_midpoint = rec_enc_weight_decay_midpoint
@@ -50,6 +57,10 @@ class Scheduler:
         elif epochs_into_interval >= self.restart_interval:
             self.restart_marker = epoch_exact
             self.optimizer.param_groups[0]['lr'] = self.restart_fn(0)
+            # save model on restart
+            model_file = self.output_dir / f'model_on_restart_{epoch_exact:.0f}.pt'
+            save_model(self.model, model_file)
+
 
     def get_rec_enc_weight(self, epoch_exact):
 
@@ -67,7 +78,7 @@ class Scheduler:
         return new_lr
 
     def cosine_restart(self, epochs_into_interval):
-        new_lr = 0.5*self.base_lr*np.cos(epochs_into_interval*np.pi/self.restart_interval)
+        new_lr = 0.5*self.base_lr*(1+np.cos(epochs_into_interval*np.pi/self.restart_interval))
         return new_lr
     
     def get_lr(self) -> float:

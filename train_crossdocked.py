@@ -18,6 +18,7 @@ from models.receptor_encoder import ReceptorEncoder
 from models.ligand_diffuser import LigandDiffuser
 from models.scheduler import Scheduler
 from analysis.metrics import ModelAnalyzer
+from utils import save_model
 import torch
 import numpy as np
 
@@ -76,11 +77,23 @@ def parse_arguments():
 
     p.add_argument('--use_tanh', type=str, default=None)
 
-    p.add_argument('--config', type=str, required=True)
+    p.add_argument('--config', type=str, default=None)
+    p.add_argument('--resume', default=None)
     args = p.parse_args()
 
-    with open(args.config, 'r') as f:
+    if args.config is not None and args.resume is not None:
+        raise ValueError('only specify a config file or a resume file but not both')
+
+    if args.config is not None:
+        config_file = args.config
+    elif args.resume is not None:
+        config_file = Path(args.resume).parent / 'config.yml'
+
+    with open(config_file, 'r') as f:
         config_dict = yaml.load(f, Loader=yaml.FullLoader)
+
+    if args.resume is not None:
+        config_dict['experiment']['name'] = f"{config_dict['experiment']['name']}_resumed"
 
     # override config file args with command line args
 
@@ -222,25 +235,12 @@ def test_model(model, test_dataloader, args, device):
 
     return output_losses
 
-def make_multiplier_func(start: int, stop: int, multiplier: float):
-
-    def lr_multiplier(epoch):
-        if epoch < start:
-            # before the start of LR reduction
-            return 1
-        elif epoch >= start and epoch < stop:
-            # during the LR reduction phase
-            return multiplier**(epoch - start + 1)
-        else:
-            # when we are done reducing LR, we hold it constant at the final value
-            return multiplier**(stop - start + 1)
-
-    return lr_multiplier
-        
-
 def main():
     script_args, args = parse_arguments()
     # torch.autograd.set_detect_anomaly(True)
+
+    # determine if we are resuming from a previous run
+    resume = script_args.resume is not None
 
     # initialize wandb
     wandb_init_kwargs = args['wandb']['init_kwargs']
@@ -321,6 +321,10 @@ def main():
         rec_encoder_loss_config=args['rec_encoder_loss'],
         use_fake_atoms=use_fake_atoms,
         **args['diffusion']).to(device=device)
+    
+    if resume:
+        state_file = script_args.resume
+        model.load_state_dict(torch.load(state_file))
 
     # create optimizer
     optimizer = torch.optim.Adam(
@@ -335,8 +339,10 @@ def main():
     # initialize learning rate scheduler
     scheduler_args = args['training']['scheduler']
     scheduler = Scheduler(
+        model=model,
         optimizer=optimizer,
         base_lr=args['training']['learning_rate'],
+        output_dir=output_dir,
         rec_enc_loss_weight=args['training']['rec_encoder_loss_weight'],
         **scheduler_args
     )
@@ -435,8 +441,8 @@ def main():
                 file_name = f'model_epoch_{epoch_idx}_iter_{iter_idx}.pt' # where to save current model
                 file_path = output_dir / file_name 
                 most_recent_model = output_dir / 'model.pt' # filepath of most recently saved model - note this is always the same path
-                torch.save(model.state_dict(), str(file_path)) # save current model
-                torch.save(model.state_dict(), str(most_recent_model)) # save most recent model
+                save_model(model, file_path)
+                save_model(model, most_recent_model)
 
             # evaluate the quality of sampled molecules, if necessary
             if current_epoch - sample_eval_marker >= args['training']['sample_interval']:
