@@ -10,15 +10,16 @@ metric:
 parameters:
   max_fake_atom_frac:
     values:
-      - 0.1
+      - 0.0
       - 0.2
       - 0.4
-  batch_size:
+  restart_interval:
     values:
-      - 64
-      - 200
+      - 0
+      - 60
+      - 120
   lr:
     values:
       - 1.0e-4
-      - 4.0e-4
+      - 3.0e-4
 program: train_crossdocked.py
