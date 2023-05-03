@@ -18,7 +18,7 @@ from models.n_nodes_dist import LigandSizeDistribution
 class LigandDiffuser(nn.Module):
 
     def __init__(self, atom_nf, rec_nf, processed_dataset_dir: Path, n_timesteps: int = 1000, keypoint_centered=False, 
-    dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, precision=1e-4, lig_feat_norm_constant=1, rl_dist_threshold=0):
+    dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, precision=1e-4, lig_feat_norm_constant=1, rl_dist_threshold=0, use_fake_atoms=False):
         super().__init__()
 
         # NOTE: keypoint_centered is deprecated. This flag no longer has any effect. It is kept as an argument for backwards compatibility with previously trained models.
@@ -27,6 +27,7 @@ class LigandDiffuser(nn.Module):
         self.n_kp_feat = rec_nf
         self.n_timesteps = n_timesteps
         self.lig_feat_norm_constant = lig_feat_norm_constant
+        self.use_fake_atoms = use_fake_atoms
         
         # create the receptor -> ligand hinge loss if called for
         if rl_dist_threshold > 0:
@@ -119,19 +120,24 @@ class LigandDiffuser(nn.Module):
             eps_x_pred = torch.concat(eps_x_pred, dim=0)
             eps_h_pred = torch.concat(eps_h_pred, dim=0)
 
-        # construct real atom mask
-        real_atom_mask = torch.concat([ ~(lig_feat[:, -1].bool()) for lig_feat in lig_atom_features ])[:, None]
-
         # concatenate the added the noises together
         eps_x = torch.concat([ eps_dict['x'] for eps_dict in eps_batch ], dim=0)
         eps_h = torch.concat([ eps_dict['h'] for eps_dict in eps_batch ], dim=0)
 
         # compute l2 loss on noise
-        x_loss = ((eps_x - eps_x_pred)*real_atom_mask).square().sum() # mask out loss on predicted position of fake atoms
-        h_loss = (eps_h - eps_h_pred).square().sum()
-        losses['l2'] = (x_loss + h_loss) / (eps_x.numel() + eps_h.numel())
+        if self.use_fake_atoms:
+            real_atom_mask = torch.concat([ ~(lig_feat[:, -1].bool()) for lig_feat in lig_atom_features ])[:, None]
+            n_real_atoms = real_atom_mask.sum()
+            n_x_loss_terms = n_real_atoms*3
+            x_loss = ((eps_x - eps_x_pred)*real_atom_mask).square().sum() # mask out loss on predicted position of fake atoms
+        else:
+            x_loss = ((eps_x - eps_x_pred)).square().sum()
+            n_x_loss_terms = eps_x.numel()
 
-        losses['pos'] = x_loss / eps_x.numel()
+        h_loss = (eps_h - eps_h_pred).square().sum()
+        losses['l2'] = (x_loss + h_loss) / (n_x_loss_terms + eps_h.numel())
+
+        losses['pos'] = x_loss / n_x_loss_terms
         losses['feat'] = h_loss / eps_h.numel()
 
         return losses
@@ -398,6 +404,12 @@ class LigandDiffuser(nn.Module):
         lig_pos, lig_feat = self.unnormalize(lig_pos, lig_feat)
 
         if visualize:
+
+            # remove fake atoms from all frames if they're being used
+            if self.use_fake_atoms:
+                new_pos_and_feat = [ self.remove_fake_atoms(lig_pos_frames[frame_idx], lig_feat_frames[frame_idx]) for frame_idx in range(len(lig_pos_frames)) ]
+                lig_pos_frames, lig_feat_frames = list(map(list, zip(*new_pos_and_feat)))
+
             # reorganize our frames
             # right now, we have a list where each element correponds to a frame. and each element is a list of position of all ligands at that frame.
             # what we want is a list where each element corresponds to a single ligand. and that element will be a list of ligand positions at every frame
@@ -405,6 +417,10 @@ class LigandDiffuser(nn.Module):
             lig_feat_frames = list(zip(*lig_feat_frames))
 
             return lig_pos_frames, lig_feat_frames
+        
+        # remove fake atoms if they were used
+        if self.use_fake_atoms:
+            lig_pos, lig_feat = self.remove_fake_atoms(lig_pos, lig_feat)
 
         return lig_pos, lig_feat
 
@@ -485,7 +501,17 @@ class LigandDiffuser(nn.Module):
 
         return zs_feat, zs_pos, rec_pos
 
+    def remove_fake_atoms(self, lig_pos: List[torch.Tensor], lig_feat: List[torch.Tensor]):
+        # remove atoms marked as the "not atom" type
+        for idx, (lig_pos_i, lig_feat_i) in enumerate(zip(lig_pos, lig_feat)):
+            element_idxs = torch.argmax(lig_feat_i, dim=1)
 
+            # remove atoms marked as the "not atom" type
+            real_atom_mask = element_idxs != lig_feat_i.shape[1] - 1
+            lig_pos_i = lig_pos_i[real_atom_mask] # remove fake atoms from positions
+            lig_feat_i = lig_feat_i[real_atom_mask][:, :-1] # remove fake from features and slice off the "no atom" type
+            lig_pos[idx] = lig_pos_i
+            lig_feat[idx] = lig_feat_i
 
 # noise schedules are taken from DiffSBDD: https://github.com/arneschneuing/DiffSBDD
 def cosine_beta_schedule(timesteps, s=0.008, raise_to_power: float = 1):

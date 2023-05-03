@@ -305,6 +305,12 @@ def main():
     rec_encoder_config["in_n_node_feat"] = n_rec_atom_features
     args["rec_encoder"]["in_n_node_feat"] = n_rec_atom_features
 
+    # determine if we're using fake atoms
+    try:
+        use_fake_atoms = args['dataset']['max_fake_atom_frac'] > 0
+    except KeyError:
+        use_fake_atoms = False
+
     # create diffusion model
     model = LigandDiffuser(
         n_lig_feat, 
@@ -313,6 +319,7 @@ def main():
         dynamics_config=args['dynamics'], 
         rec_encoder_config=rec_encoder_config, 
         rec_encoder_loss_config=args['rec_encoder_loss'],
+        use_fake_atoms=use_fake_atoms,
         **args['diffusion']).to(device=device)
 
     # create optimizer

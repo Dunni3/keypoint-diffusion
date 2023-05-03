@@ -204,13 +204,6 @@ def main():
             # convert positions/features to rdkit molecules
             for lig_idx, (lig_pos_i, lig_feat_i) in enumerate(zip(batch_lig_pos, batch_lig_feat)):
 
-
-                # remove atoms marked as the "not atom" type
-                element_idxs = torch.argmax(lig_feat_i, dim=1)
-                real_atom_mask = element_idxs != lig_feat_i.shape[1] - 1
-                lig_pos_i = lig_pos_i[real_atom_mask]
-                lig_feat_i = lig_feat_i[real_atom_mask][:, :-1]
-
                 # convert lig atom features to atom elements
                 element_idxs = torch.argmax(lig_feat_i, dim=1).tolist()
                 atom_elements = test_dataset.lig_atom_idx_to_element(element_idxs)
