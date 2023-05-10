@@ -1,7 +1,7 @@
 # project-specific files
 data/PDBbind
-data/crossdock_processed
-data/PDBbind_processed
+data/crossdock_processed/
+data/crossdock_processed_ip/
 *.slurm
 *.out
 *.stderr
@@ -16,6 +16,8 @@ data/crossdock_*
 data/PDBbind
 analyze_sweep/
 test_results/
+sweep_runs/
+slurm_output/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

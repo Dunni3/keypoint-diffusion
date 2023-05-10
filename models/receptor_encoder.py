@@ -11,7 +11,7 @@ import dgl.function as fn
 class EGNNConv(nn.Module):
     # this is adapted from the EGNN implementation in DGL
 
-    def __init__(self, in_size, hidden_size, out_size, edge_feat_size=0, use_tanh=True, coords_range=10):
+    def __init__(self, in_size, hidden_size, out_size, edge_feat_size=0, use_tanh=True, coords_range=10, message_norm=1):
         super(EGNNConv, self).__init__()
 
         self.in_size = in_size
@@ -21,6 +21,7 @@ class EGNNConv(nn.Module):
         act_fn = nn.SiLU()
         self.use_tanh = use_tanh
         self.coords_range = coords_range
+        self.message_norm = message_norm
 
         # \phi_e
         self.edge_mlp = nn.Sequential(
@@ -125,7 +126,7 @@ class EGNNConv(nn.Module):
             graph.update_all(fn.copy_e("msg_x", "m"), fn.mean("m", "x_neigh"))
             graph.update_all(fn.copy_e("msg_h", "m"), fn.sum("m", "h_neigh"))
 
-            h_neigh, x_neigh = graph.ndata["h_neigh"], graph.ndata["x_neigh"]
+            h_neigh, x_neigh = graph.ndata["h_neigh"]/self.message_norm, graph.ndata["x_neigh"]/self.message_norm
 
             h = self.node_mlp(torch.cat([node_feat, h_neigh], dim=-1))
             x = coord_feat + x_neigh
@@ -186,7 +187,7 @@ class ReceptorEncoder(nn.Module):
 
     def __init__(self, n_convs: int = 6, n_keypoints: int = 10, in_n_node_feat: int = 13, 
         hidden_n_node_feat: int = 256, out_n_node_feat: int = 256, use_tanh=True, coords_range=10, kp_feat_scale=1,
-        use_keypoint_feat_mha: bool = False, feat_mha_heads=5):
+        use_keypoint_feat_mha: bool = False, feat_mha_heads=5, message_norm=1):
         super().__init__()
 
         self.n_convs = n_convs
@@ -222,7 +223,7 @@ class ReceptorEncoder(nn.Module):
                 out_size = hidden_n_node_feat
 
             self.egnn_convs.append( 
-                EGNNConv(in_size=in_size, hidden_size=hidden_size, out_size=out_size, use_tanh=use_tanh, coords_range=coords_range)
+                EGNNConv(in_size=in_size, hidden_size=hidden_size, out_size=out_size, use_tanh=use_tanh, coords_range=coords_range, message_norm=message_norm)
             )
 
             self.egnn_convs = nn.ModuleList(self.egnn_convs)
@@ -242,7 +243,6 @@ class ReceptorEncoder(nn.Module):
 
             # keypoint-wise MLP applied to keypoint features when they are first
             # generated as weighted averages over receptor atom features
-            # TODO: we could play with the architecture of this mlp i suppose
             self.kp_wise_mlp = nn.Sequential(
                 nn.Linear(out_n_node_feat, out_n_node_feat*4),
                 nn.SiLU(),
