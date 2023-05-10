@@ -16,12 +16,13 @@ def parse_arguments():
 
     p.add_argument('--to_pairs_file', type=str, default=None)
     p.add_argument('--from_pairs_file', type=str, default=None)
+    p.add_argument('--preminimized_ligs', action='store_true')
     
     args = p.parse_args()
 
     return args
 
-def parse_pocket_dir(pocket_dir: Path):
+def parse_pocket_dir(pocket_dir: Path, preminimized: bool):
 
         pocket_dir = pocket_dir.resolve()
         pocket_files = list(pocket_dir.iterdir())
@@ -44,7 +45,10 @@ def parse_pocket_dir(pocket_dir: Path):
         if not ref_ligand_file.exists():
             raise ValueError(f'reference ligand file not found: {ref_ligand_file}')
         
-        generated_ligands_file = pocket_dir / f'{pocket_dir.name}_ligands.sdf'
+        if preminimized:
+            generated_ligands_file = pocket_dir / f'{pocket_dir.name}_ligands_rec_uff.sdf.gz'
+        else:
+            generated_ligands_file = pocket_dir / f'{pocket_dir.name}_ligands.sdf'
 
         return rec_pdb_file, ref_ligand_file, generated_ligands_file
 
@@ -85,9 +89,9 @@ def get_dst_lig_idxs(src_lig_idxs: np.ndarray, atoms_per_ligand: np.ndarray, ref
 
     return np.array(selected_dst_idxs)
 
-def compute_pocket_pairs(sampled_mols_dir: Path):
+def compute_pocket_pairs(sampled_mols_dir: Path, preminimized: bool):
 
-    pocket_files = [ parse_pocket_dir(pocket_dir) for pocket_dir in sampled_mols_dir.iterdir() ]
+    pocket_files = [ parse_pocket_dir(pocket_dir, preminimized=preminimized) for pocket_dir in sampled_mols_dir.iterdir() ]
 
     rec_pdb_files, ref_ligand_files, generated_ligands_files = list(zip(*pocket_files))
     
@@ -116,7 +120,7 @@ def compute_pocket_pairs(sampled_mols_dir: Path):
 
     return rec_pdb_files, ref_ligand_files, generated_ligands_files, src_lig_idxs, dst_lig_idxs
 
-def pairs_from_pair_file(pair_file: str, sampled_mols_dir: Path):
+def pairs_from_pair_file(pair_file: str, sampled_mols_dir: Path, preminimized: bool):
     
     # read pairs file
     pocket_pair_names = []
@@ -133,7 +137,7 @@ def pairs_from_pair_file(pair_file: str, sampled_mols_dir: Path):
     src_lig_idxs = list(range(len(src_pocket_names)))
     dst_lig_idxs = list(range(len(src_pocket_names), len(pocket_names)))
 
-    pocket_files = [ parse_pocket_dir(sampled_mols_dir / pocket_name) for pocket_name in pocket_names ]
+    pocket_files = [ parse_pocket_dir(sampled_mols_dir / pocket_name, preminimized=preminimized) for pocket_name in pocket_names ]
     rec_pdb_files, ref_ligand_files, generated_ligands_files = list(zip(*pocket_files))
     return rec_pdb_files, ref_ligand_files, generated_ligands_files, src_lig_idxs, dst_lig_idxs
 
@@ -147,9 +151,9 @@ if __name__ == "__main__":
     sampled_mols_dir = test_result_dir / 'sampled_mols'
 
     if args.from_pairs_file is None:
-        rec_pdb_files, ref_ligand_files, generated_ligands_files, src_lig_idxs, dst_lig_idxs = compute_pocket_pairs(sampled_mols_dir)
+        rec_pdb_files, ref_ligand_files, generated_ligands_files, src_lig_idxs, dst_lig_idxs = compute_pocket_pairs(sampled_mols_dir, preminimized=args.preminimized_ligs)
     else:
-        rec_pdb_files, ref_ligand_files, generated_ligands_files, src_lig_idxs, dst_lig_idxs = pairs_from_pair_file(args.from_pairs_file, sampled_mols_dir)
+        rec_pdb_files, ref_ligand_files, generated_ligands_files, src_lig_idxs, dst_lig_idxs = pairs_from_pair_file(args.from_pairs_file, sampled_mols_dir, preminimized=args.preminimized_ligs)
 
     # determine/create directories for output files associated with this experiment
     output_dir = test_result_dir / 'crossdock_experiment'
