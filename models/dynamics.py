@@ -148,8 +148,15 @@ class LigRecConv(nn.Module):
             graph.update_all(fn.copy_e("msg_x", "m"), fn.sum("m", "x_neigh"))
             graph.update_all(fn.copy_e("msg_h", "m"), fn.sum("m", "h_neigh"))
 
+            # normalize messages
+            for key in graph.ndata['h_neigh']:
+                graph.ndata['h_neigh'][key] = graph.ndata['h_neigh'][key]/self.message_norm
+
+            for key in graph.ndata['x_neigh']:
+                graph.ndata['x_neigh'][key] = graph.ndata['x_neigh'][key]/self.message_norm
+
             # get aggregated messages
-            h_neigh, x_neigh = graph.ndata["h_neigh"]/self.message_norm, graph.ndata["x_neigh"]/self.message_norm
+            h_neigh, x_neigh = graph.ndata["h_neigh"], graph.ndata["x_neigh"]
 
             # compute updated features/coordinates
             # note that the receptor features/coordinates are not updated
