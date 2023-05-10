@@ -74,6 +74,7 @@ def parse_arguments():
     training_group.add_argument('--restart_type', type=str, default=None)
 
     p.add_argument('--use_tanh', type=str, default=None)
+    p.add_argument('--message_norm', type=float, default=None)
 
     p.add_argument('--config', type=str, default=None)
     p.add_argument('--resume', default=None)
@@ -131,6 +132,10 @@ def parse_arguments():
 
     if args.n_convs_encoder is not None:
         config_dict['rec_encoder']['n_convs'] = args.n_convs_encoder
+
+    if args.message_norm is not None:
+        config_dict['rec_encoder']['message_norm'] = args.message_norm
+        config_dict['dynamics']['message_norm'] = args.message_norm
 
     # NOTE: this is a design choice: we are only exploring rec_encoder architectures where n_hidden_feats == n_output_feats
     if args.keypoint_feats is not None:
