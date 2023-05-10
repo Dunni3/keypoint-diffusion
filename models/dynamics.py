@@ -4,16 +4,13 @@ from typing import Dict, List
 import dgl.function as fn
 import dgl
 
-# TODO: rewrite EGNNConv for the receptor encoder
-# TODO: should we do a sign embedding of distances? no, they don't use it in our benchmark
-
 class LigRecConv(nn.Module):
 
     # this class was adapted from the DGL implementation of EGNN
     # original code: https://github.com/dmlc/dgl/blob/76bb54044eb387e9e3009bc169e93d66aa004a74/python/dgl/nn/pytorch/conv/egnnconv.py
     # I have extended the EGNN graph conv layer to operate on heterogeneous graphs containing containing receptor and ligand nodes
 
-    def __init__(self, in_size, hidden_size, out_size, edge_feat_size=0, use_tanh=False, coords_range=10):
+    def __init__(self, in_size, hidden_size, out_size, edge_feat_size=0, use_tanh=False, coords_range=10, message_norm=1):
         super().__init__()
 
         self.in_size = in_size
@@ -22,13 +19,11 @@ class LigRecConv(nn.Module):
         self.edge_feat_size = edge_feat_size
         act_fn = nn.SiLU()
         self.use_tanh = use_tanh
+        self.message_norm = message_norm
 
         self.coords_range = coords_range
 
         self.edge_types = ["ll", "rl"]
-
-        # TODO: how many layers are in the MLPs of Hoogeboom/Arnescheung papers?
-        # TODO: what activation function do they use in Hoogeboom? which should i use?
 
         # \phi_e^t
         self.edge_mlp = {}
@@ -154,7 +149,7 @@ class LigRecConv(nn.Module):
             graph.update_all(fn.copy_e("msg_h", "m"), fn.sum("m", "h_neigh"))
 
             # get aggregated messages
-            h_neigh, x_neigh = graph.ndata["h_neigh"], graph.ndata["x_neigh"]
+            h_neigh, x_neigh = graph.ndata["h_neigh"]/self.message_norm, graph.ndata["x_neigh"]/self.message_norm
 
             # compute updated features/coordinates
             # note that the receptor features/coordinates are not updated
@@ -180,7 +175,7 @@ class LigRecConv(nn.Module):
 
 class LigRecEGNN(nn.Module):
 
-    def __init__(self, n_layers, in_size, hidden_size, out_size, use_tanh=False):
+    def __init__(self, n_layers, in_size, hidden_size, out_size, use_tanh=False, message_norm=1):
         super().__init__()
 
         self.n_layers = n_layers
@@ -208,7 +203,7 @@ class LigRecEGNN(nn.Module):
                 layer_out_size = hidden_size
 
             self.conv_layers.append( 
-                LigRecConv(in_size=layer_in_size, hidden_size=layer_hidden_size, out_size=layer_out_size, use_tanh=use_tanh)
+                LigRecConv(in_size=layer_in_size, hidden_size=layer_hidden_size, out_size=layer_out_size, use_tanh=use_tanh, message_norm=message_norm)
             )
 
             self.conv_layers = nn.ModuleList(self.conv_layers)
@@ -230,7 +225,7 @@ class LigRecEGNN(nn.Module):
 
 class LigRecDynamics(nn.Module):
 
-    def __init__(self, atom_nf, rec_nf, n_layers=4, hidden_nf=255, act_fn=nn.SiLU, receptor_keypoint_k=6, ligand_k=8, use_tanh=False):
+    def __init__(self, atom_nf, rec_nf, n_layers=4, hidden_nf=255, act_fn=nn.SiLU, receptor_keypoint_k=6, ligand_k=8, use_tanh=False, message_norm=1):
         super().__init__()
 
         self.receptor_keypoint_k = receptor_keypoint_k
@@ -256,7 +251,7 @@ class LigRecDynamics(nn.Module):
         )
 
         # we add +1 to the feature size for the timestep
-        self.egnn = LigRecEGNN(n_layers=n_layers, in_size=hidden_nf+1, hidden_size=hidden_nf+1, out_size=hidden_nf+1, use_tanh=use_tanh)
+        self.egnn = LigRecEGNN(n_layers=n_layers, in_size=hidden_nf+1, hidden_size=hidden_nf+1, out_size=hidden_nf+1, use_tanh=use_tanh, message_norm=message_norm)
 
 
     def forward(self, lig_pos, lig_feat, rec_pos, rec_feat, timestep, unbatch_eps=False):

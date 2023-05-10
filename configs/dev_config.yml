@@ -35,6 +35,7 @@ rec_encoder:
   kp_feat_scale: 1.0
   use_keypoint_feat_mha: True
   feat_mha_heads: 3
+  message_norm: 10
 
 diffusion:
   n_timesteps: 1000
@@ -47,7 +48,8 @@ dynamics:
   hidden_nf: 256
   receptor_keypoint_k: 6
   ligand_k: 8
-  use_tanh: True # whether to use tanh activation for coordinate updates 
+  use_tanh: True # whether to use tanh activation for coordinate updates
+  message_norm: 10 
 
 
 rec_encoder_loss:
