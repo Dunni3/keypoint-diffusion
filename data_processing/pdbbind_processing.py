@@ -76,10 +76,6 @@ def parse_ligand(ligand_path: Path, element_map: Dict[str, int], remove_hydrogen
     if other_atoms_mask.sum() > 0:
         raise Unparsable
 
-    # remove atoms that have the "other" atom type
-    atom_features = atom_features[~other_atoms_mask, :]
-    atom_positions = atom_positions[~other_atoms_mask, :]
-
     # drop the "other" atom dimension
     atom_features = atom_features[:, :-1]
     
