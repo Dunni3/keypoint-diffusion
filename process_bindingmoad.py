@@ -107,6 +107,9 @@ def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi
     lig_atom_features, other_atoms_mask = lig_atom_featurizer(lig_element_map, atom_elements=lig_elements)
     if other_atoms_mask.sum() != 0:
         raise Unparsable(f'unsupported atoms found: { np.array(lig_elements)[other_atoms_mask] }')
+    
+    # drop "other atoms" column
+    lig_atom_features = lig_atom_features[:, :-1]
 
 
     # get residues which constitute the binding pocket
