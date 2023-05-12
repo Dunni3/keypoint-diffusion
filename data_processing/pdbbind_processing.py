@@ -70,7 +70,7 @@ def parse_ligand(ligand_path: Path, element_map: Dict[str, int], remove_hydrogen
     atom_positions = ligand_conformer.GetPositions()
     atom_positions = torch.tensor(atom_positions).float()
 
-    atom_features, other_atoms_mask = lig_atom_featurizer(ligand, element_map, include_charges=include_charges)
+    atom_features, other_atoms_mask = lig_atom_featurizer(element_map, ligand=ligand)
 
     # skip ligands which have "other" type atoms
     if other_atoms_mask.sum() > 0:
@@ -99,7 +99,7 @@ def get_pocket_atoms(rec_atoms: prody.Selection, ligand_atom_positions: torch.Te
 
     # get positions, features, and residue indicies for all protein atoms
     rec_atom_positions = rec_atoms.getCoords()
-    rec_atom_features, other_atoms_mask = rec_atom_featurizer(rec_atoms, element_map)
+    rec_atom_features, other_atoms_mask = rec_atom_featurizer(element_map=element_map, rec_atoms=rec_atoms)
     rec_atom_residx = rec_atoms.getResindices()
 
     # convert protein atom positions to pytorch tensor
@@ -145,10 +145,13 @@ def get_pocket_atoms(rec_atoms: prody.Selection, ligand_atom_positions: torch.Te
     return pocket_atom_positions, pocket_atom_features, byres_pocket_atom_mask
 
 
-def rec_atom_featurizer(rec_atoms: prody.AtomGroup, element_map: Dict[str, int], include_charges=False):
-    protein_atom_elements: np.ndarray = rec_atoms.getElements()
-    protein_atom_charges: np.ndarray = rec_atoms.getCharges().astype(int)
-    # TODO: should atom charges be integers?
+def rec_atom_featurizer(element_map: Dict[str, int], rec_atoms: prody.AtomGroup = None, protein_atom_elements: np.ndarray = None):
+
+    if rec_atoms is None and protein_atom_elements is None:
+        raise ValueError
+    
+    if protein_atom_elements is None:
+        protein_atom_elements: np.ndarray = rec_atoms.getElements()
 
     # one-hot encode atom elements
     onehot_elements = onehot_encode_elements(protein_atom_elements, element_map)
@@ -158,27 +161,21 @@ def rec_atom_featurizer(rec_atoms: prody.AtomGroup, element_map: Dict[str, int],
 
     # remove "other" category from onehot_elements
     # note that here we are assuming that the other category is the last in the onehot encoding
-    onehot_elements = onehot_elements[:, :-1]
-
-    # concatenate features
-    if include_charges:
-        protein_atom_features = [onehot_elements, protein_atom_charges[:, None]]
-    else:
-        protein_atom_features = [onehot_elements]
-
-    protein_atom_features = np.concatenate(protein_atom_features, axis=1)
+    protein_atom_features = onehot_elements[:, :-1]
 
     return protein_atom_features, other_atoms_mask
 
-def lig_atom_featurizer(ligand, element_map: Dict[str, int], include_charges=False):
-    atom_elements = []
-    atom_charges = []
-    # TODO: do i need to explicitly compute atomic charges?
-    for atom in ligand.GetAtoms():
-        atom_elements.append(atom.GetSymbol())
+def lig_atom_featurizer(element_map: Dict[str, int], ligand=None, atom_elements: List[str] = None):
 
-        if include_charges:
-            atom_charges.append(atom.GetFormalCharge()) # equibind code calls ComputeGasteigerCharges(mol), not sure why/if necessary
+    if ligand is None and atom_elements is None:
+        raise ValueError
+    
+    if ligand is not None:
+        atom_elements = []
+        atom_charges = []
+        # TODO: do i need to explicitly compute atomic charges?
+        for atom in ligand.GetAtoms():
+            atom_elements.append(atom.GetSymbol())
 
     # convert numpy arrays to torch tensors
     # TODO: think about how we are returning atom features. the diffusion model formulation
@@ -190,18 +187,9 @@ def lig_atom_featurizer(ligand, element_map: Dict[str, int], include_charges=Fal
     # get a mask for atoms that have the "other" category
     other_atoms_mask = torch.tensor(onehot_elements[:, -1] == 1).bool()
 
-    # convert charges to numpy array
-    if include_charges:
-        atom_charges = np.asarray(atom_charges, dtype=int)
-
-    # concatenate atom elements and charges, then convert the feature array to a pytorch tensor
-    if include_charges:
-        atom_features = [onehot_elements, atom_charges[:, None]]
-    else:
-        atom_features = [onehot_elements]
-
-    atom_features = np.concatenate(atom_features, axis=1)
-    atom_features = torch.tensor(atom_features).float()
+    # convert charges to torch tensor
+    atom_features = onehot_elements
+    atom_features = torch.tensor(atom_features).bool()
 
     return atom_features, other_atoms_mask
 

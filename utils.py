@@ -4,6 +4,7 @@ from rdkit.Chem import AllChem as Chem
 import tempfile
 import torch
 from pathlib import Path
+from typing import Dict
 
 # this is taken from DiffSBDD, minor modification to return the file contents without writing to disk if filename=None 
 def write_xyz_file(coords, atom_types, filename = None):
@@ -62,3 +63,15 @@ def make_mol_rdkit(positions, atom_types, atom_decoder):
 # model saving code incase i want to change it later
 def save_model(model, output_file: Path):
     torch.save(model.state_dict(), str(output_file))
+
+
+def get_rec_atom_map(dataset_config: dict):
+    # construct atom typing maps
+    rec_elements = dataset_config['rec_elements']
+    rec_element_map: Dict[str, int] = { element: idx for idx, element in enumerate(rec_elements) }
+    rec_element_map['other'] = len(rec_elements)
+
+    lig_elements = dataset_config['lig_elements']
+    lig_element_map: Dict[str, int] = { element: idx for idx, element in enumerate(lig_elements) }
+    lig_element_map['other'] = len(lig_elements)
+    return rec_element_map, lig_element_map
