@@ -6,6 +6,7 @@ import numpy as np
 from rdkit import Chem
 from rdkit.Chem.rdForceFieldHelpers import UFFOptimizeMolecule, UFFHasAllMoleculeParams
 from openbabel import openbabel
+import io
 
 from utils import write_xyz_file
 
@@ -27,6 +28,8 @@ def build_molecule(positions, atom_elements, add_hydrogens=False, sanitize=False
     """
 
     mol = make_mol_openbabel(positions, atom_elements)
+    if mol is None:
+        return mol
     processed_mol = process_molecule(mol, add_hydrogens=add_hydrogens, 
         sanitize=sanitize, relax_iter=relax_iter, largest_frag=largest_frag)
     
@@ -41,23 +44,18 @@ def make_mol_openbabel(positions, atom_elements):
     Returns:
         rdkit molecule
     """
-    with tempfile.NamedTemporaryFile() as tmp:
-        tmp_file = tmp.name
+    # Write xyz file
+    xyz_str = write_xyz_file(positions, atom_elements)
 
-        # Write xyz file
-        write_xyz_file(positions, atom_elements, tmp_file)
+    # Convert to sdf file with openbabel
+    # openbabel will add bonds
+    obConversion = openbabel.OBConversion()
+    obConversion.SetInAndOutFormats("xyz", "sdf")
+    ob_mol = openbabel.OBMol()
+    obConversion.ReadString(ob_mol, xyz_str)
 
-        # Convert to sdf file with openbabel
-        # openbabel will add bonds
-        obConversion = openbabel.OBConversion()
-        obConversion.SetInAndOutFormats("xyz", "sdf")
-        ob_mol = openbabel.OBMol()
-        obConversion.ReadFile(ob_mol, tmp_file)
-
-        obConversion.WriteFile(ob_mol, tmp_file)
-
-        # Read sdf file with RDKit
-        mol = Chem.SDMolSupplier(tmp_file, sanitize=False)[0]
+    # convert sdf to rdkit molecule
+    mol = Chem.MolFromMolBlock(obConversion.WriteString(ob_mol))
 
     return mol
 
