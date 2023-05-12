@@ -14,6 +14,7 @@ import torch
 from data_processing.pdbbind_processing import (build_receptor_graph,
                                                 get_pocket_atoms, parse_ligand,
                                                 parse_protein, get_ot_loss_weights, center_complex, Unparsable, get_interface_points, InterfacePointException)
+from utils import get_rec_atom_map
 
 
 prody.confProDy(verbosity='none')
@@ -50,13 +51,7 @@ def main():
     output_dir.mkdir(exist_ok=True, parents=True)
 
     # construct atom typing maps
-    rec_elements = dataset_config['rec_elements']
-    rec_element_map: Dict[str, int] = { element: idx for idx, element in enumerate(rec_elements) }
-    rec_element_map['other'] = len(rec_elements)
-
-    lig_elements = dataset_config['lig_elements']
-    lig_element_map: Dict[str, int] = { element: idx for idx, element in enumerate(lig_elements) }
-    lig_element_map['other'] = len(lig_elements)
+    rec_element_map, lig_element_map = get_rec_atom_map(dataset_config)
 
     # save pickled arguments/dataset_config to output dir
     # TODO: this throws an exception, i don't know why, too tired to deal with it right now

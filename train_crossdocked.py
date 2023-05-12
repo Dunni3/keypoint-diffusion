@@ -409,9 +409,10 @@ def main():
             # if iter_idx < 10:
             #     print(f'{iter_idx=}, {time.time() - training_start:.2f} seconds since start', flush=True)
 
+            rec_graphs.ndata['h_0'] = rec_graphs.ndata['h_0'].float()
             rec_graphs = rec_graphs.to(device)
             lig_atom_positions = [ arr.to(device) for arr in lig_atom_positions ]
-            lig_atom_features = [ arr.to(device) for arr in lig_atom_features ]
+            lig_atom_features = [ arr.float().to(device) for arr in lig_atom_features ]
             interface_points = [ arr.to(device) for arr in interface_points ]
 
             optimizer.zero_grad()
