@@ -3,6 +3,7 @@ data/PDBbind
 data/crossdock_processed/
 data/crossdock_processed_ip/
 data/bindingmoad_mini
+data/bindingmoad_mini_ip/
 data/bindingmoad
 diffsbdd_test_samples/
 visualize_rich_generation/

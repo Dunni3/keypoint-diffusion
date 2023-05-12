@@ -13,7 +13,7 @@ wandb:
     log_freq: 100 # (int) log gradients and parameters every N batches
 
 dataset:
-  location: 'data/bindingmoad_mini/'
+  location: 'data/bindingmoad_mini_ip/'
   rec_elements: ['C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'B'] # ['C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'Mg', 'Mn', 'Zn', 'Ca', 'Fe', 'B']
   lig_elements: ['C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I', 'B']
   remove_hydrogen: True

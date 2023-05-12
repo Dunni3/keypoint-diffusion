@@ -300,6 +300,11 @@ if __name__ == '__main__':
                         except Unparsable as e:
                             print(e)
                             continue
+                        except InterfacePointException as e:
+                            print('interface point exception occured', flush=True)
+                            print(e)
+                            print(e.original_exception)
+                            continue
 
                         count += 1
 
