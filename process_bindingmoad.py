@@ -23,7 +23,7 @@ import constants
 import utils
 import pickle
 
-from data_processing.pdbbind_processing import rec_atom_featurizer, lig_atom_featurizer, Unparsable, build_receptor_graph
+from data_processing.pdbbind_processing import rec_atom_featurizer, lig_atom_featurizer, Unparsable, build_receptor_graph, get_interface_points, InterfacePointException
 from utils import get_rec_atom_map
 
 
@@ -80,7 +80,8 @@ def ligand_list_to_dict(ligand_list):
 
 def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi,
                                   rec_element_map, lig_element_map,
-                                  receptor_k: int, pocket_edge_algorithm: str, 
+                                  receptor_k: int, pocket_edge_algorithm: str,
+                                  ip_dist_threshold: float, ip_exclusion_threshold: float, 
                                   dist_cutoff: float, remove_hydrogen: bool = True):
     
     try:
@@ -142,10 +143,15 @@ def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi
 
     rec_graph = build_receptor_graph(pocket_coords, pocket_atom_features, k=receptor_k, edge_algorithm=pocket_edge_algorithm)
 
-
     lig_coords = torch.tensor(lig_coords)
 
-    return rec_graph, lig_coords, lig_atom_features
+    # compute interface points
+    try:
+        interface_points = get_interface_points(lig_coords, pocket_coords, distance_threshold=ip_dist_threshold, exclusion_threshold=ip_exclusion_threshold)
+    except Exception as e:
+        raise InterfacePointException(e)
+
+    return rec_graph, lig_coords, lig_atom_features, interface_points
 
 
 def compute_smiles(lig_pos, lig_feat, lig_decoder):
@@ -276,14 +282,16 @@ if __name__ == '__main__':
                         ligand_resi = int(ligand_resi)
 
                         try:
-                            rec_graph, lig_atom_positions, lig_atom_features = process_ligand_and_pocket(pdb_struct, 
+                            rec_graph, lig_atom_positions, lig_atom_features, interface_points = process_ligand_and_pocket(pdb_struct, 
                                                         ligand_name, 
                                                         ligand_chain, 
                                                         ligand_resi,
                                                         rec_element_map=rec_element_map,
                                                         lig_element_map=lig_element_map,
                                                         receptor_k=dataset_config['receptor_k'],
-                                                        pocket_edge_algorithm=dataset_config['pocket_edge_algorithm'], 
+                                                        pocket_edge_algorithm=dataset_config['pocket_edge_algorithm'],
+                                                        ip_dist_threshold=dataset_config['interface_distance_threshold'],
+                                                        ip_exclusion_threshold=dataset_config['interface_exclusion_threshold'], 
                                                         dist_cutoff=dataset_config['pocket_cutoff'], 
                                                         remove_hydrogen=dataset_config['remove_hydrogen'])
                         except Unparsable as e:
@@ -337,6 +345,7 @@ if __name__ == '__main__':
                         data['receptor_graph'].append(rec_graph)
                         data['lig_atom_positions'].append(lig_atom_positions)
                         data['lig_atom_features'].append(lig_atom_features)
+                        data['interface_points'].append(interface_points)
                         if split in {'val', 'test'}:
                             data['rec_files'].append(str(pdb_file_out))
                             data['lig_files'].append(str(sdf_file))

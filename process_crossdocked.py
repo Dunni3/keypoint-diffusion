@@ -13,7 +13,7 @@ import torch
 
 from data_processing.pdbbind_processing import (build_receptor_graph,
                                                 get_pocket_atoms, parse_ligand,
-                                                parse_protein, get_ot_loss_weights, center_complex, Unparsable, get_interface_points, InterfacePointException)
+                                                parse_protein, get_ot_loss_weights, Unparsable, InterfacePointException)
 from utils import get_rec_atom_map
 
 
