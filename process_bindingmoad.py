@@ -90,9 +90,15 @@ def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi
     except KeyError as e:
         raise Unparsable(f'Chain {e} not found ({pdbfile}, '
                        f'{ligand_name}:{ligand_chain}:{ligand_resi})')
-    ligand = residues[ligand_resi]
-    assert ligand.get_resname() == ligand_name, \
-        f"{ligand.get_resname()} != {ligand_name}"
+    try:
+        ligand = residues[ligand_resi]
+    except KeyError:
+        raise Unparsable('ligand residue index not found')
+    try:
+        assert ligand.get_resname() == ligand_name, \
+            f"{ligand.get_resname()} != {ligand_name}"
+    except AssertionError:
+        raise Unparsable('ligand resname assertion failed')
 
     lig_atoms = [a for a in ligand.get_atoms()]
 
@@ -304,6 +310,9 @@ if __name__ == '__main__':
                             print('interface point exception occured', flush=True)
                             print(e)
                             print(e.original_exception)
+                            continue
+                        except Exception as e:
+                            print(e)
                             continue
 
                         count += 1
