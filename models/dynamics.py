@@ -339,7 +339,7 @@ class LigRecDynamics(nn.Module):
 
             # get list of rec -> ligand edges
             n_rec_nodes = rec_pos[i].shape[0]
-            src_nodes = torch.repeat_interleave(torch.arange(n_rec_nodes), repeats=self.receptor_keypoint_k).to(device)
+            src_nodes = torch.repeat_interleave(torch.arange(n_rec_nodes), repeats=k).to(device)
             dst_nodes = topk_idx.flatten()
 
             # create heterograph
