@@ -334,6 +334,7 @@ class LigRecDynamics(nn.Module):
 
             # find edges for rec -> lig conections
             rl_dist = torch.cdist(rec_pos[i], lig_pos[i]) # distance between every receptor keypoint and every ligand atom
+            k = min(self.receptor_keypoint_k, lig_pos[i].shape[0])
             topk_dist, topk_idx = torch.topk(rl_dist, k=self.receptor_keypoint_k, dim=1, largest=False) # get k closest ligand atoms to each receptor key point
 
             # get list of rec -> ligand edges
