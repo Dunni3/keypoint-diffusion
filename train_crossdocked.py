@@ -43,6 +43,7 @@ def parse_arguments():
     rec_encoder_group.add_argument('--rec_enc_loss_type', type=str, default=None)
     rec_encoder_group.add_argument('--apply_kp_wise_mlp', type=bool, default=None)
     rec_encoder_group.add_argument('--rec_enc_hinge_threshold', type=float, default=None)
+    rec_encoder_group.add_argument('--k_closest', type=int, default=None)
 
     dynamics_group = p.add_argument_group('dynamics')
     dynamics_group.add_argument('--n_convs_dynamics', type=int, default=None, help='number of graph convolutions in the dynamics model')
@@ -146,6 +147,9 @@ def parse_arguments():
     if args.keypoint_feats is not None:
         config_dict['rec_encoder']['out_n_node_feat'] = args.keypoint_feats
         config_dict['rec_encoder']['hidden_n_node_feat'] = args.keypoint_feats
+
+    if args.k_closest is not None:
+        config_dict['rec_encoder']['k_closest'] = args.k_closest
 
     if args.apply_kp_wise_mlp is not None:
         config_dict['rec_encoder']['apply_kp_wise_mlp'] = args.apply_kp_wise_mlp
