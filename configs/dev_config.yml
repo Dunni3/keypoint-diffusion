@@ -33,9 +33,10 @@ rec_encoder:
   use_tanh: True
   coords_range: 10
   kp_feat_scale: 1.0
-  use_keypoint_feat_mha: True
+  use_keypoint_feat_mha: False
   feat_mha_heads: 3
   message_norm: 10
+  k_closest: 5
 
 diffusion:
   n_timesteps: 1000
