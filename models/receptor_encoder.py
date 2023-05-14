@@ -187,7 +187,7 @@ class ReceptorEncoder(nn.Module):
 
     def __init__(self, n_convs: int = 6, n_keypoints: int = 10, in_n_node_feat: int = 13, 
         hidden_n_node_feat: int = 256, out_n_node_feat: int = 256, use_tanh=True, coords_range=10, kp_feat_scale=1,
-        use_keypoint_feat_mha: bool = False, feat_mha_heads=5, message_norm=1):
+        use_keypoint_feat_mha: bool = False, feat_mha_heads=5, message_norm=1, k_closest: int = 0):
         super().__init__()
 
         self.n_convs = n_convs
@@ -195,6 +195,7 @@ class ReceptorEncoder(nn.Module):
         self.out_n_node_feat = out_n_node_feat
         self.kp_feat_scale = kp_feat_scale
         self.kp_pos_norm = out_n_node_feat**0.5
+        self.k_closest = k_closest
 
         # TODO: should there be a position-wise MLP after graph convolution?
         # TODO: this model is written to use the same output dimension from the graph message passing as for the keypoint feature attention mechianism -- this is an articifical constraint
@@ -244,9 +245,9 @@ class ReceptorEncoder(nn.Module):
             # keypoint-wise MLP applied to keypoint features when they are first
             # generated as weighted averages over receptor atom features
             self.kp_wise_mlp = nn.Sequential(
-                nn.Linear(out_n_node_feat, out_n_node_feat*4),
+                nn.Linear(out_n_node_feat+self.k_closest, out_n_node_feat*2),
                 nn.SiLU(),
-                nn.Linear(out_n_node_feat*4, out_n_node_feat),
+                nn.Linear(out_n_node_feat*2, out_n_node_feat),
                 nn.SiLU()
             )
 
@@ -295,8 +296,13 @@ class ReceptorEncoder(nn.Module):
             kp_dist = torch.cdist(kp_pos, graph.ndata['x_0'])
 
             # get keypoint features as softmax over distance to receptor atoms
-            kp_feat_weights = torch.softmax(kp_dist*self.kp_feat_scale, dim=1) # (n_keypoints, n_pocket_atoms)
-            kp_feat = kp_feat_weights @ graph.ndata["h"]
+            if self.k_closest == 0:
+                kp_feat_weights = torch.softmax(-1.0*kp_dist*self.kp_feat_scale, dim=1) # (n_keypoints, n_pocket_atoms)
+                kp_feat = kp_feat_weights @ graph.ndata["h"]
+            else:
+                top_vals, top_idx = torch.topk(kp_dist, k=self.k_closest, dim=1, largest=False)
+                kp_feat = graph.ndata["h"][top_idx, :].mean(dim=1)
+                kp_feat = torch.concat([kp_feat, top_vals], dim=1)
 
             # apply keypoint-wise MLP before input to attention mechanism
             kp_feat = self.kp_wise_mlp(kp_feat)
