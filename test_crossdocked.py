@@ -27,6 +27,7 @@ def parse_arguments():
     p.add_argument('--output_dir', type=str, default='test_results/')
     p.add_argument('--max_tries', type=int, default=3, help='maximum number of batches to sample per pocket')
     p.add_argument('--dataset_size', type=int, default=None, help='truncate test dataset, for debugging only')
+    p.add_argument('--split', type=int, default='test')
 
     p.add_argument('--no_metrics', action='store_true')
     p.add_argument('--no_minimization', action='store_true')
@@ -129,8 +130,8 @@ def main():
 
     # create test dataset object
     dataset_path = Path(args['dataset']['location']) 
-    test_dataset_path = str(dataset_path / 'test.pkl')
-    test_dataset = CrossDockedDataset(name='test', processed_data_file=test_dataset_path, **args['dataset'])
+    test_dataset_path = str(dataset_path / f'{cmd_args.split}.pkl')
+    test_dataset = CrossDockedDataset(name=cmd_args.split, processed_data_file=test_dataset_path, **args['dataset'])
 
     # get number of ligand and receptor atom features
     n_lig_feat = args['reconstruction']['n_lig_feat']
