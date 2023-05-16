@@ -24,7 +24,7 @@ dataset:
   receptor_k: 8
   dataset_size: # used only for debugging
   use_boltzmann_ot: False
-  max_fake_atom_frac: 0.2
+  max_fake_atom_frac: 0.0
   interface_distance_threshold: 5
   interface_exclusion_threshold: 2
 
@@ -35,7 +35,7 @@ rec_encoder:
   out_n_node_feat: 128
   use_tanh: True
   coords_range: 10
-  kp_feat_scale: 1.0
+  kp_feat_scale: 0.4
   use_keypoint_feat_mha: False
   feat_mha_heads: 3
 
@@ -68,7 +68,7 @@ training:
   test_interval: 1 # measured in epochs
   train_metrics_interval: 0.1 # epochs
   save_interval: 30 # epoch
-  sample_interval: 20 # number of epochs between sampling/testing molecules
+  sample_interval: 60 # number of epochs between sampling/testing molecules
   test_epochs: 4 # number of epochs to run when evaluating on the test set
   num_workers: 0
   scheduler:
