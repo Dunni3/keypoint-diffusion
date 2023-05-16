@@ -187,7 +187,7 @@ class ReceptorEncoder(nn.Module):
 
     def __init__(self, n_convs: int = 6, n_keypoints: int = 10, in_n_node_feat: int = 13, 
         hidden_n_node_feat: int = 256, out_n_node_feat: int = 256, use_tanh=True, coords_range=10, kp_feat_scale=1,
-        use_keypoint_feat_mha: bool = False, feat_mha_heads=5, message_norm=1, k_closest: int = 0):
+        use_keypoint_feat_mha: bool = False, feat_mha_heads=5, message_norm=1, k_closest: int = 0, no_cg=False):
         super().__init__()
 
         self.n_convs = n_convs
@@ -196,6 +196,7 @@ class ReceptorEncoder(nn.Module):
         self.kp_feat_scale = kp_feat_scale
         self.kp_pos_norm = out_n_node_feat**0.5
         self.k_closest = k_closest
+        self.no_cg = no_cg
 
         # TODO: should there be a position-wise MLP after graph convolution?
         # TODO: this model is written to use the same output dimension from the graph message passing as for the keypoint feature attention mechianism -- this is an articifical constraint
@@ -229,6 +230,8 @@ class ReceptorEncoder(nn.Module):
 
         self.egnn_convs = nn.ModuleList(self.egnn_convs)
 
+        if no_cg:
+            return
 
         # embedding function for the mean node feature before keypoint position generation
         self.node_feat_embedding = nn.Sequential(
@@ -275,6 +278,9 @@ class ReceptorEncoder(nn.Module):
         # record learned positions and features
         rec_graph.ndata['x'] = x
         rec_graph.ndata['h'] = h
+
+        if self.no_cg:
+            return x, h
 
         # TODO: apply atom-wise MLP in h?
         # not necessary because sum of messages goes through an MLP
