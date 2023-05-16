@@ -37,6 +37,14 @@ class LigRecConv(nn.Module):
             )
         self.edge_mlp = nn.ModuleDict(self.edge_mlp)
 
+        self.soft_attention = {}
+        for edge_type in self.edge_types:
+            self.soft_attention[edge_type] = nn.Sequential(
+            nn.Linear(hidden_size, 1),
+            nn.Sigmoid()
+        )
+        self.soft_attention = nn.ModuleDict(self.soft_attention)
+
         # \phi_h
         self.node_mlp = nn.Sequential(
             nn.Linear(in_size + hidden_size, hidden_size),
@@ -82,6 +90,7 @@ class LigRecConv(nn.Module):
 
         # compute feature messages
         msg_h = self.edge_mlp[edge_type](f)
+        msg_h = msg_h*self.soft_attention[edge_type](msg_h)
 
         # compute coordinate messages
         if self.use_tanh:
@@ -329,7 +338,6 @@ class LigRecDynamics(nn.Module):
         for i in range(len(lig_pos)):
 
             # create graph containing just ligand-ligand edges
-            # TODO: expose all these k's as hyperparameters. Also, there is an issue when the ligand has less than k atoms. Maybe fix this by some method other than excluding small ligands?
             lig_graph = dgl.knn_graph(lig_pos[i], k=self.ligand_k, algorithm="bruteforce-blas", dist='euclidean', exclude_self=True).to(device)
 
             # find edges for rec -> lig conections

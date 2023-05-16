@@ -36,6 +36,7 @@ rec_encoder:
   use_keypoint_feat_mha: True
   feat_mha_heads: 3
   message_norm: 10
+  no_cg: True
 
 diffusion:
   n_timesteps: 1000

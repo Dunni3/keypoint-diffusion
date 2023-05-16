@@ -11,7 +11,7 @@ import dgl.function as fn
 class EGNNConv(nn.Module):
     # this is adapted from the EGNN implementation in DGL
 
-    def __init__(self, in_size, hidden_size, out_size, edge_feat_size=0, use_tanh=True, coords_range=10, message_norm=1):
+    def __init__(self, in_size, hidden_size, out_size, edge_feat_size=0, use_tanh=True, coords_range=10, message_norm=1, fix_pos=False):
         super(EGNNConv, self).__init__()
 
         self.in_size = in_size
@@ -22,6 +22,7 @@ class EGNNConv(nn.Module):
         self.use_tanh = use_tanh
         self.coords_range = coords_range
         self.message_norm = message_norm
+        self.fix_pos = fix_pos
 
         # \phi_e
         self.edge_mlp = nn.Sequential(
@@ -39,12 +40,19 @@ class EGNNConv(nn.Module):
             nn.Linear(hidden_size, out_size),
         )
 
+        self.soft_attention = nn.Sequential(
+            nn.Linear(hidden_size, 1),
+            nn.Sigmoid()
+        )
+
+        if self.fix_pos:
+            return
 
         # \phi_x
         coord_output_layer = nn.Linear(hidden_size, 1, bias=False)
         nn.init.xavier_uniform_(coord_output_layer.weight, gain=0.001)
         self.coord_mlp = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
+            nn.Linear(in_size * 2 + edge_feat_size + 1, hidden_size),
             act_fn,
             coord_output_layer
         )
@@ -68,10 +76,13 @@ class EGNNConv(nn.Module):
             )
 
         msg_h = self.edge_mlp(f)
-        if self.use_tanh:
-            msg_x = torch.tanh( self.coord_mlp(msg_h) ) * edges.data["x_diff"] * self.coords_range
+        msg_h = msg_h*self.soft_attention(msg_h)
+        if self.fix_pos:
+            msg_x = torch.zeros_like(edges.data["radial"])
+        elif self.use_tanh:
+            msg_x = torch.tanh( self.coord_mlp(f) ) * edges.data["x_diff"] * self.coords_range
         else:
-            msg_x = self.coord_mlp(msg_h) * edges.data["x_diff"]
+            msg_x = self.coord_mlp(f) * edges.data["x_diff"]
 
         return {"msg_x": msg_x, "msg_h": msg_h}
 
@@ -187,7 +198,7 @@ class ReceptorEncoder(nn.Module):
 
     def __init__(self, n_convs: int = 6, n_keypoints: int = 10, in_n_node_feat: int = 13, 
         hidden_n_node_feat: int = 256, out_n_node_feat: int = 256, use_tanh=True, coords_range=10, kp_feat_scale=1,
-        use_keypoint_feat_mha: bool = False, feat_mha_heads=5, message_norm=1, k_closest: int = 0, no_cg=False):
+        use_keypoint_feat_mha: bool = False, feat_mha_heads=5, message_norm=1, k_closest: int = 0, no_cg=False, fix_pos=False):
         super().__init__()
 
         self.n_convs = n_convs
@@ -197,6 +208,7 @@ class ReceptorEncoder(nn.Module):
         self.kp_pos_norm = out_n_node_feat**0.5
         self.k_closest = k_closest
         self.no_cg = no_cg
+        self.fix_pos = fix_pos
 
         # TODO: should there be a position-wise MLP after graph convolution?
         # TODO: this model is written to use the same output dimension from the graph message passing as for the keypoint feature attention mechianism -- this is an articifical constraint
@@ -225,7 +237,7 @@ class ReceptorEncoder(nn.Module):
                 out_size = hidden_n_node_feat
 
             self.egnn_convs.append( 
-                EGNNConv(in_size=in_size, hidden_size=hidden_size, out_size=out_size, use_tanh=use_tanh, coords_range=coords_range, message_norm=message_norm)
+                EGNNConv(in_size=in_size, hidden_size=hidden_size, out_size=out_size, use_tanh=use_tanh, coords_range=coords_range, message_norm=message_norm, fix_pos=fix_pos)
             )
 
         self.egnn_convs = nn.ModuleList(self.egnn_convs)
@@ -280,6 +292,9 @@ class ReceptorEncoder(nn.Module):
         rec_graph.ndata['h'] = h
 
         if self.no_cg:
+            unbatched_graphs = dgl.unbatch(rec_graph)
+            x = [ g.ndata['x'] for g in unbatched_graphs ]
+            h = [ g.ndata['h'] for g in unbatched_graphs ]
             return x, h
 
         # TODO: apply atom-wise MLP in h?
