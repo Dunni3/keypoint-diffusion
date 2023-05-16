@@ -118,7 +118,7 @@ def get_pocket_atoms(rec_atoms: prody.Selection, ligand_atom_positions: torch.Te
     box_atom_residx = rec_atom_residx[bounding_box_mask]
 
     # find atoms that come within a threshold distance from a ligand atom
-    all_distances = spa.distance_matrix(box_atom_positions, ligand_atom_positions)
+    all_distances =  spa.distance.cdist(box_atom_positions, ligand_atom_positions)
     # NOTE: even though the argumenets to distance_matrix were pytorch tensors, the returned array is a numpy array
     min_dist_to_ligand = all_distances.min(axis=1) # distance from each box atom to closest ligand atom
     pocket_atom_mask = min_dist_to_ligand < pocket_cutoff

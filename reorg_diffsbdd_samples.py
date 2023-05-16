@@ -15,8 +15,16 @@ def parse_args():
     # p.add_argument('--test_set_dir', type=str, help='filepath of directory containing DiffSBDD processed crossdocked test set', required=True)
     p.add_argument('--output_dir', type=str, required=True, help='directory to write the rearranged test results into')
     p.add_argument('--example_output_dir', required=True, help='filepath of directory containing results from ligdiff/test_crossdocked.py')
+    p.add_argument('--dataset', type=str, default='bindingmoad')
+
+    p.add_argument('--use_raw', action='store_true')
+    p.add_argument('--extract_largest_frag', action='store_true')
 
     args = p.parse_args()
+
+    if args.dataset not in ['bindingmoad', 'crossdocked']:
+        raise ValueError
+
     return args
 
 def extract_largest_frag(sdf_file_path: Path):
@@ -31,6 +39,11 @@ def extract_largest_frag(sdf_file_path: Path):
         for mol in mols_processed:
             w.write(mol)
 
+def process_rec_file(rec_file: Path, output_pocket_dir: Path):
+    pass
+    # extract pocket only
+
+
 if __name__ == "__main__":
     args = parse_args()
 
@@ -42,7 +55,11 @@ if __name__ == "__main__":
 
     # get filepath of DiffSBDD generated molecuels
     diffsbdd_result_dir = Path(args.diffsbdd_test_results)
-    diffsbdd_raw_results = diffsbdd_result_dir / 'raw'
+    if args.use_raw:
+        diffsbdd_structs_dir = diffsbdd_result_dir / 'raw'
+    else:
+        diffsbdd_structs_dir = diffsbdd_result_dir / 'processed'
+
 
     example_dir = Path(args.example_output_dir) / 'sampled_mols'
     for example_pocket_dir in example_dir.iterdir():
@@ -59,13 +76,27 @@ if __name__ == "__main__":
         ref_lig_file = ref_lig_files[0]
 
         # find the corresponding DiffSBDD generated ligands
-        diffsbdd_pocket_name = rec_file.stem.replace('_', '-')
-        matched_lig_files = [ file for file in diffsbdd_raw_results.iterdir() if diffsbdd_pocket_name in file.name ]
-        if len(matched_lig_files) == 0:
-            continue
-        assert len(matched_lig_files) == 1 # this will break if the test set contains duplicate receptors
-        diffsbdd_lig_file = matched_lig_files[0]
+        # get the name of the pocket as it appears in diffsbdd output files
+        if args.dataset == 'crossdocked':
+            diffsbdd_pocket_name = rec_file.stem.replace('_', '-')
+        elif args.dataset == 'bindingmoad':
+            diffsbdd_pocket_name = ref_lig_file.stem
+        # find all ligands in diffsbdd output that correspond to this ligand
+        matched_lig_files = [ file for file in diffsbdd_structs_dir.iterdir() if diffsbdd_pocket_name in file.name ]
 
+        if len(matched_lig_files) == 0: # just skip this pocket if we don't find any ligands
+            print(f'warning: no ligand found for pocket {ref_lig_file}') 
+            continue
+
+        if args.dataset == 'bindingmoad':
+            # for the bindingmoad dataset, there are often multiple ligands per receptor file
+            # meaning, len(matched_lig_files) > 1, so we have to find the correct ligand file
+            lig_id = ref_lig_file.stem.split('_')[-1]
+            matched_lig_files = [ file for file in matched_lig_files if lig_id in file.name ]
+
+        assert len(matched_lig_files) == 1 # this will break if the crossdocked test set contains duplicate receptors
+        diffsbdd_lig_file = matched_lig_files[0]
+        
         # construct the directory that will contain DiffSBDD generated ligands in a format that works with our evaluation/analysis scripts
         output_pocket_dir = output_sampled_mols_dir / example_pocket_dir.name
         output_pocket_dir.mkdir()
@@ -74,8 +105,13 @@ if __name__ == "__main__":
         new_lig_file = output_pocket_dir / f'{example_pocket_dir.name}_ligands.sdf'
 
         shutil.copy(diffsbdd_lig_file, new_lig_file) # copy DiffSBDD generated ligands into output dir
-        shutil.copy(rec_file, output_pocket_dir) # copy receptor file into output dir
         shutil.copy(ref_lig_file, output_pocket_dir) # copy referenace ligand file into output dir
 
+        if args.dataset == 'crossdocked':
+            shutil.copy(rec_file, output_pocket_dir) # copy receptor file into output dir
+        else:
+            process_rec_file(rec_file, output_pocket_dir)
+
         # retain only largest fragment from ligands
-        extract_largest_frag(new_lig_file)
+        if args.extract_largest_frag:
+            extract_largest_frag(new_lig_file)
