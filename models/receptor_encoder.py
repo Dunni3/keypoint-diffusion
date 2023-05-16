@@ -310,7 +310,10 @@ class ReceptorEncoder(nn.Module):
             eqv_keys = self.eqv_keypoint_query_fn(graph.ndata['h']).view(-1, self.n_keypoints, self.out_n_node_feat) # (n_nodes, n_attn_heads, n_node_features)
             eqv_att_logits = torch.einsum('ijk,jk->ji', eqv_keys, eqv_queries) # (n_attn_heads, n_nodes)
             eqv_att_weights = torch.softmax(eqv_att_logits/self.kp_pos_norm, dim=1)
-            kp_pos = eqv_att_weights @ graph.ndata['x'] # (n_keypoints, 3)
+            if self.fix_pos:
+                kp_pos = eqv_att_weights @ graph.ndata['x_0'] # (n_keypoints, 3)
+            else:
+                kp_pos = eqv_att_weights @ graph.ndata['x'] # (n_keypoints, 3)
             keypoint_positions.append(kp_pos)
 
             # compute distance between keypoints and binding pocket points
