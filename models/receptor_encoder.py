@@ -227,39 +227,39 @@ class ReceptorEncoder(nn.Module):
                 EGNNConv(in_size=in_size, hidden_size=hidden_size, out_size=out_size, use_tanh=use_tanh, coords_range=coords_range, message_norm=message_norm)
             )
 
-            self.egnn_convs = nn.ModuleList(self.egnn_convs)
+        self.egnn_convs = nn.ModuleList(self.egnn_convs)
 
 
-            # embedding function for the mean node feature before keypoint position generation
-            self.node_feat_embedding = nn.Sequential(
-                nn.Linear(out_n_node_feat, out_n_node_feat),
-                nn.SiLU()
-            )
+        # embedding function for the mean node feature before keypoint position generation
+        self.node_feat_embedding = nn.Sequential(
+            nn.Linear(out_n_node_feat, out_n_node_feat),
+            nn.SiLU()
+        )
 
 
-            # query and key functions for keypoint position generation
-            self.eqv_keypoint_query_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints)
-            self.eqv_keypoint_key_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints)
+        # query and key functions for keypoint position generation
+        self.eqv_keypoint_query_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints)
+        self.eqv_keypoint_key_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints)
 
 
-            # keypoint-wise MLP applied to keypoint features when they are first
-            # generated as weighted averages over receptor atom features
-            self.kp_wise_mlp = nn.Sequential(
-                nn.Linear(out_n_node_feat+self.k_closest, out_n_node_feat*2),
+        # keypoint-wise MLP applied to keypoint features when they are first
+        # generated as weighted averages over receptor atom features
+        self.kp_wise_mlp = nn.Sequential(
+            nn.Linear(out_n_node_feat+self.k_closest, out_n_node_feat*2),
+            nn.SiLU(),
+            nn.Linear(out_n_node_feat*2, out_n_node_feat),
+            nn.SiLU()
+        )
+
+        self.use_keypoint_feat_mha = use_keypoint_feat_mha
+        if self.use_keypoint_feat_mha:
+            self.keypoint_feat_mha = KeypointMHA(n_heads=feat_mha_heads, in_dim=out_n_node_feat, hidden_dim=out_n_node_feat, out_dim=out_n_node_feat)
+            self.post_mha_dense_layer = nn.Sequential(
+                nn.Linear(out_n_node_feat, out_n_node_feat*4),
                 nn.SiLU(),
-                nn.Linear(out_n_node_feat*2, out_n_node_feat),
+                nn.Linear(out_n_node_feat*4, out_n_node_feat),
                 nn.SiLU()
             )
-
-            self.use_keypoint_feat_mha = use_keypoint_feat_mha
-            if self.use_keypoint_feat_mha:
-                self.keypoint_feat_mha = KeypointMHA(n_heads=feat_mha_heads, in_dim=out_n_node_feat, hidden_dim=out_n_node_feat, out_dim=out_n_node_feat)
-                self.post_mha_dense_layer = nn.Sequential(
-                    nn.Linear(out_n_node_feat, out_n_node_feat*4),
-                    nn.SiLU(),
-                    nn.Linear(out_n_node_feat*4, out_n_node_feat),
-                    nn.SiLU()
-                )
 
 
     def forward(self, rec_graph: dgl.DGLGraph):
