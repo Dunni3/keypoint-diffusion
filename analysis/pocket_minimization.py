@@ -18,23 +18,15 @@ def parse_arguments():
 def compute_rmsd(mol1, mol2):
     return Chem.CalcRMS(mol1, mol2)
 
-if __name__ == "__main__":
-
-    args = parse_arguments()
-
-    rec = Chem.MolFromPDBFile(args.rec_file)
+def pocket_minimization(pocket_file: Path, ligands = None, add_hs=False):
+    rec = Chem.MolFromPDBFile(str(pocket_file))
     rec = Chem.AddHs(rec, addCoords=True)
 
-    # if lname.endswith('.gz'):
-    #     lig = next(Chem.ForwardSDMolSupplier(gzip.open(lname),sanitize=False))
-    # else:    
-    #     lig = next(Chem.SDMolSupplier(sys.argv[2],sanitize=False))
+    if add_hs:
+        ligands = [ Chem.AddHs(lig, addCoords=True) for lig in ligands ]
 
-    ligands = list( Chem.SDMolSupplier(args.lig_file, sanitize=False) )
-    ligands = [ Chem.AddHs(lig, addCoords=True) for lig in ligands ]
-
-    minimized_ligands = []
     rmsd_table_rows = []
+    minimized_ligands = []
     for lig_idx, ref_lig in enumerate(ligands):
 
         print(f'minimizing {lig_idx+1}/{len(ligands)}', flush=True)
@@ -85,6 +77,16 @@ if __name__ == "__main__":
         # save the minimized ligand
         lig.SetProp('_Name', f'lig_idx_{lig_idx}')
         minimized_ligands.append(lig)
+    
+    rmsd_df = pd.DataFrame(rmsd_table_rows)
+    return minimized_ligands, rmsd_df
+
+if __name__ == "__main__":
+
+    args = parse_arguments()
+
+    ligands = list( Chem.SDMolSupplier(args.lig_file, sanitize=False) )
+    minimized_ligands, rmsd_df = pocket_minimization(args.rec_file, ligands, add_hs=True)
 
     # write minimized ligands out
     if args.output_file is None:
@@ -103,5 +105,4 @@ if __name__ == "__main__":
 
     # write rmsd table out as a csv
     rmsd_file_path = Path(args.lig_file).parent / 'minimization_rmsds.csv'
-    rmsd_df = pd.DataFrame(rmsd_table_rows)
     rmsd_df.to_csv(rmsd_file_path, index=False)
