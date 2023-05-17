@@ -33,7 +33,8 @@ def diffsbdd_can_read(data_dir: Path, ligand_file: Path):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument('ligdiff_data_dir', type=Path)
-    p.add_argument('diffsbdd_data_dir', type=Path)
+    p.add_argument('diffsbdd_fullatom_data', type=Path)
+    p.add_argument('diffsbdd_ca_data', type=Path)
     p.add_argument('--n_pockets', type=int, default=50)
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--ligdiff_file', type=Path, default=Path('val_subset/val_idxs.pkl'))
@@ -53,7 +54,7 @@ if __name__ == "__main__":
     # selected_ligand_files = [ x.name for x in selected_ligand_files ]
 
     # confirm all selected ligand files can be read
-    selected_ligand_files = [ x for x in selected_ligand_files if diffsbdd_can_read(args.diffsbdd_data_dir, x) ]
+    selected_ligand_files = [ x for x in selected_ligand_files if diffsbdd_can_read(args.diffsbdd_fullatom_data, x) and diffsbdd_can_read(args.diffsbdd_ca_data, x) ]
     if len(selected_ligand_files) > args.n_pockets:
         selected_ligand_files = selected_ligand_files[:args.n_pockets]
     
