@@ -241,11 +241,17 @@ def main():
 
         pocket_sample_time = time.time() - pocket_sample_start
         pocket_sampling_times.append(pocket_sample_time)
-        pocket_mols.append(pocket_raw_mols)
 
         # create directory for sampled molecules
         pocket_dir = mols_dir / f'pocket_{dataset_idx}'
         pocket_dir.mkdir(exist_ok=True)
+
+        # save pocket sample time
+        with open(pocket_dir / 'sample_time.txt', 'w') as f:
+            f.write(f'{pocket_sample_time:.2f}')
+        with open(pocket_dir / 'sample_time.pkl', 'wb') as f:
+            pickle.dump(pocket_sample_time, f)
+
 
         # write receptor to the pocket dir
         pocket_file = pocket_dir / 'pocket.pdb'
@@ -296,24 +302,23 @@ def main():
         kp_elements = ['C' for _ in range(keypoint_positions.shape[0]) ]
         write_xyz_file(keypoint_positions, kp_elements, kp_file)
 
-        # add sampled molecules to the list of all molecules for property
 
     # compute metrics on the sampled molecules
-    if not cmd_args.no_metrics:
-        mol_metrics = MoleculeProperties()
-        all_qed, all_sa, all_logp, all_lipinski, per_pocket_diversity = \
-            mol_metrics.evaluate(pocket_mols)
+    # if not cmd_args.no_metrics:
+    #     mol_metrics = MoleculeProperties()
+    #     all_qed, all_sa, all_logp, all_lipinski, per_pocket_diversity = \
+    #         mol_metrics.evaluate(pocket_mols)
 
 
-        # save computed metrics
-        metrics = {
-            'qed': all_qed, 'sa': all_sa, 'logp': all_logp, 'lipinski': all_lipinski, 'diversity': per_pocket_diversity,
-            'pocket_sampling_time': pocket_sampling_times
-        }
+    #     # save computed metrics
+    #     metrics = {
+    #         'qed': all_qed, 'sa': all_sa, 'logp': all_logp, 'lipinski': all_lipinski, 'diversity': per_pocket_diversity,
+    #         'pocket_sampling_time': pocket_sampling_times
+    #     }
 
-        metrics_file = output_dir / 'metrics.pkl'
-        with open(metrics_file, 'wb') as f:
-            pickle.dump(metrics, f)
+    #     metrics_file = output_dir / 'metrics.pkl'
+    #     with open(metrics_file, 'wb') as f:
+    #         pickle.dump(metrics, f)
 
     # # save all the sampled molecules, reference files, and keypoints
     # mols_dir = output_dir / 'sampled_mols'
@@ -332,20 +337,20 @@ def main():
     #     write_xyz_file(kpi, kp_elements, kp_file)
 
     # create a summary file
-    if not cmd_args.no_metrics:
-        summary_file = output_dir / 'summary.txt'
-        summary_file_contents = ''
-        for metric_name in metrics.keys():
-            metric = metrics[metric_name]
-            if metric_name in ['diversity', 'pocket_sampling_time']:
-                metric_flattened = metric
-            else:
-                metric_flattened = [x for px in metric for x in px]
-            metric_mean = np.mean(metric_flattened)
-            metric_std = np.std(metric_flattened)
-            summary_file_contents += f'{metric_name} = {metric_mean:.3f} \pm {metric_std:.2f}\n'
-        with open(summary_file, 'w') as f:
-            f.write(summary_file_contents)
+    # if not cmd_args.no_metrics:
+    #     summary_file = output_dir / 'summary.txt'
+    #     summary_file_contents = ''
+    #     for metric_name in metrics.keys():
+    #         metric = metrics[metric_name]
+    #         if metric_name in ['diversity', 'pocket_sampling_time']:
+    #             metric_flattened = metric
+    #         else:
+    #             metric_flattened = [x for px in metric for x in px]
+    #         metric_mean = np.mean(metric_flattened)
+    #         metric_std = np.std(metric_flattened)
+    #         summary_file_contents += f'{metric_name} = {metric_mean:.3f} \pm {metric_std:.2f}\n'
+    #     with open(summary_file, 'w') as f:
+    #         f.write(summary_file_contents)
 
 if __name__ == "__main__":
 
