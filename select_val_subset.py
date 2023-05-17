@@ -67,7 +67,7 @@ if __name__ == "__main__":
     # get the dataset index for every selected pocket
     selected_idxs = []
     for dataset_idx, lig_file in enumerate(filenames_dict['lig_files']):
-        if Path(lig_file).name in ligand_names:
+        if Path(lig_file).stem in ligand_names:
             selected_idxs.append(dataset_idx)
 
     assert len(selected_idxs) == len(selected_ligand_files)
