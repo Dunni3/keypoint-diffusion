@@ -187,7 +187,7 @@ def main():
 
         # get receptor graph and reference ligand positions/features from test set
         rec_graph, ref_lig_pos, ref_lig_feat, _ = test_dataset[dataset_idx]
-        rec_file_path, ref_lig_file_path = test_dataset.get_files(dataset_idx) # get original rec/lig files
+        ref_rec_file, ref_lig_file = test_dataset.get_files(dataset_idx) # get original rec/lig files
 
         # move data to gpu
         rec_graph = rec_graph.to(device)

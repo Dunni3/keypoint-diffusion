@@ -4,9 +4,9 @@ from pathlib import Path
 
 def parse_arguments():
     p = argparse.ArgumentParser()
-    p.add_argument('--base_cmd_file', type=Path)
-    p.add_argument('--dataset_idxs_file', type=Path)
-    p.add_argument('--output_cmd_file', type=Path, default=Path('sample_cmds.txt'))
+    p.add_argument('base_cmd_file', type=Path)
+    p.add_argument('--dataset_idxs_file', type=Path, default=Path('val_subset/val_idxs.pkl'))
+    p.add_argument('--output_cmd_file', type=Path, default=Path('test_cmds_parallel.txt'))
     p.add_argument('--lines', type=int, nargs='+', default=[])
     args = p.parse_args()
     return args
