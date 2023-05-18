@@ -33,7 +33,7 @@ def parse_arguments():
     p.add_argument('--dataset', type=str, default='bindingmoad')
     p.add_argument('--dataset_idx', type=int, default=None)
 
-    p.add_argument('--no_metrics', action='store_true')
+    # p.add_argument('--no_metrics', action='store_true')
     # p.add_argument('--no_minimization', action='store_true')
     p.add_argument('--ligand_only_minimization', action='store_true')
     p.add_argument('--pocket_minimization', action='store_true')
