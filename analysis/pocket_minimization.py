@@ -5,6 +5,7 @@ import gzip
 import argparse
 import pandas as pd
 from multiprocessing import Pool
+import atexit
 
 def parse_arguments():
     p = argparse.ArgumentParser()
@@ -106,9 +107,16 @@ def minimize_ligand(ref_lig, lig_idx, rec):
     lig.SetProp('_Name', f'lig_idx_{lig_idx}')
     return before_energy, after_energy, row, lig
 
+def remove_running_file(running_file: Path):
+    running_file.unlink()
+
 if __name__ == "__main__":
 
     args = parse_arguments()
+
+    running_file = Path(args.lig_file).parent / 'min_running'
+    running_file.touch()
+    atexit.register(remove_running_file, running_file)
 
     ligands = list( Chem.SDMolSupplier(args.lig_file, sanitize=False) )
     minimized_ligands, rmsd_df = pocket_minimization(args.rec_file, ligands, add_hs=True, cpus=args.cpus)

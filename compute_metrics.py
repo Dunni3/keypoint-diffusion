@@ -34,6 +34,6 @@ if __name__ == "__main__":
     metrics_dict = {
         'qed': qed, 'sa':sa, 'logp':logp, 'diversity': per_pocket_diversity, 'pocket_dirs': pocket_dirs }
 
-    with open(args.sampled_mols_dir / 'metrics.pkl', 'wb') as f:
+    with open(args.sampled_mols_dir.parent / 'metrics.pkl', 'wb') as f:
         pickle.dump(metrics_dict, f)
     
