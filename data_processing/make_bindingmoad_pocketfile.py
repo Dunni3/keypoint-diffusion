@@ -6,6 +6,8 @@ from scipy.spatial.distance import cdist
 import rdkit.Chem as Chem
 from pathlib import Path
 
+from data_processing.pdbbind_processing import Unparsable
+
 class PocketSelector(Select):
 
     def __init__(self, residues: list):
@@ -21,7 +23,9 @@ def write_pocket_file(rec_file: Path, lig_file: Path, output_pocket_file: Path, 
     pdb_struct = PDBParser(QUIET=True).get_structure('', rec_file)
 
     # get ligand positions
-    ligand = Chem.MolFromMolFile(str(lig_file))
+    ligand = Chem.MolFromMolFile(str(lig_file), sanitize=False)
+    if ligand is None:
+        raise Unparsable(f'ligand {lig_file} could not be parsed')
     ligand_conformer = ligand.GetConformer()
     atom_positions = ligand_conformer.GetPositions()
 

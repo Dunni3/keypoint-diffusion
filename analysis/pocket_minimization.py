@@ -66,6 +66,8 @@ def pocket_minimization(pocket_file: Path, ligands = None, add_hs=False, cpus=1)
 
 def minimize_ligand(ref_lig, lig_idx, rec):
 
+    print(f'minimizing {lig_idx}', flush=True)
+
     # create a copy of the original ligand
     lig = Chem.Mol(ref_lig)
 

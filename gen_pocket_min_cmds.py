@@ -9,7 +9,8 @@ def parse_args():
     p.add_argument('--minimization_script', type=Path, default=Path('analysis/pocket_minimization.py'))
     p.add_argument('--cpus', type=int, default=1)
     p.add_argument('--redo', action='store_true')
-    p.add_argument('--cmd_file', type=Path, default=Path('min_cmds.txt'))
+    p.add_argument('--cmd_file', type=Path, default=Path('minimize_cmds.txt'))
+    p.add_argument('--no_output', action='store_true')
 
     args = p.parse_args()
     return args
@@ -19,6 +20,7 @@ if __name__ == "__main__":
     args = parse_args()
 
     stat_counter = defaultdict(int)
+    pockets_without_ligands = []
 
     cmds = []
     for pocket_dir in args.sampled_mols_dir.iterdir():
@@ -40,6 +42,7 @@ if __name__ == "__main__":
         # skip pockets that don't have ligands yet
         if not lig_file.exists():
             stat_counter['pockets_without_ligands'] += 1
+            pockets_without_ligands.append(pocket_dir)
             continue
 
 
@@ -52,8 +55,14 @@ if __name__ == "__main__":
         cmd = f"python {args.minimization_script} --rec_file {rec_file} --lig_file {lig_file} --cpus {args.cpus}\n"
         cmds.append(cmd)
 
-    with open(args.cmd_file, 'w') as f:
-        f.write(''.join(cmds))
+    if not args.no_output:
+        with open(args.cmd_file, 'w') as f:
+            f.write(''.join(cmds))
+
+    print('**************************')
+    print('these pockets have no ligands:')
+    print(*pockets_without_ligands, sep='\n')
+    print('\n')
 
     for key in ['pockets_already_minimized', 'pockets_without_ligands', 'pockets_already_running']:
         print(f"{key} = {stat_counter[key]}/{stat_counter['n_pocket_dirs']}")
