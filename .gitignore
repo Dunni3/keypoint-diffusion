@@ -5,6 +5,10 @@ data/crossdock_processed_ip/
 data/bindingmoad_mini
 data/bindingmoad_mini_ip/
 data/bindingmoad
+data/bindingmoad_ip
+data/bindingmoad_ip_8acut
+data/crossdocked_processed
+data/crossdocked_processed_ip
 diffsbdd_test_samples/
 visualize_rich_generation/
 *.slurm

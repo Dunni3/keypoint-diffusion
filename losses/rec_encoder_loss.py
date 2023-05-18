@@ -24,7 +24,7 @@ class ReceptorEncoderLoss(nn.Module):
 
         self.loss_type = loss_type
 
-        if self.loss_type not in ['optimal_transport', 'gaussian_repulsion', 'hinge']:
+        if self.loss_type not in ['optimal_transport', 'gaussian_repulsion', 'hinge', 'none']:
             raise ValueError
         
         if self.loss_type == 'hinge':
@@ -40,6 +40,10 @@ class ReceptorEncoderLoss(nn.Module):
             return self.compute_repulsion_loss(keypoint_positions=keypoint_positions)
         elif self.loss_type == 'hinge':
             return self.compute_hinge_loss(keypoint_positions=keypoint_positions)
+        elif self.loss_type == 'none':
+            device = keypoint_positions[0].device
+            dtype = keypoint_positions[0].dtype
+            return torch.tensor(0.0, device=device, dtype=dtype)
 
     def compute_ot_loss(self, keypoint_positions: List[torch.Tensor], batched_rec_graphs: dgl.DGLGraph):
         ot_loss = 0

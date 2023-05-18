@@ -239,6 +239,8 @@ def test_model(model, test_dataloader, args, device):
         rec_encoder_loss_name = 'repulsion_loss'
     elif args['rec_encoder_loss']['loss_type'] == 'hinge':
         rec_encoder_loss_name = 'rec_hinge_loss'
+    elif args['rec_encoder_loss']['loss_type'] == 'none':
+        rec_encoder_loss_name = 'no_rec_enc_loss'
 
     output_losses[rec_encoder_loss_name] = np.mean(losses['rec_encoder'])
 
@@ -387,6 +389,8 @@ def main():
         rec_encoder_loss_name = 'repulsion_loss'
     elif args['rec_encoder_loss']['loss_type'] == 'hinge':
         rec_encoder_loss_name = 'rec_hinge_loss'
+    elif args['rec_encoder_loss']['loss_type'] == 'none':
+        rec_encoder_loss_name = 'no_rec_enc_loss'
     
     # create markers for deciding when to evaluate on the test set, report training metrics, save the model
     test_report_marker = 0 # measured in epochs

@@ -56,7 +56,7 @@ dynamics:
 
 
 rec_encoder_loss:
-  loss_type: 'optimal_transport' # can be optimal_transport, gaussian_repulsion, or hinge
+  loss_type: 'none' # can be optimal_transport, gaussian_repulsion, hinge, or none
 
 training:
   rec_encoder_loss_weight: 5.0

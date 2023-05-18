@@ -86,7 +86,7 @@ def process_molecule(rdmol, add_hydrogens=False, sanitize=False, relax_iter=0,
             return None
 
     if add_hydrogens:
-        mol = Chem.AddHs(mol, addCoords=(len(mol.GetConformers()) > 0))
+        mol = Chem.AddHs(mol, addCoords=True)
 
     if largest_frag:
         mol_frags = Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=False)
