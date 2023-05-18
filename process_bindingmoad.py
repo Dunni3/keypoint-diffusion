@@ -254,7 +254,7 @@ if __name__ == '__main__':
         smiles = set()
 
         pdb_sdf_dir = processed_dir / f'{split}_structures'
-        pdb_sdf_dir = pdb_sdf_dir.resolve()
+        pdb_sdf_dir = pdb_sdf_dir
         pdb_sdf_dir.mkdir(exist_ok=True)
 
         n_tot = len(data_split[split])
