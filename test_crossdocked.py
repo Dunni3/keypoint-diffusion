@@ -29,7 +29,7 @@ def parse_arguments():
     p.add_argument('--output_dir', type=str, default='test_results/')
     p.add_argument('--max_tries', type=int, default=3, help='maximum number of batches to sample per pocket')
     p.add_argument('--dataset_size', type=int, default=None, help='truncate test dataset, for debugging only')
-    p.add_argument('--split', type=str, default='test')
+    p.add_argument('--split', type=str, default='val')
     p.add_argument('--dataset', type=str, default='bindingmoad')
     p.add_argument('--dataset_idx', type=int, default=None)
 
