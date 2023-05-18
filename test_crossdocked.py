@@ -253,13 +253,13 @@ def main():
             pickle.dump(pocket_sample_time, f)
 
 
-        # write receptor to the pocket dir
+        # write the pocket used for minimization to the pocket dir
         pocket_file = pocket_dir / 'pocket.pdb'
-        if args['dataset'] == 'bindingmoad':
+        if cmd_args.dataset == 'bindingmoad':
             write_pocket_file(ref_rec_file, ref_lig_file, pocket_file, cutoff=args['dataset']['pocket_cutoff'])
             full_rec_file = pocket_dir / 'receptor.pdb'
             shutil.copy(ref_rec_file, full_rec_file)
-        elif args['dataset'] == 'crossdocked':
+        elif cmd_args.dataset == 'crossdocked':
             shutil.copy(ref_rec_file, pocket_file)
 
         # write the reference files to the pocket dir
@@ -271,6 +271,9 @@ def main():
         # give molecules a name
         for idx, mol in enumerate(pocket_raw_mols):
             mol.SetProp('_Name', f'lig_idx_{idx}')
+
+        # write the ligands to the pocket dir
+        write_ligands(pocket_raw_mols, pocket_dir / 'raw_ligands.sdf')
 
         # ligand-only minimization
         if cmd_args.ligand_only_minimization:
