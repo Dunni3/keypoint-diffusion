@@ -186,7 +186,7 @@ def main():
         pocket_sample_start = time.time()
 
         # get receptor graph and reference ligand positions/features from test set
-        rec_graph, ref_lig_pos, ref_lig_feat = test_dataset[dataset_idx]
+        rec_graph, ref_lig_pos, ref_lig_feat, _ = test_dataset[dataset_idx]
         ref_rec_file, ref_lig_file = test_dataset.get_files(dataset_idx) # get original rec/lig files
 
         # move data to gpu
@@ -223,10 +223,10 @@ def main():
                 atoms_per_ligand[:batch_size])
 
             # convert positions/features to rdkit molecules
-            for lig_idx in range(batch_size):
+            for lig_idx, (lig_pos_i, lig_feat_i) in enumerate(zip(batch_lig_pos, batch_lig_feat)):
 
                 # convert lig atom features to atom elements
-                element_idxs = torch.argmax(batch_lig_feat[lig_idx], dim=1).tolist()
+                element_idxs = torch.argmax(lig_feat_i, dim=1).tolist()
                 atom_elements = test_dataset.lig_atom_idx_to_element(element_idxs)
 
                 # build molecule

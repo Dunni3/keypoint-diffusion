@@ -30,10 +30,12 @@ class ReceptorEncoderLoss(nn.Module):
         if self.loss_type == 'hinge':
             self._hinge_loss = DistanceHingeLoss(distance_threshold=hinge_threshold)
 
-    def forward(self, keypoint_positions: List[torch.Tensor] = None, batched_rec_graphs: dgl.DGLGraph = None):
+    def forward(self, keypoint_positions: List[torch.Tensor] = None, batched_rec_graphs: dgl.DGLGraph = None, interface_points: List[torch.Tensor] = None):
 
-        if self.loss_type == "optimal_transport":
+        if self.loss_type == "optimal_transport" and interface_points is None:
             return self.compute_ot_loss(keypoint_positions=keypoint_positions, batched_rec_graphs=batched_rec_graphs)
+        elif self.loss_type == 'optimal_transport' and interface_points is not None:
+            return self.compute_interface_point_loss(keypoint_positions, interface_points)
         elif self.loss_type == 'gaussian_repulsion':
             return self.compute_repulsion_loss(keypoint_positions=keypoint_positions)
         elif self.loss_type == 'hinge':
@@ -58,6 +60,17 @@ class ReceptorEncoderLoss(nn.Module):
         
         ot_loss = ot_loss / len(unbatched_graphs)
 
+        return ot_loss
+    
+    def compute_interface_point_loss(self, keypoint_positions, interface_points):
+
+        ot_loss = 0
+        for kp_pos, if_points in zip(keypoint_positions, interface_points):
+            cost_mat = torch.square(torch.cdist(kp_pos, if_points))
+            ot_dist, _ = compute_ot_emd(cost_mat, device=cost_mat.device)
+            ot_loss += ot_dist
+        
+        ot_loss = ot_loss / len(interface_points)
         return ot_loss
 
     def compute_repulsion_loss(self, keypoint_positions: List[torch.Tensor]):

@@ -23,7 +23,7 @@ import constants
 import utils
 import pickle
 
-from data_processing.pdbbind_processing import rec_atom_featurizer, lig_atom_featurizer, Unparsable, build_receptor_graph, build_initial_complex_graph
+from data_processing.pdbbind_processing import rec_atom_featurizer, lig_atom_featurizer, Unparsable, build_receptor_graph, get_interface_points, InterfacePointException, build_initial_complex_graph
 from utils import get_rec_atom_map
 
 
@@ -79,8 +79,9 @@ def ligand_list_to_dict(ligand_list):
     return out_dict
 
 def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi,
-                                  rec_element_map, lig_element_map, n_keypoints: int, graph_cutoffs: dict,
-                                  pocket_cutoff: float, remove_hydrogen: bool = True):
+                                  rec_element_map, lig_element_map,
+                                  receptor_k: int, pocket_edge_algorithm: str, 
+                                  dist_cutoff: float, remove_hydrogen: bool = True):
     
     try:
         residues = {obj.id[1]: obj for obj in
@@ -88,9 +89,15 @@ def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi
     except KeyError as e:
         raise Unparsable(f'Chain {e} not found ({pdbfile}, '
                        f'{ligand_name}:{ligand_chain}:{ligand_resi})')
-    ligand = residues[ligand_resi]
-    assert ligand.get_resname() == ligand_name, \
-        f"{ligand.get_resname()} != {ligand_name}"
+    try:
+        ligand = residues[ligand_resi]
+    except KeyError:
+        raise Unparsable('ligand residue index not found')
+    try:
+        assert ligand.get_resname() == ligand_name, \
+            f"{ligand.get_resname()} != {ligand_name}"
+    except AssertionError:
+        raise Unparsable('ligand resname assertion failed')
 
     lig_atoms = [a for a in ligand.get_atoms()]
 
@@ -156,7 +163,10 @@ def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi
     # rec_graph = build_receptor_graph(pocket_coords, pocket_atom_features, k=receptor_k, edge_algorithm=pocket_edge_algorithm)
     complex_graph = build_initial_complex_graph(pocket_coords, pocket_atom_features, lig_coords, lig_atom_features, pocket_res_idx, n_keypoints=n_keypoints, cutoffs=graph_cutoffs)
 
-    return complex_graph
+
+    lig_coords = torch.tensor(lig_coords)
+
+    return rec_graph, lig_coords, lig_atom_features
 
 
 def compute_smiles(lig_pos, lig_feat, lig_decoder):
@@ -288,17 +298,25 @@ if __name__ == '__main__':
                         ligand_resi = int(ligand_resi)
 
                         try:
-                            rec_graph, lig_atom_positions, lig_atom_features = process_ligand_and_pocket(pdb_struct, 
+                            rec_graph, lig_atom_positions, lig_atom_features, interface_points = process_ligand_and_pocket(pdb_struct, 
                                                         ligand_name, 
                                                         ligand_chain, 
                                                         ligand_resi,
                                                         rec_element_map=rec_element_map,
                                                         lig_element_map=lig_element_map,
-                                                        n_keypoints=graph_config['n_keypoints'],
-                                                        graph_cutoffs=graph_config['cutoffs'],
-                                                        pocket_cutoff=dataset_config['pocket_cutoff'], 
+                                                        receptor_k=dataset_config['receptor_k'],
+                                                        pocket_edge_algorithm=dataset_config['pocket_edge_algorithm'], 
+                                                        dist_cutoff=dataset_config['pocket_cutoff'], 
                                                         remove_hydrogen=dataset_config['remove_hydrogen'])
                         except Unparsable as e:
+                            print(e)
+                            continue
+                        except InterfacePointException as e:
+                            print('interface point exception occured', flush=True)
+                            print(e)
+                            print(e.original_exception)
+                            continue
+                        except Exception as e:
                             print(e)
                             continue
 
@@ -349,6 +367,7 @@ if __name__ == '__main__':
                         data['receptor_graph'].append(rec_graph)
                         data['lig_atom_positions'].append(lig_atom_positions)
                         data['lig_atom_features'].append(lig_atom_features)
+                        data['interface_points'].append(interface_points)
                         if split in {'val', 'test'}:
                             data['rec_files'].append(str(pdb_file_out))
                             data['lig_files'].append(str(sdf_file))

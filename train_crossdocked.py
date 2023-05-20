@@ -74,6 +74,8 @@ def parse_arguments():
     training_group.add_argument('--restart_interval', type=float, default=None)
     training_group.add_argument('--restart_type', type=str, default=None)
 
+    p.add_argument('--max_fake_atom_frac', type=float, default=None)
+
     p.add_argument('--use_tanh', type=str, default=None)
     p.add_argument('--message_norm', type=float, default=None)
 
@@ -107,6 +109,9 @@ def parse_arguments():
     for scheduler_arg in scheduler_args:
         if args_dict[scheduler_arg] is not None:
             config_dict['training']['scheduler'][scheduler_arg] = args_dict[scheduler_arg]
+
+    if args.max_fake_atom_frac is not None:
+        config_dict['dataset']['max_fake_atom_frac'] = args.max_fake_atom_frac
 
     if args.use_tanh is not None:
 
@@ -203,14 +208,15 @@ def test_model(model, test_dataloader, args, device):
     losses = defaultdict(list)
 
     for _ in range(args['training']['test_epochs']):
-        for rec_graphs, lig_atom_positions, lig_atom_features in test_dataloader:
+        for rec_graphs, lig_atom_positions, lig_atom_features, interface_points in test_dataloader:
 
             rec_graphs = rec_graphs.to(device)
             lig_atom_positions = [ arr.to(device) for arr in lig_atom_positions ]
             lig_atom_features = [ arr.to(device) for arr in lig_atom_features ]
+            interface_points = [ arr.to(device) for arr in interface_points ]
 
             # do forward pass / get losses for this batch
-            loss_dict = model(rec_graphs, lig_atom_positions, lig_atom_features)
+            loss_dict = model(rec_graphs, lig_atom_positions, lig_atom_features, interface_points)
 
             # append losses for this batch into lists of all per-batch losses computed so far
             for k,v in loss_dict.items():
@@ -298,7 +304,7 @@ def main():
     test_dataloader = get_dataloader(test_dataset, batch_size=batch_size, num_workers=args['training']['num_workers'])
 
     # get number of ligand and receptor atom features
-    test_rec_graph, test_lig_pos, test_lig_feat = train_dataset[0]
+    test_rec_graph, test_lig_pos, test_lig_feat, test_interface_points = train_dataset[0]
     n_rec_atom_features = test_rec_graph.ndata['h_0'].shape[1]
     n_lig_feat = test_lig_feat.shape[1]
     n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
@@ -310,6 +316,12 @@ def main():
     rec_encoder_config["in_n_node_feat"] = n_rec_atom_features
     args["rec_encoder"]["in_n_node_feat"] = n_rec_atom_features
 
+    # determine if we're using fake atoms
+    try:
+        use_fake_atoms = args['dataset']['max_fake_atom_frac'] > 0
+    except KeyError:
+        use_fake_atoms = False
+
     # create diffusion model
     model = LigandDiffuser(
         n_lig_feat, 
@@ -318,6 +330,7 @@ def main():
         dynamics_config=args['dynamics'], 
         rec_encoder_config=rec_encoder_config, 
         rec_encoder_loss_config=args['rec_encoder_loss'],
+        use_fake_atoms=use_fake_atoms,
         **args['diffusion']).to(device=device)
     
     if resume:
@@ -392,7 +405,7 @@ def main():
     for epoch_idx in range(args['training']['epochs']):
 
         for iter_idx, iter_data in enumerate(train_dataloader):
-            rec_graphs, lig_atom_positions, lig_atom_features = iter_data
+            rec_graphs, lig_atom_positions, lig_atom_features, interface_points = iter_data
 
             current_epoch = epoch_idx + iter_idx/iterations_per_epoch
 
@@ -408,13 +421,14 @@ def main():
             rec_graphs = rec_graphs.to(device)
             lig_atom_positions = [ arr.to(device) for arr in lig_atom_positions ]
             lig_atom_features = [ arr.float().to(device) for arr in lig_atom_features ]
+            interface_points = [ arr.to(device) for arr in interface_points ]
 
             optimizer.zero_grad()
             # TODO: add random translations to the complex positions??
 
             # encode receptor, add noise to ligand and predict noise
             # noise_loss, rec_encoder_loss = model(rec_graphs, lig_atom_positions, lig_atom_features)
-            loss_dict = model(rec_graphs, lig_atom_positions, lig_atom_features)
+            loss_dict = model(rec_graphs, lig_atom_positions, lig_atom_features, interface_points)
             # noise_loss, rec_encoder_loss = loss_dict['l2'], loss_dict['rec_encoder']
 
             # append losses for this batch into lists of all per-batch losses computed so far

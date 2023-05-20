@@ -9,10 +9,11 @@ import pickle
 import numpy as np
 from rdkit import Chem
 from collections import defaultdict
+import torch
 
 from data_processing.pdbbind_processing import (build_receptor_graph,
                                                 get_pocket_atoms, parse_ligand,
-                                                parse_protein, get_ot_loss_weights, center_complex, Unparsable)
+                                                parse_protein, get_ot_loss_weights, Unparsable, InterfacePointException)
 from utils import get_rec_atom_map
 
 
@@ -32,7 +33,9 @@ def parse_args():
 
     return args, config_dict
 
-if __name__ == "__main__":
+@torch.no_grad()
+def main():
+
     args, config = parse_args()
 
     dataset_config = config['dataset']
@@ -104,12 +107,20 @@ if __name__ == "__main__":
                 continue
 
             # get all protein atoms that form the binding pocket
-            pocket_atom_positions, pocket_atom_features, pocket_atom_mask \
-            = get_pocket_atoms(rec_atoms, 
-                lig_atom_positions, 
-                box_padding=dataset_config["lig_box_padding"], 
-                pocket_cutoff=dataset_config["pocket_cutoff"], 
-                element_map=rec_element_map)
+            # TODO: pocket atom mask is never used...what is it?
+            try:
+                pocket_atom_positions, pocket_atom_features, pocket_atom_mask, interface_points \
+                = get_pocket_atoms(rec_atoms, 
+                    lig_atom_positions, 
+                    box_padding=dataset_config["lig_box_padding"], 
+                    pocket_cutoff=dataset_config["pocket_cutoff"], 
+                    element_map=rec_element_map,
+                    interface_distance_threshold=dataset_config['interface_distance_threshold'],
+                    interface_exclusion_threshold=dataset_config['interface_exclusion_threshold'])
+            except InterfacePointException as e:
+                print(f'interface exception occured for {rec_file=} and {lig_file=}')
+                print(e.original_exception)
+                continue
 
             # TODO: sometimes (rarely) pocket_atom_positions is an empty tensor. I'm just going to skip these instances
             # but for future reference, here is a receptor for which this happens:
@@ -123,6 +134,9 @@ if __name__ == "__main__":
             if dataset_config['use_boltzmann_ot']:
                 ot_loss_boltzmann_weights = get_ot_loss_weights()
 
+            # find binding interface points
+            # interface_points = get_interface_points(lig_atom_positions, pocket_atom_positions)
+
             # build receptor graph
             receptor_graph = build_receptor_graph(pocket_atom_positions,
                 pocket_atom_features, 
@@ -135,6 +149,7 @@ if __name__ == "__main__":
             data['lig_atom_features'].append(lig_atom_features)
             data['rec_files'].append(str(rec_file))
             data['lig_files'].append(str(lig_file))
+            data['interface_points'].append(interface_points)
 
             # compute/record smiles
             try:
@@ -183,3 +198,7 @@ if __name__ == "__main__":
         smiles_file = output_dir / f'{split_key}_smiles.pkl'
         with open(smiles_file, 'wb') as f:
             pickle.dump(smiles, f)
+
+if __name__ == "__main__":
+
+    main()
