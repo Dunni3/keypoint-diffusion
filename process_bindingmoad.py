@@ -23,7 +23,7 @@ import constants
 import utils
 import pickle
 
-from data_processing.pdbbind_processing import rec_atom_featurizer, lig_atom_featurizer, Unparsable, build_receptor_graph
+from data_processing.pdbbind_processing import rec_atom_featurizer, lig_atom_featurizer, Unparsable, build_receptor_graph, build_initial_complex_graph
 from utils import get_rec_atom_map
 
 
@@ -79,9 +79,8 @@ def ligand_list_to_dict(ligand_list):
     return out_dict
 
 def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi,
-                                  rec_element_map, lig_element_map,
-                                  receptor_k: int, pocket_edge_algorithm: str, 
-                                  dist_cutoff: float, remove_hydrogen: bool = True):
+                                  rec_element_map, lig_element_map, n_keypoints: int, graph_cutoffs: dict,
+                                  pocket_cutoff: float, remove_hydrogen: bool = True):
     
     try:
         residues = {obj.id[1]: obj for obj in
@@ -112,6 +111,10 @@ def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi
     lig_atom_features = lig_atom_features[:, :-1]
 
 
+    # make ligand data into torch tensors
+    lig_coords = torch.tensor(lig_coords, dtype=torch.float32)
+    lig_atom_features = torch.tensor(lig_atom_features, dtype=torch.float32)
+
     # get residues which constitute the binding pocket
     pocket_residues = []
     for residue in pdb_struct[0].get_residues():
@@ -124,15 +127,22 @@ def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi
         if not is_residue:
             continue
         min_rl_dist = cdist(lig_coords, res_coords).min()
-        if min_rl_dist < dist_cutoff:
+        if min_rl_dist < pocket_cutoff:
             pocket_residues.append(residue)
 
     if len(pocket_residues) == 0:
         raise Unparsable(f'no valid pocket residues found in {pdbfile}: {ligand_name}:{ligand_chain}:{ligand_resi})', )
 
-    pocket_atoms = [a for res in pocket_residues for a in res.get_atoms() ]
     if remove_hydrogen:
-        pocket_atoms = [ a for a in pocket_atoms if a.element != "H" ]
+        atom_filter = lambda a: a.element != "H"
+    else:
+        atom_filter = lambda a: True
+
+    pocket_atomres = [(a, res) for res in pocket_residues for a in res.get_atoms() if atom_filter(a) ]
+    pocket_atoms, atom_residues = list(map(list, zip(*pocket_atomres)))
+    res_to_idx = { res:i for i, res in enumerate(pocket_residues) }
+    pocket_res_idx = list(map(lambda res: res_to_idx[res], atom_residues)) #  list containing the residue of every atom using integers to index pocket residues
+    pocket_res_idx = torch.tensor(pocket_res_idx)
 
     pocket_coords = torch.tensor(np.array([a.get_coord() for a in pocket_atoms]))
     pocket_elements = np.array([ element_fixer(a.element) for a in pocket_atoms ])
@@ -143,12 +153,10 @@ def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi
     pocket_coords = pocket_coords[~other_atoms_mask]
     pocket_atom_features = pocket_atom_features[~other_atoms_mask]
 
-    rec_graph = build_receptor_graph(pocket_coords, pocket_atom_features, k=receptor_k, edge_algorithm=pocket_edge_algorithm)
+    # rec_graph = build_receptor_graph(pocket_coords, pocket_atom_features, k=receptor_k, edge_algorithm=pocket_edge_algorithm)
+    complex_graph = build_initial_complex_graph(pocket_coords, pocket_atom_features, lig_coords, lig_atom_features, pocket_res_idx, n_keypoints=n_keypoints, cutoffs=graph_cutoffs)
 
-
-    lig_coords = torch.tensor(lig_coords)
-
-    return rec_graph, lig_coords, lig_atom_features
+    return complex_graph
 
 
 def compute_smiles(lig_pos, lig_feat, lig_decoder):
@@ -186,6 +194,7 @@ if __name__ == '__main__':
     with open(args.config_file, 'r') as f:
         config_dict = yaml.load(f, Loader=yaml.FullLoader)
     dataset_config = config_dict['dataset']
+    graph_config = config_dict['graph']
 
     # construct atom typing maps
     rec_element_map, lig_element_map = get_rec_atom_map(dataset_config)
@@ -285,9 +294,9 @@ if __name__ == '__main__':
                                                         ligand_resi,
                                                         rec_element_map=rec_element_map,
                                                         lig_element_map=lig_element_map,
-                                                        receptor_k=dataset_config['receptor_k'],
-                                                        pocket_edge_algorithm=dataset_config['pocket_edge_algorithm'], 
-                                                        dist_cutoff=dataset_config['pocket_cutoff'], 
+                                                        n_keypoints=graph_config['n_keypoints'],
+                                                        graph_cutoffs=graph_config['cutoffs'],
+                                                        pocket_cutoff=dataset_config['pocket_cutoff'], 
                                                         remove_hydrogen=dataset_config['remove_hydrogen'])
                         except Unparsable as e:
                             print(e)

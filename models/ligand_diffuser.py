@@ -8,12 +8,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as fn
+from torch_scatter import segment_coo, segment_csr
 
 from losses.rec_encoder_loss import ReceptorEncoderLoss
 from losses.dist_hinge_loss import DistanceHingeLoss
 from models.dynamics import LigRecDynamics
 from models.receptor_encoder import ReceptorEncoder
 from models.n_nodes_dist import LigandSizeDistribution
+from utils import concat_graph_data
 
 class LigandDiffuser(nn.Module):
 
@@ -59,33 +61,39 @@ class LigandDiffuser(nn.Module):
         # encode the receptor
         kp_pos, kp_feat = self.rec_encoder(rec_graphs)
 
+        # concatenate the receptor keypoints and get index tensors so we can do segmented operations on them
+        kp_pos, kp_idx, kp_indptr = concat_graph_data(kp_pos)
+        kp_feat = torch.concatenate(kp_feat, dim=0)
+
+        # concatenate ligands and get indexes so we can do segemnted operations
+        lig_atom_positions, lig_idx, lig_indptr = concat_graph_data(lig_atom_positions)
+        lig_atom_features = torch.concatenate(lig_atom_features)
+
         # if we are applying the RL hinge loss, we will need to be able to put receptor atoms and the ligand into the same
         # referance frame. in order to do this, we need the initial COM of the keypoints
         if self.apply_rl_hinge_loss:
-            init_kp_com = [ x.mean(dim=0, keepdims=True) for x in kp_pos ]
+            init_kp_com = segment_csr(kp_pos, kp_indptr, reduce="mean")
 
         # compute receptor encoding loss
+        # TODO: fix receptor encoder to accepted keypoint positions that are concatenated together
         losses['rec_encoder'] = self.rec_encoder_loss_fn(kp_pos, rec_graphs)
 
         # remove ligand COM from receptor/ligand complex
-        kp_pos, lig_atom_positions = self.remove_com(kp_pos, lig_atom_positions, com='ligand')
+        kp_pos, lig_atom_positions = self.remove_com(kp_pos, lig_atom_positions, kp_indptr, kp_idx, lig_indptr, lig_idx, com='ligand')
 
         # sample timepoints for each item in the batch
-        t = torch.randint(0, self.n_timesteps, size=(len(lig_atom_positions),), device=device).float() # timesteps
+        t = torch.randint(0, self.n_timesteps, size=(batch_size,), device=device).float() # timesteps
         t = t / self.n_timesteps
 
         # sample epsilon for each ligand
-        eps_batch = []
-        for i in range(batch_size):
-            eps = {
-                'h': torch.randn(lig_atom_features[i].shape, device=device),
-                'x': torch.randn(lig_atom_positions[i].shape, device=device)
-            }
-            eps_batch.append(eps)
+        eps = {
+            'h':torch.randn(lig_atom_features.shape, device=device),
+            'x':torch.randn(lig_atom_positions.shape, device=device)
+        }
         
         # construct noisy versions of the ligand
         gamma_t = self.gamma(t).to(device=device)
-        zt_pos, zt_feat, kp_pos = self.noised_representation(lig_atom_positions, lig_atom_features, kp_pos, eps_batch, gamma_t)
+        zt_pos, zt_feat, kp_pos = self.noised_representation(lig_atom_positions, lig_atom_features, kp_pos, lig_idx, lig_indptr, kp_idx, kp_indptr, gamma_t)
 
         # predict the noise that was added
         if self.apply_rl_hinge_loss:
@@ -93,7 +101,8 @@ class LigandDiffuser(nn.Module):
         else:
             unbatch_eps = False
 
-        eps_h_pred, eps_x_pred = self.dynamics(zt_pos, zt_feat, kp_pos, kp_feat, t, unbatch_eps=unbatch_eps)
+        eps_h_pred, eps_x_pred = self.dynamics(zt_pos, zt_feat, kp_pos, kp_feat, t, 
+                                               unbatch_eps=unbatch_eps)
 
         # compute hinge loss if necessary
         if self.apply_rl_hinge_loss:
@@ -141,44 +150,50 @@ class LigandDiffuser(nn.Module):
         lig_features = [ x*self.lig_feat_norm_constant for x in lig_features ]
         return lig_pos, lig_features
 
-    def remove_com(self, kp_pos: List[torch.Tensor], lig_pos: List[torch.Tensor], com: str = None):
+    def remove_com(self, kp_pos: torch.Tensor, lig_pos: torch.Tensor, kp_indptr: torch.Tensor, kp_idx: torch.Tensor, lig_indptr: torch.Tensor, lig_idx: torch.Tensor, com: str = None):
         """Remove center of mass from ligand atom positions and receptor keypoint positions.
 
         This method can remove either the ligand COM, protein COM or the complex COM.
 
         Args:
-            kp_pos (List[torch.Tensor]): A list of length batch_size containing receptor key point positions for each element in the batch.
-            lig_pos (List[torch.Tensor]): A list of length batch_size containing ligand atom positions for each element in the batch.
+            kp_pos (torch.Tensor): A tensor of shape (n_kp_nodes, 3) containing keypoint or receptor atom positions for a batch concatenated alone the n_kp_nodes dimension.
+            lig_pos (torch.Tensor): A tensor of shape (n_lig_nodes, 3) containing ligand positions for a batch concatenated along the n_lig_nodes dimension
+            kp_indptr (torch.Tensor): Index pointer array for keypoints required for segmented ops.
+            kp_idx (torch.Tensor): Index array specifying which graph each keypoint belongs to, requried for segmented ops.
+            lig_indptr (torch.Tensor): Same as kp_indptr but for ligand atoms.
+            lig_idx (torch.Tensor): Same as kp_idx but for ligand atoms.
             com (str, optional): Specifies which center of mass to remove from the system. Options are 'ligand', 'receptor', or None. If None, the COM of the ligand/receptor complex will be removed. Defaults to None.
 
+        Raises:
+            NotImplementedError: if com=None because I never implemented this feature and haven't needed it
+            ValueError: If an unsupported values is passed for comargument.
+
         Returns:
-            List[torch.Tensor]: Receptor keypoints with COM removed.
-            List[torch.Tensor]: Ligand atom positions with COM removed.
-        """        
+            torch.Tensor: Receptor keypoints with COM removed.
+            torch.Tensor: Ligand atom positions with COM removed.
+        """               
         if com is None:
             raise NotImplementedError('removing COM of receptor/ligand complex not implemented')
         elif com == 'ligand':
-            coms = [ x.mean(dim=0, keepdim=True) for x in lig_pos ]
+            com = segment_csr(lig_pos, lig_indptr, reduce='mean')
         elif com == 'receptor':
-            coms = [ x.mean(dim=0, keepdim=True) for x in kp_pos ]
+            com = segment_csr(kp_pos, kp_indptr, reduce='mean')
         else:
             raise ValueError(f'invalid value for com: {com=}')
 
-        com_free_lig = [ lig_pos[i] - com for i, com in enumerate(coms) ]
-        com_free_kp = [ kp_pos[i] - com for i, com in enumerate(coms) ]
+        com_free_lig = lig_pos - com[lig_idx]
+        com_free_kp = kp_pos - com[kp_idx]
         return com_free_kp, com_free_lig
 
-    def noised_representation(self, lig_pos, lig_feat, rec_pos, eps_batch, gamma_t):
-        alpha_t = self.alpha(gamma_t)
-        sigma_t = self.sigma(gamma_t)
+    def noised_representation(self, lig_pos: torch.Tensor, lig_feat: torch.Tensor, rec_pos: torch.Tensor, lig_idx, lig_indptr, rec_idx, rec_indptr,
+                              eps: Dict[str, torch.Tensor], gamma_t: torch.Tensor):
+        alpha_t = self.alpha(gamma_t)[lig_idx]
+        sigma_t = self.sigma(gamma_t)[lig_idx]
 
-        zt_pos, zt_feat = [], []
-        for i in range(len(gamma_t)):
-            zt_pos.append(alpha_t[i]*lig_pos[i] + sigma_t[i]*eps_batch[i]['x'])
-            zt_feat.append(alpha_t[i]*lig_feat[i] + sigma_t[i]*eps_batch[i]['h'])
+        zt_feat = alpha_t*lig_feat + sigma_t*eps['h']
 
         # remove ligand COM from the system
-        rec_pos, zt_pos = self.remove_com(rec_pos, zt_pos, com='ligand')
+        rec_pos, zt_pos = self.remove_com(rec_pos, zt_pos, rec_indptr, rec_idx, lig_indptr, lig_idx, com='ligand')
         
         return zt_pos, zt_feat, rec_pos
     

@@ -261,18 +261,14 @@ class LigRecDynamics(nn.Module):
         self.egnn = LigRecEGNN(n_layers=n_layers, in_size=hidden_nf+1, hidden_size=hidden_nf+1, out_size=hidden_nf+1, use_tanh=use_tanh, message_norm=message_norm)
 
 
-    def forward(self, lig_pos, lig_feat, rec_pos, rec_feat, timestep, unbatch_eps=False):
+    def forward(self, lig_pos, lig_feat, rec_pos, rec_feat, timestep, lig_indptr, lig_idx, rec_indptr, rec_idx,
+                unbatch_eps=False):
         # inputs: ligand/receptor positions/features, timestep
         # outputs: predicted noise
 
-        lig_feat = list(lig_feat)
-        rec_feat = list(rec_feat)
-
-
         # encode lig/rec features
-        for i in range(len(lig_feat)):
-            lig_feat[i] = self.lig_encoder(lig_feat[i])
-            rec_feat[i] = self.rec_encoder(rec_feat[i])
+        lig_feat = self.lig_encoder(lig_feat)
+        rec_feat = self.rec_encoder(rec_feat)
 
     
         # add timestep to node features
@@ -284,6 +280,12 @@ class LigRecDynamics(nn.Module):
 
             t_reshaped = timestep[i].repeat(rec_feat[i].shape[0]).view(-1,1)
             rec_feat_time.append( torch.cat([rec_feat[i], t_reshaped], dim=1) )
+        
+        t_lig = timestep[lig_idx].view(-1,1)
+        lig_feat_time = torch.cat([lig_feat, t_lig], dim=1)
+
+        t_rec = timestep[rec_idx].view(-1,1)
+        rec_feat_time = torch.cat([rec_feat, t_rec], dim=1)
 
         # construct heterograph
         batched_graph = self.make_graph(lig_pos, lig_feat_time, rec_pos, rec_feat_time)

@@ -20,10 +20,15 @@ dataset:
   min_ligand_atoms: 8 # minimum number of atoms in a ligand, skip all smaller ligands in the dataset when processing
   pocket_edge_algorithm: 'bruteforce-blas'
   lig_box_padding: 8 # angstroms
-  pocket_cutoff: 5 # angstroms
+  pocket_cutoff: 8 # angstroms
   receptor_k: 8
   dataset_size: 50 # used only for debugging
   use_boltzmann_ot: False
+
+graph:
+  n_keypoints: 20
+  cutoffs: {'rr': 4, 'rk': 100, 'kk': 0, 'kl': 8, 'll': 5, 'lk': 8}
+
 
 rec_encoder:
   n_keypoints: 20

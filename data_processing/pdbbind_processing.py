@@ -7,6 +7,7 @@ from rdkit.Chem import AllChem as Chem
 import torch
 from scipy import spatial as spa
 import dgl
+from torch_cluster import radius, radius_graph
 
 from typing import Iterable, Union, List, Dict
 
@@ -209,6 +210,59 @@ def build_receptor_graph(atom_positions: torch.Tensor, atom_features: torch.Tens
     g.ndata['x_0'] = atom_positions
     g.ndata['h_0'] = atom_features
     return g
+
+def build_initial_complex_graph(rec_atom_positions: torch.Tensor, rec_atom_features: torch.Tensor, lig_atom_positions: torch.Tensor, lig_atom_features: torch.Tensor, pocket_res_idx: torch.Tensor, n_keypoints: int, cutoffs: dict):
+
+    n_rec_atoms = rec_atom_positions.shape[0]
+    n_lig_atoms = lig_atom_positions.shape[0]
+    
+
+    # i've initialized this as an empty dict just to make clear the different types of edges in graph and their names
+    no_edges = ([], [])
+    graph_data = {
+        ('rec', 'rr', 'rec'): no_edges,
+        ('rec', 'rk', 'kp'): no_edges,
+        ('kp', 'kk', 'kp'): no_edges,
+        ('kp', 'kl', 'lig'): no_edges,
+        ('lig', 'll', 'lig'): no_edges,
+        ('lig', 'lk', 'kp'): no_edges
+    }
+
+    # compute rec atom -> rec atom edges
+    rr_edges = radius_graph(rec_atom_positions, r=cutoffs['rr'], max_num_neighbors=100)
+    graph_data[('rec', 'rr', 'rec')] = (rr_edges[0], rr_edges[1])
+
+    # compute "same residue" feature ofr every rr edge
+    same_res_edge = pocket_res_idx[rr_edges[0]] == pocket_res_idx[rr_edges[1]]
+
+    # compute rec atom -> kp edges
+    rk_src_idx = torch.arange(n_rec_atoms).repeat(n_keypoints)
+    rk_dst_idx = torch.arange(n_keypoints).repeat_interleave(n_rec_atoms)
+    graph_data[('rec', 'rk', 'kp')] = (rk_src_idx, rk_dst_idx)
+
+    num_nodes_dict = {
+        'rec': n_rec_atoms, 'kp': n_keypoints, 'lig': n_lig_atoms
+    }
+
+    # create graph object
+    g = dgl.heterograph(graph_data, num_nodes_dict=num_nodes_dict)
+
+    # add node data
+    g.nodes['lig'].data['x_0'] = lig_atom_positions
+    g.nodes['lig'].data['h_0'] = lig_atom_features
+    g.nodes['rec'].data['x_0'] = rec_atom_positions
+    g.nodes['rec'].data['h_0'] = rec_atom_features
+    
+    # add edge data
+    g.edges['rr'].data['same_res'] = same_res_edge
+
+    return g
+
+
+
+
+
+
 
 def get_ot_loss_weights(ligand: rdkit.Chem.rdchem.Mol, pdb_path: Path, pocket_atom_mask: torch.Tensor):
     

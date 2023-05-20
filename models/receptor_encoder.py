@@ -238,8 +238,8 @@ class ReceptorEncoder(nn.Module):
 
 
         # query and key functions for keypoint position generation
-        self.eqv_keypoint_query_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints)
-        self.eqv_keypoint_key_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints)
+        self.eqv_keypoint_query_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints, bias=False)
+        self.eqv_keypoint_key_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints, bias=False)
 
 
         # keypoint-wise MLP applied to keypoint features when they are first
