@@ -8,11 +8,11 @@ from einops import rearrange
 
 import dgl.function as fn
 
-class EGNNConv(nn.Module):
+class ReceptorConv(nn.Module):
     # this is adapted from the EGNN implementation in DGL
 
     def __init__(self, in_size, hidden_size, out_size, edge_feat_size=0, use_tanh=True, coords_range=10, message_norm=1):
-        super(EGNNConv, self).__init__()
+        super(ReceptorConv, self).__init__()
 
         self.in_size = in_size
         self.hidden_size = hidden_size
@@ -75,7 +75,7 @@ class EGNNConv(nn.Module):
 
         return {"msg_x": msg_x, "msg_h": msg_h}
 
-    def forward(self, graph, node_feat, coord_feat, edge_feat=None):
+    def forward(self, g: dgl.DGLHeteroGraph, node_feat: torch.Tensor, coord_feat: torch.Tensor, edge_feat: torch.Tensor=None):
         r"""
         Description
         -----------
@@ -83,7 +83,7 @@ class EGNNConv(nn.Module):
 
         Parameters
         ----------
-        graph : DGLGraph
+        g : DGLGraph
             The graph.
         node_feat : torch.Tensor
             The input feature of shape :math:`(N, h_n)`. :math:`N` is the number of
@@ -104,29 +104,29 @@ class EGNNConv(nn.Module):
             The output coordinate feature of shape :math:`(N, h_x)` where :math:`h_x`
             is the same as the input coordinate feature dimension.
         """
-        with graph.local_scope():
+        with g.local_scope():
             # node feature
-            graph.ndata["h"] = node_feat
+            g.nodes['rec'].data["h"] = node_feat
             # coordinate feature
-            graph.ndata["x"] = coord_feat
+            g.nodes['rec'].data["x"] = coord_feat
             # edge feature
             if self.edge_feat_size > 0:
                 assert edge_feat is not None, "Edge features must be provided."
-                graph.edata["a"] = edge_feat
+                g.edges['rr'].edata["a"] = edge_feat
             # get coordinate diff & radial features
-            graph.apply_edges(fn.u_sub_v("x", "x", "x_diff"))
-            graph.edata["radial"] = (
-                graph.edata["x_diff"].square().sum(dim=1).unsqueeze(-1)
+            g.apply_edges(fn.u_sub_v("x", "x", "x_diff"), etype='rr')
+            g.edges['rr'].data["radial"] = (
+                g.edges['rr'].data["x_diff"].square().sum(dim=1).unsqueeze(-1)
             )
             # normalize coordinate difference
-            graph.edata["x_diff"] = graph.edata["x_diff"] / (
-                graph.edata["radial"].sqrt() + 1e-30
+            g.edges['rr'].data["x_diff"] = g.edges['rr'].data["x_diff"] / (
+                g.edges['rr'].data["radial"].sqrt() + 1e-30
             )
-            graph.apply_edges(self.message)
-            graph.update_all(fn.copy_e("msg_x", "m"), fn.mean("m", "x_neigh"))
-            graph.update_all(fn.copy_e("msg_h", "m"), fn.sum("m", "h_neigh"))
+            g.apply_edges(self.message, etype='rr')
+            g.update_all(fn.copy_e("msg_x", "m"), fn.mean("m", "x_neigh"), etype='rr')
+            g.update_all(fn.copy_e("msg_h", "m"), fn.sum("m", "h_neigh"), etype='rr')
 
-            h_neigh, x_neigh = graph.ndata["h_neigh"]/self.message_norm, graph.ndata["x_neigh"]/self.message_norm
+            h_neigh, x_neigh = g.ndata["h_neigh"]/self.message_norm, g.ndata["x_neigh"]/self.message_norm
 
             h = self.node_mlp(torch.cat([node_feat, h_neigh], dim=-1))
             x = coord_feat + x_neigh
@@ -185,7 +185,7 @@ class KeypointMHA(nn.Module):
 
 class ReceptorEncoder(nn.Module):
 
-    def __init__(self, n_convs: int = 6, n_keypoints: int = 10, in_n_node_feat: int = 13, 
+    def __init__(self, n_convs: int = 6, n_keypoints: int = 10, graph_cutoffs: dict = {}, in_n_node_feat: int = 13, 
         hidden_n_node_feat: int = 256, out_n_node_feat: int = 256, use_tanh=True, coords_range=10, kp_feat_scale=1,
         use_keypoint_feat_mha: bool = False, feat_mha_heads=5, message_norm=1, k_closest: int = 0):
         super().__init__()
@@ -197,14 +197,8 @@ class ReceptorEncoder(nn.Module):
         self.kp_pos_norm = out_n_node_feat**0.5
         self.k_closest = k_closest
 
-        # TODO: should there be a position-wise MLP after graph convolution?
-        # TODO: this model is written to use the same output dimension from the graph message passing as for the keypoint feature attention mechianism -- this is an articifical constraint
-
         self.egnn_convs = []
 
-        # TODO: the DGL EGNN implementation uses two-layer MLPs - does the EDM paper use 1 or 2?
-        # TODO: the EDM paper has a skip connection in the update of node features (which is not specified in model equations)
-        # - does DGL have this as well?
         for i in range(self.n_convs):
             if i == 0 and self.n_convs == 1: # first and only convolutional layer
                 in_size = in_n_node_feat
@@ -224,7 +218,7 @@ class ReceptorEncoder(nn.Module):
                 out_size = hidden_n_node_feat
 
             self.egnn_convs.append( 
-                EGNNConv(in_size=in_size, hidden_size=hidden_size, out_size=out_size, use_tanh=use_tanh, coords_range=coords_range, message_norm=message_norm)
+                ReceptorConv(in_size=in_size, hidden_size=hidden_size, out_size=out_size, use_tanh=use_tanh, coords_range=coords_range, message_norm=message_norm)
             )
 
         self.egnn_convs = nn.ModuleList(self.egnn_convs)
@@ -262,7 +256,8 @@ class ReceptorEncoder(nn.Module):
             )
 
 
-    def forward(self, rec_graph: dgl.DGLGraph):
+    def forward(self, complex_graph: dgl.DGLGraph):
+
         node_positions = rec_graph.ndata['x_0']
         node_features = rec_graph.ndata['h_0']
 

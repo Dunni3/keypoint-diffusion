@@ -19,7 +19,7 @@ from utils import concat_graph_data
 
 class LigandDiffuser(nn.Module):
 
-    def __init__(self, atom_nf, rec_nf, processed_dataset_dir: Path, n_timesteps: int = 1000, keypoint_centered=False, 
+    def __init__(self, atom_nf, rec_nf, n_keypoints: int, processed_dataset_dir: Path, n_timesteps: int = 1000, keypoint_centered=False, graph_config={},
     dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, precision=1e-4, lig_feat_norm_constant=1, rl_dist_threshold=0, use_fake_atoms=False):
         super().__init__()
 
@@ -46,7 +46,7 @@ class LigandDiffuser(nn.Module):
         self.dynamics = LigRecDynamics(atom_nf, rec_nf, **dynamics_config)
 
         # create receptor encoder and its loss function
-        self.rec_encoder = ReceptorEncoder(**rec_encoder_config)
+        self.rec_encoder = ReceptorEncoder(**graph_config, **rec_encoder_config)
         self.rec_encoder_loss_fn = ReceptorEncoderLoss(**rec_encoder_loss_config)
 
     def forward(self, complex_graphs: dgl.DGLHeteroGraph, interface_points: List[torch.Tensor]):

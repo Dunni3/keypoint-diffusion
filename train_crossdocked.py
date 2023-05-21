@@ -293,9 +293,8 @@ def main():
     dataset_path = Path(args['dataset']['location']) 
     train_dataset_path = str(dataset_path / 'train.pkl') 
     test_dataset_path = str(dataset_path / 'test.pkl')
-    n_keypoints = args['graph']['n_keypoints']
-    train_dataset = CrossDockedDataset(name='train', n_keypoints=n_keypoints, processed_data_file=train_dataset_path, **args['dataset'])
-    test_dataset = CrossDockedDataset(name='test', n_keypoints=n_keypoints, processed_data_file=test_dataset_path, **args['dataset'])
+    train_dataset = CrossDockedDataset(name='train', processed_data_file=train_dataset_path, **args['graph'], **args['dataset'])
+    test_dataset = CrossDockedDataset(name='test', processed_data_file=test_dataset_path, **args['graph'], **args['dataset'])
 
     # compute number of iterations per epoch - necessary for deciding when to do test evaluations/saves/etc. 
     iterations_per_epoch = len(train_dataset) / batch_size
@@ -326,6 +325,9 @@ def main():
 
     # determine if we are using interface points
     use_interface_points = args['rec_encoder_loss']['use_interface_points']
+
+    # get number of keyponts
+    n_keypoints = args['dataset']['n_keypoints']
 
     # create diffusion model
     model = LigandDiffuser(

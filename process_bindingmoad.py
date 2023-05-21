@@ -79,7 +79,7 @@ def ligand_list_to_dict(ligand_list):
     return out_dict
 
 def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi,
-                                  rec_element_map, lig_element_map, n_keypoints: int, graph_cutoffs: dict,
+                                  rec_element_map, lig_element_map,
                                   ip_dist_threshold: float, ip_exclusion_threshold: float, 
                                   pocket_cutoff: float, remove_hydrogen: bool = True):
     
@@ -305,8 +305,6 @@ if __name__ == '__main__':
                                                         ligand_resi,
                                                         rec_element_map=rec_element_map,
                                                         lig_element_map=lig_element_map,
-                                                        n_keypoints=dataset_config['n_keypoints'],
-                                                        graph_cutoffs=dataset_config['graph_cutoffs'],
                                                         ip_dist_threshold=dataset_config['interface_distance_threshold'],
                                                         ip_exclusion_threshold=dataset_config['interface_exclusion_threshold'], 
                                                         pocket_cutoff=dataset_config['pocket_cutoff'], 
