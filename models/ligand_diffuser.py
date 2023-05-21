@@ -43,7 +43,11 @@ class LigandDiffuser(nn.Module):
 
         # create noise schedule and dynamics model
         self.gamma = PredefinedNoiseSchedule(noise_schedule='polynomial_2', timesteps=n_timesteps, precision=precision)
-        self.dynamics = LigRecDynamics(atom_nf, rec_nf, **dynamics_config)
+
+        if 'no_cg' in rec_encoder_config:        
+            self.dynamics = LigRecDynamics(atom_nf, rec_nf, no_cg=rec_encoder_config['no_cg'], **dynamics_config)
+        else:
+            self.dynamics = LigRecDynamics(atom_nf, rec_nf, **dynamics_config)
 
         # create receptor encoder and its loss function
         self.rec_encoder = ReceptorEncoder(**graph_config, **rec_encoder_config)

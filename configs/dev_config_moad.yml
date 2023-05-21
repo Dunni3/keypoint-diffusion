@@ -40,18 +40,20 @@ rec_encoder:
   use_tanh: True
   coords_range: 10
   kp_feat_scale: 1.0
-  use_keypoint_feat_mha: True
+  use_keypoint_feat_mha: False
   feat_mha_heads: 3
   message_norm: 10
+  no_cg: False
+  fix_pos: True
 
 diffusion:
   n_timesteps: 1000
   precision: 1.0e-5
   lig_feat_norm_constant: 1
-  rl_dist_threshold: 2
+  rl_dist_threshold: 0
 
 dynamics:
-  n_layers: 6
+  n_layers: 2
   hidden_nf: 256
   receptor_keypoint_k: 6
   ligand_k: 8
@@ -64,14 +66,14 @@ rec_encoder_loss:
   use_interface_points: False
 
 training:
-  rec_encoder_loss_weight: 5.0
-  rl_hinge_loss_weight: 1
-  learning_rate: 1.0e-4
+  rec_encoder_loss_weight: 0.00
+  rl_hinge_loss_weight: 0
+  learning_rate: 1.0e-5
   weight_decay: 1.0e-12
-  clip_grad: False
+  clip_grad: True
   clip_value: 1.5
-  epochs: 4
-  batch_size: 4
+  epochs: 100
+  batch_size: 32
   test_interval: 100 # measured in epochs
   train_metrics_interval: 0.25 # epochs
   save_interval: 100 # epoch

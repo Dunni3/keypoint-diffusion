@@ -44,6 +44,7 @@ def parse_arguments():
     rec_encoder_group.add_argument('--apply_kp_wise_mlp', type=bool, default=None)
     rec_encoder_group.add_argument('--rec_enc_hinge_threshold', type=float, default=None)
     rec_encoder_group.add_argument('--k_closest', type=int, default=None)
+    rec_encoder_group.add_argument('--fix_rec_pos', type=int, default=None)
 
     dynamics_group = p.add_argument_group('dynamics')
     dynamics_group.add_argument('--n_convs_dynamics', type=int, default=None, help='number of graph convolutions in the dynamics model')
@@ -132,6 +133,11 @@ def parse_arguments():
 
     if args.rl_dist_threshold is not None:
         config_dict['diffusion']['rl_dist_threshold'] = args.rl_dist_threshold
+
+    if args.fix_rec_pos is not None:
+        if args.fix_rec_pos not in [0, 1]:
+            raise ValueError
+        config_dict['rec_encoder']['fix_pos'] = bool(args.fix_rec_pos)
 
     if args.n_keypoints is not None:
         config_dict['rec_encoder']['n_keypoints'] = args.n_keypoints

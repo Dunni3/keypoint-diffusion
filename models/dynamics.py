@@ -3,6 +3,7 @@ import torch.nn as nn
 from typing import Dict, List
 import dgl.function as fn
 import dgl
+from torch_cluster import radius
 
 class LigRecConv(nn.Module):
 
@@ -36,6 +37,14 @@ class LigRecConv(nn.Module):
                 act_fn,
             )
         self.edge_mlp = nn.ModuleDict(self.edge_mlp)
+
+        self.soft_attention = {}
+        for edge_type in self.edge_types:
+            self.soft_attention[edge_type] = nn.Sequential(
+            nn.Linear(hidden_size, 1),
+            nn.Sigmoid()
+        )
+        self.soft_attention = nn.ModuleDict(self.soft_attention)
 
         # \phi_h
         self.node_mlp = nn.Sequential(
@@ -82,6 +91,7 @@ class LigRecConv(nn.Module):
 
         # compute feature messages
         msg_h = self.edge_mlp[edge_type](f)
+        msg_h = msg_h*self.soft_attention[edge_type](msg_h)
 
         # compute coordinate messages
         if self.use_tanh:
@@ -232,11 +242,12 @@ class LigRecEGNN(nn.Module):
 
 class LigRecDynamics(nn.Module):
 
-    def __init__(self, atom_nf, rec_nf, n_layers=4, hidden_nf=255, act_fn=nn.SiLU, receptor_keypoint_k=6, ligand_k=8, use_tanh=False, message_norm=1):
+    def __init__(self, atom_nf, rec_nf, n_layers=4, hidden_nf=255, act_fn=nn.SiLU, receptor_keypoint_k=6, ligand_k=8, use_tanh=False, message_norm=1, no_cg: bool = False):
         super().__init__()
 
         self.receptor_keypoint_k = receptor_keypoint_k
-        self.ligand_k = ligand_k    
+        self.ligand_k = ligand_k
+        self.no_cg = no_cg    
 
     
         self.lig_encoder = nn.Sequential(
@@ -331,18 +342,22 @@ class LigRecDynamics(nn.Module):
         for i in range(len(lig_pos)):
 
             # create graph containing just ligand-ligand edges
-            # TODO: expose all these k's as hyperparameters. Also, there is an issue when the ligand has less than k atoms. Maybe fix this by some method other than excluding small ligands?
             lig_graph = dgl.knn_graph(lig_pos[i], k=self.ligand_k, algorithm="bruteforce-blas", dist='euclidean', exclude_self=True).to(device)
 
             # find edges for rec -> lig conections
-            rl_dist = torch.cdist(rec_pos[i], lig_pos[i]) # distance between every receptor keypoint and every ligand atom
-            k = min(self.receptor_keypoint_k, lig_pos[i].shape[0])
-            topk_dist, topk_idx = torch.topk(rl_dist, k=k, dim=1, largest=False) # get k closest ligand atoms to each receptor key point
+            if self.no_cg:
+                edge_idxs = radius(rec_pos[i], lig_pos[i], r=5, max_num_neighbors=10)
+                dst_nodes = edge_idxs[0]
+                src_nodes = edge_idxs[1]
+            else:
+                rl_dist = torch.cdist(rec_pos[i], lig_pos[i]) # distance between every receptor keypoint and every ligand atom
+                k = min(self.receptor_keypoint_k, lig_pos[i].shape[0])
+                topk_dist, topk_idx = torch.topk(rl_dist, k=k, dim=1, largest=False) # get k closest ligand atoms to each receptor key point
 
-            # get list of rec -> ligand edges
-            n_rec_nodes = rec_pos[i].shape[0]
-            src_nodes = torch.repeat_interleave(torch.arange(n_rec_nodes), repeats=k).to(device)
-            dst_nodes = topk_idx.flatten()
+                # get list of rec -> ligand edges
+                n_rec_nodes = rec_pos[i].shape[0]
+                src_nodes = torch.repeat_interleave(torch.arange(n_rec_nodes), repeats=k).to(device)
+                dst_nodes = topk_idx.flatten()
 
             # create heterograph
             graph_data = {
@@ -353,7 +368,12 @@ class LigRecDynamics(nn.Module):
 
             }
 
-            g = dgl.heterograph(graph_data)
+            num_nodes_dict= {
+                'lig': lig_pos[i].shape[0],
+                'rec': rec_pos[i].shape[0]
+            }
+
+            g = dgl.heterograph(graph_data, num_nodes_dict=num_nodes_dict)
             g.nodes['lig'].data['x_0'] = lig_pos[i]
             g.nodes['lig'].data['h_0'] = lig_feat[i]
             g.nodes['rec'].data['x_0'] = rec_pos[i]

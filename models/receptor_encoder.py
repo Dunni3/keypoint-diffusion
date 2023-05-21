@@ -11,7 +11,7 @@ import dgl.function as fn
 class ReceptorConv(nn.Module):
     # this is adapted from the EGNN implementation in DGL
 
-    def __init__(self, in_size, hidden_size, out_size, edge_feat_size=0, use_tanh=True, coords_range=10, message_norm=1):
+    def __init__(self, in_size, hidden_size, out_size, edge_feat_size=0, use_tanh=True, coords_range=10, message_norm=1, fix_pos: bool = False):
         super(ReceptorConv, self).__init__()
 
         self.in_size = in_size
@@ -22,6 +22,7 @@ class ReceptorConv(nn.Module):
         self.use_tanh = use_tanh
         self.coords_range = coords_range
         self.message_norm = message_norm
+        self.fix_pos = fix_pos
 
         # \phi_e
         self.edge_mlp = nn.Sequential(
@@ -39,12 +40,19 @@ class ReceptorConv(nn.Module):
             nn.Linear(hidden_size, out_size),
         )
 
+        self.soft_attention = nn.Sequential(
+            nn.Linear(hidden_size, 1),
+            nn.Sigmoid()
+        )
+
+        if self.fix_pos:
+            return
 
         # \phi_x
         coord_output_layer = nn.Linear(hidden_size, 1, bias=False)
         nn.init.xavier_uniform_(coord_output_layer.weight, gain=0.001)
         self.coord_mlp = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
+            nn.Linear(in_size * 2 + edge_feat_size + 1, hidden_size),
             act_fn,
             coord_output_layer
         )
@@ -68,10 +76,13 @@ class ReceptorConv(nn.Module):
             )
 
         msg_h = self.edge_mlp(f)
-        if self.use_tanh:
-            msg_x = torch.tanh( self.coord_mlp(msg_h) ) * edges.data["x_diff"] * self.coords_range
+        msg_h = msg_h*self.soft_attention(msg_h)
+        if self.fix_pos:
+            msg_x = torch.zeros_like(edges.data["radial"])
+        elif self.use_tanh:
+            msg_x = torch.tanh( self.coord_mlp(f) ) * edges.data["x_diff"] * self.coords_range
         else:
-            msg_x = self.coord_mlp(msg_h) * edges.data["x_diff"]
+            msg_x = self.coord_mlp(f) * edges.data["x_diff"]
 
         return {"msg_x": msg_x, "msg_h": msg_h}
 
@@ -187,7 +198,7 @@ class ReceptorEncoder(nn.Module):
 
     def __init__(self, n_convs: int = 6, n_keypoints: int = 10, graph_cutoffs: dict = {}, in_n_node_feat: int = 13, 
         hidden_n_node_feat: int = 256, out_n_node_feat: int = 256, use_tanh=True, coords_range=10, kp_feat_scale=1,
-        use_keypoint_feat_mha: bool = False, feat_mha_heads=5, message_norm=1, k_closest: int = 0):
+        use_keypoint_feat_mha: bool = False, feat_mha_heads=5, message_norm=1, k_closest: int = 0, no_cg=False, fix_pos=False):
         super().__init__()
 
         self.n_convs = n_convs
@@ -196,6 +207,8 @@ class ReceptorEncoder(nn.Module):
         self.kp_feat_scale = kp_feat_scale
         self.kp_pos_norm = out_n_node_feat**0.5
         self.k_closest = k_closest
+        self.no_cg = no_cg
+        self.fix_pos = fix_pos
 
         self.egnn_convs = []
 
@@ -218,11 +231,13 @@ class ReceptorEncoder(nn.Module):
                 out_size = hidden_n_node_feat
 
             self.egnn_convs.append( 
-                ReceptorConv(in_size=in_size, hidden_size=hidden_size, out_size=out_size, use_tanh=use_tanh, coords_range=coords_range, message_norm=message_norm)
+                ReceptorConv(in_size=in_size, hidden_size=hidden_size, out_size=out_size, use_tanh=use_tanh, coords_range=coords_range, message_norm=message_norm, fix_pos=fix_pos)
             )
 
         self.egnn_convs = nn.ModuleList(self.egnn_convs)
 
+        if no_cg:
+            return
 
         # embedding function for the mean node feature before keypoint position generation
         self.node_feat_embedding = nn.Sequential(
@@ -271,6 +286,12 @@ class ReceptorEncoder(nn.Module):
         rec_graph.ndata['x'] = x
         rec_graph.ndata['h'] = h
 
+        if self.no_cg:
+            unbatched_graphs = dgl.unbatch(rec_graph)
+            x = [ g.ndata['x'] for g in unbatched_graphs ]
+            h = [ g.ndata['h'] for g in unbatched_graphs ]
+            return x, h
+
         # TODO: apply atom-wise MLP in h?
         # not necessary because sum of messages goes through an MLP
 
@@ -284,7 +305,10 @@ class ReceptorEncoder(nn.Module):
             eqv_keys = self.eqv_keypoint_query_fn(graph.ndata['h']).view(-1, self.n_keypoints, self.out_n_node_feat) # (n_nodes, n_attn_heads, n_node_features)
             eqv_att_logits = torch.einsum('ijk,jk->ji', eqv_keys, eqv_queries) # (n_attn_heads, n_nodes)
             eqv_att_weights = torch.softmax(eqv_att_logits/self.kp_pos_norm, dim=1)
-            kp_pos = eqv_att_weights @ graph.ndata['x'] # (n_keypoints, 3)
+            if self.fix_pos:
+                kp_pos = eqv_att_weights @ graph.ndata['x_0'] # (n_keypoints, 3)
+            else:
+                kp_pos = eqv_att_weights @ graph.ndata['x'] # (n_keypoints, 3)
             keypoint_positions.append(kp_pos)
 
             # compute distance between keypoints and binding pocket points
