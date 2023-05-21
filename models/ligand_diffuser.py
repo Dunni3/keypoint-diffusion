@@ -49,18 +49,18 @@ class LigandDiffuser(nn.Module):
         self.rec_encoder = ReceptorEncoder(**rec_encoder_config)
         self.rec_encoder_loss_fn = ReceptorEncoderLoss(**rec_encoder_loss_config)
 
-    def forward(self, rec_graphs, lig_atom_positions, lig_atom_features, interface_points):
+    def forward(self, complex_graphs: dgl.DGLHeteroGraph, interface_points: List[torch.Tensor]):
         """Computes loss."""
         # normalize values. specifically, atom features are normalized by a value of 4
         losses = {}
 
-        self.normalize(lig_atom_positions, lig_atom_features)
+        complex_graphs = self.normalize(complex_graphs)
 
-        batch_size = len(lig_atom_positions)
-        device = lig_atom_positions[0].device
+        batch_size = complex_graphs.batch_size
+        device = complex_graphs.device
                 
         # encode the receptor
-        kp_pos, kp_feat = self.rec_encoder(rec_graphs)
+        complex_graphs = self.rec_encoder(complex_graphs)
 
         # concatenate the receptor keypoints and get index tensors so we can do segmented operations on them
         kp_pos, kp_idx, kp_indptr = concat_graph_data(kp_pos)
@@ -150,13 +150,13 @@ class LigandDiffuser(nn.Module):
 
         return losses
     
-    def normalize(self, lig_pos, lig_features):
-        lig_features = [ x/self.lig_feat_norm_constant for x in lig_features ]
-        return lig_pos, lig_features
+    def normalize(self, complex_graphs: dgl.DGLHeteroGraph):
+        complex_graphs.nodes['lig'].data['h_0'] = complex_graphs.nodes['lig'].data['h_0'] / self.lig_feat_norm_constant
+        return complex_graphs
 
-    def unnormalize(self, lig_pos, lig_features):
-        lig_features = [ x*self.lig_feat_norm_constant for x in lig_features ]
-        return lig_pos, lig_features
+    def unnormalize(self, complex_graphs: dgl.DGLHeteroGraph):
+        complex_graphs.nodes['lig'].data['h_0'] = complex_graphs.nodes['lig'].data['h_0'] * self.lig_feat_norm_constant
+        return complex_graphs
 
     def remove_com(self, kp_pos: torch.Tensor, lig_pos: torch.Tensor, kp_indptr: torch.Tensor, kp_idx: torch.Tensor, lig_indptr: torch.Tensor, lig_idx: torch.Tensor, com: str = None):
         """Remove center of mass from ligand atom positions and receptor keypoint positions.

@@ -267,10 +267,6 @@ def build_initial_complex_graph(rec_atom_positions: torch.Tensor, rec_atom_featu
 
 
 
-
-
-
-
 def get_ot_loss_weights(ligand: rdkit.Chem.rdchem.Mol, pdb_path: Path, pocket_atom_mask: torch.Tensor):
     
     # i tried to implement this using rdkit but it didn't work

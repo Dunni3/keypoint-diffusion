@@ -293,8 +293,9 @@ def main():
     dataset_path = Path(args['dataset']['location']) 
     train_dataset_path = str(dataset_path / 'train.pkl') 
     test_dataset_path = str(dataset_path / 'test.pkl')
-    train_dataset = CrossDockedDataset(name='train', processed_data_file=train_dataset_path, **args['dataset'])
-    test_dataset = CrossDockedDataset(name='test', processed_data_file=test_dataset_path, **args['dataset'])
+    n_keypoints = args['graph']['n_keypoints']
+    train_dataset = CrossDockedDataset(name='train', n_keypoints=n_keypoints, processed_data_file=train_dataset_path, **args['dataset'])
+    test_dataset = CrossDockedDataset(name='test', n_keypoints=n_keypoints, processed_data_file=test_dataset_path, **args['dataset'])
 
     # compute number of iterations per epoch - necessary for deciding when to do test evaluations/saves/etc. 
     iterations_per_epoch = len(train_dataset) / batch_size
@@ -304,9 +305,10 @@ def main():
     test_dataloader = get_dataloader(test_dataset, batch_size=batch_size, num_workers=args['training']['num_workers'])
 
     # get number of ligand and receptor atom features
-    test_rec_graph, test_lig_pos, test_lig_feat, test_interface_points = train_dataset[0]
-    n_rec_atom_features = test_rec_graph.ndata['h_0'].shape[1]
-    n_lig_feat = test_lig_feat.shape[1]
+    # test_rec_graph, test_lig_pos, test_lig_feat, test_interface_points = train_dataset[0]
+    test_complex_graph, _ = train_dataset[0]
+    n_rec_atom_features = test_complex_graph.nodes['rec'].data['h_0'].shape[1]
+    n_lig_feat = test_complex_graph.nodes['rec'].ndata['h_0'].shape[1]
     n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
 
     print(f'{n_rec_atom_features=}')
@@ -321,6 +323,9 @@ def main():
         use_fake_atoms = args['dataset']['max_fake_atom_frac'] > 0
     except KeyError:
         use_fake_atoms = False
+
+    # determine if we are using interface points
+    use_interface_points = args['rec_encoder_loss']['use_interface_points']
 
     # create diffusion model
     model = LigandDiffuser(
@@ -405,7 +410,7 @@ def main():
     for epoch_idx in range(args['training']['epochs']):
 
         for iter_idx, iter_data in enumerate(train_dataloader):
-            rec_graphs, lig_atom_positions, lig_atom_features, interface_points = iter_data
+            complex_graphs, interface_points = iter_data
 
             current_epoch = epoch_idx + iter_idx/iterations_per_epoch
 
@@ -417,18 +422,21 @@ def main():
             # if iter_idx < 10:
             #     print(f'{iter_idx=}, {time.time() - training_start:.2f} seconds since start', flush=True)
 
-            rec_graphs.ndata['h_0'] = rec_graphs.ndata['h_0'].float()
-            rec_graphs = rec_graphs.to(device)
-            lig_atom_positions = [ arr.to(device) for arr in lig_atom_positions ]
-            lig_atom_features = [ arr.float().to(device) for arr in lig_atom_features ]
-            interface_points = [ arr.to(device) for arr in interface_points ]
+            # set data type of atom features
+            for ntype in ['lig', 'rec']:
+                complex_graphs.nodes[ntype].ndata['h_0'] = complex_graphs.nodes[ntype].ndata['h_0'].float()
+
+            # move data to the gpu
+            complex_graphs = complex_graphs.to(device)
+            if use_interface_points:
+                interface_points = [ arr.to(device) for arr in interface_points ]
 
             optimizer.zero_grad()
             # TODO: add random translations to the complex positions??
 
             # encode receptor, add noise to ligand and predict noise
             # noise_loss, rec_encoder_loss = model(rec_graphs, lig_atom_positions, lig_atom_features)
-            loss_dict = model(rec_graphs, lig_atom_positions, lig_atom_features, interface_points)
+            loss_dict = model(complex_graphs, interface_points)
             # noise_loss, rec_encoder_loss = loss_dict['l2'], loss_dict['rec_encoder']
 
             # append losses for this batch into lists of all per-batch losses computed so far

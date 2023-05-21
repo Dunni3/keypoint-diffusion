@@ -27,10 +27,9 @@ dataset:
   max_fake_atom_frac: 0.2
   interface_distance_threshold: 5
   interface_exclusion_threshold: 2
-
-graph:
   n_keypoints: 20
-  cutoffs: {'rr': 4, 'rk': 100, 'kk': 0, 'kl': 8, 'll': 5, 'lk': 8}
+  graph_cutoffs: {'rr': 4, 'rk': 100, 'kk': 0, 'kl': 8, 'll': 5, 'lk': 8} # i suppose rk isn'y really necessary because we know all r's are connected to all k's...unless...they are not
+  
 
 
 rec_encoder:
@@ -62,6 +61,7 @@ dynamics:
 
 rec_encoder_loss:
   loss_type: 'none' # can be optimal_transport, gaussian_repulsion, hinge, or none
+  use_interface_points: False
 
 training:
   rec_encoder_loss_weight: 5.0
