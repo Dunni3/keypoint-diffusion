@@ -313,7 +313,7 @@ def main():
     # test_rec_graph, test_lig_pos, test_lig_feat, test_interface_points = train_dataset[0]
     test_complex_graph, _ = train_dataset[0]
     n_rec_atom_features = test_complex_graph.nodes['rec'].data['h_0'].shape[1]
-    n_lig_feat = test_complex_graph.nodes['rec'].ndata['h_0'].shape[1]
+    n_lig_feat = test_complex_graph.nodes['rec'].data['h_0'].shape[1]
     n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
 
     print(f'{n_rec_atom_features=}')
@@ -333,13 +333,14 @@ def main():
     use_interface_points = args['rec_encoder_loss']['use_interface_points']
 
     # get number of keyponts
-    n_keypoints = args['dataset']['n_keypoints']
+    n_keypoints = args['graph']['n_keypoints']
 
     # create diffusion model
     model = LigandDiffuser(
         n_lig_feat, 
         n_kp_feat,
         processed_dataset_dir=Path(args['dataset']['location']), # TODO: on principle, i don't like that our model needs access to the processed data dir for which it was trained.. need to fix/reorganize to avoid this
+        graph_config=args['graph'],
         dynamics_config=args['dynamics'], 
         rec_encoder_config=rec_encoder_config, 
         rec_encoder_loss_config=args['rec_encoder_loss'],
@@ -432,7 +433,7 @@ def main():
 
             # set data type of atom features
             for ntype in ['lig', 'rec']:
-                complex_graphs.nodes[ntype].ndata['h_0'] = complex_graphs.nodes[ntype].ndata['h_0'].float()
+                complex_graphs.nodes[ntype].data['h_0'] = complex_graphs.nodes[ntype].data['h_0'].float()
 
             # move data to the gpu
             complex_graphs = complex_graphs.to(device)

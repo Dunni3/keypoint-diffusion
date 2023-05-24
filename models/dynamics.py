@@ -3,7 +3,8 @@ import torch.nn as nn
 from typing import Dict, List
 import dgl.function as fn
 import dgl
-from torch_cluster import radius
+from torch_cluster import radius, radius_graph
+from utils import get_batch_info
 
 class LigRecConv(nn.Module):
 
@@ -242,13 +243,14 @@ class LigRecEGNN(nn.Module):
 
 class LigRecDynamics(nn.Module):
 
-    def __init__(self, atom_nf, rec_nf, n_layers=4, hidden_nf=255, act_fn=nn.SiLU, receptor_keypoint_k=6, ligand_k=8, use_tanh=False, message_norm=1, no_cg: bool = False):
+    def __init__(self, atom_nf, rec_nf, n_layers=4, hidden_nf=255, act_fn=nn.SiLU, use_tanh=False, message_norm=1, no_cg: bool = False,
+                 n_keypoints: int = 20, graph_cutoffs: dict = {}, update_kp_feat: bool = False):
         super().__init__()
 
-        self.receptor_keypoint_k = receptor_keypoint_k
-        self.ligand_k = ligand_k
         self.no_cg = no_cg    
-
+        self.n_keypoints = n_keypoints
+        self.graph_cutoffs = graph_cutoffs
+        self.update_kp_feat = update_kp_feat
     
         self.lig_encoder = nn.Sequential(
             nn.Linear(atom_nf, 2 * atom_nf),
@@ -272,63 +274,97 @@ class LigRecDynamics(nn.Module):
         self.egnn = LigRecEGNN(n_layers=n_layers, in_size=hidden_nf+1, hidden_size=hidden_nf+1, out_size=hidden_nf+1, use_tanh=use_tanh, message_norm=message_norm)
 
 
-    def forward(self, lig_pos, lig_feat, rec_pos, rec_feat, timestep, lig_indptr, lig_idx, rec_indptr, rec_idx,
-                unbatch_eps=False):
+    # def forward(self, lig_pos, lig_feat, rec_pos, rec_feat, timestep, lig_indptr, lig_idx, rec_indptr, rec_idx,
+    #             unbatch_eps=False):
+    def forward(self, g: dgl.DGLHeteroGraph, timestep, lig_batch_idx, rec_batch_idx, unbatch_eps=False):
         # inputs: ligand/receptor positions/features, timestep
         # outputs: predicted noise
 
-        # encode lig/rec features
-        lig_feat = self.lig_encoder(lig_feat)
-        rec_feat = self.rec_encoder(rec_feat)
+        with g.local_scope():
+
+            # get initial lig and rec features from graph
+            lig_feat = g.nodes['lig'].data['h_0']
+            kp_feat = g.nodes['kp'].data['h']
+
+            # encode lig/rec features
+            lig_feat = self.lig_encoder(lig_feat)
+            kp_feat = self.rec_encoder(kp_feat)
+
+            # add timestep to node features
+            t_lig = timestep[lig_batch_idx].view(-1, 1)
+            lig_feat = torch.concatenate([lig_feat, t_lig], dim=1)
+
+            t_kp = timestep[rec_batch_idx].view(-1, 1)
+            kp_feat = torch.concatenate([kp_feat, t_kp], dim=1)
+
+            # add lig-lig and kp<->lig edges to graph
+            g = self.add_lig_edges(g)
+
+
+        # # encode lig/rec features
+        # lig_feat = self.lig_encoder(lig_feat)
+        # rec_feat = self.rec_encoder(rec_feat)
 
     
-        # add timestep to node features
-        lig_feat_time = []
-        rec_feat_time = []
-        for i in range(len(lig_feat)):
-            t_reshaped = timestep[i].repeat(lig_feat[i].shape[0]).view(-1,1)
-            lig_feat_time.append( torch.cat([lig_feat[i], t_reshaped], dim=1) )
+        # # add timestep to node features
+        # lig_feat_time = []
+        # rec_feat_time = []
+        # for i in range(len(lig_feat)):
+        #     t_reshaped = timestep[i].repeat(lig_feat[i].shape[0]).view(-1,1)
+        #     lig_feat_time.append( torch.cat([lig_feat[i], t_reshaped], dim=1) )
 
-            t_reshaped = timestep[i].repeat(rec_feat[i].shape[0]).view(-1,1)
-            rec_feat_time.append( torch.cat([rec_feat[i], t_reshaped], dim=1) )
+        #     t_reshaped = timestep[i].repeat(rec_feat[i].shape[0]).view(-1,1)
+        #     rec_feat_time.append( torch.cat([rec_feat[i], t_reshaped], dim=1) )
         
-        t_lig = timestep[lig_idx].view(-1,1)
-        lig_feat_time = torch.cat([lig_feat, t_lig], dim=1)
+        # t_lig = timestep[lig_idx].view(-1,1)
+        # lig_feat_time = torch.cat([lig_feat, t_lig], dim=1)
 
-        t_rec = timestep[rec_idx].view(-1,1)
-        rec_feat_time = torch.cat([rec_feat, t_rec], dim=1)
+        # t_rec = timestep[rec_idx].view(-1,1)
+        # rec_feat_time = torch.cat([rec_feat, t_rec], dim=1)
 
-        # construct heterograph
-        batched_graph = self.make_graph(lig_pos, lig_feat_time, rec_pos, rec_feat_time)
+        # # construct heterograph
+        # batched_graph = self.make_graph(lig_pos, lig_feat_time, rec_pos, rec_feat_time)
 
-        # check that graph batching simply concats features - it does!
-        # this means we can return the batched eps predictions and then the ligand diffusion model
-        # can simply concat the added noise for input to the loss function
+        # # check that graph batching simply concats features - it does!
+        # # this means we can return the batched eps predictions and then the ligand diffusion model
+        # # can simply concat the added noise for input to the loss function
 
-        # pass through LigRecEGNN
-        h, x = self.egnn(batched_graph)
+        # # pass through LigRecEGNN
+        # h, x = self.egnn(batched_graph)
         
-        # slice off time dimension
-        h_final = h['lig'][:, :-1]
+        # # slice off time dimension
+        # h_final = h['lig'][:, :-1]
 
-        # decode lig features and substract off original node coordinates from predicted ones
-        # these become our noise predictions, \hat{\epsilon}
-        eps_h = self.lig_decoder(h_final) 
-        eps_x = x['lig'] - batched_graph.nodes["lig"].data["x_0"]
+        # # decode lig features and substract off original node coordinates from predicted ones
+        # # these become our noise predictions, \hat{\epsilon}
+        # eps_h = self.lig_decoder(h_final) 
+        # eps_x = x['lig'] - batched_graph.nodes["lig"].data["x_0"]
 
-        # unbatch noise estimates - this is necessary when sampling because
-        # we are going to use these noise estimates to denoise the input data.
-        # during training, we just compute the l2 loss over all the predicted noise values
-        # so we can deal with all of the noise predictions being lumped into one tensor
-        if unbatch_eps:
-            batched_graph.nodes["lig"].data["eps_h"] = eps_h
-            batched_graph.nodes["lig"].data["eps_x"] = eps_x
+        # # unbatch noise estimates - this is necessary when sampling because
+        # # we are going to use these noise estimates to denoise the input data.
+        # # during training, we just compute the l2 loss over all the predicted noise values
+        # # so we can deal with all of the noise predictions being lumped into one tensor
+        # if unbatch_eps:
+        #     batched_graph.nodes["lig"].data["eps_h"] = eps_h
+        #     batched_graph.nodes["lig"].data["eps_x"] = eps_x
 
-            unbatched_graphs = dgl.unbatch(batched_graph)
-            eps_h = [ g.nodes['lig'].data['eps_h'] for g in unbatched_graphs ]
-            eps_x = [ g.nodes['lig'].data['eps_x'] for g in unbatched_graphs ]
+        #     unbatched_graphs = dgl.unbatch(batched_graph)
+        #     eps_h = [ g.nodes['lig'].data['eps_h'] for g in unbatched_graphs ]
+        #     eps_x = [ g.nodes['lig'].data['eps_x'] for g in unbatched_graphs ]
  
-        return eps_h, eps_x
+        # return eps_h, eps_x
+
+    def add_lig_edges(self, g: dgl.DGLHeteroGraph, lig_batch_idx, kp_batch_idx) -> dgl.DGLHeteroGraph:
+
+        batch_num_nodes, batch_num_edges = get_batch_info(g)
+
+        # add lig-lig edges
+        ll_idxs = radius_graph(g.nodes['lig'].data['x_t'], r=self.graph_cutoffs['ll'], batch=lig_batch_idx, max_num_neighbors=200)
+        g.add_edges(ll_idxs[0], ll_idxs[1], etype='ll')
+
+        # compute rec -> lig edges
+        kl_idxs = radius(x=g.nodes['lig'].data['x_t'], y=g.nodes['kp'].data['x'], batch_x=lig_batch_idx, batch_y=kp_batch_idx, r=self.graph_cutoffs['kl'], max_num_neighbors=100)
+        g.add_edges(kl_idxs[0], kl_idxs[1])
 
 
     def make_graph(self, lig_pos, lig_feat, rec_pos, rec_feat):

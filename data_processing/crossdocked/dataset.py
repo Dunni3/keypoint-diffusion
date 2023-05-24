@@ -68,7 +68,7 @@ class CrossDockedDataset(dgl.data.DGLDataset):
     def __getitem__(self, i):
 
 
-        lig_start_idx, lig_end_idx = self.lig_segements[i:i+2]
+        lig_start_idx, lig_end_idx = self.lig_segments[i:i+2]
         rec_start_idx, rec_end_idx = self.rec_segments[i:i+2]
         ip_start_idx, ip_end_idx = self.ip_segments[i:i+2]
 
@@ -111,7 +111,9 @@ class CrossDockedDataset(dgl.data.DGLDataset):
 
                 complex_graph.add_nodes(n_fake, ntype='lig')
                 complex_graph.nodes['lig'].data['x_0'] = lig_pos
-                complex_graph.nodes['lig'].ndata['h_0'] = lig_feat
+                complex_graph.nodes['lig'].data['h_0'] = lig_feat
+            else:
+                complex_graph.nodes['lig'].data['h_0'] = lig_feat
         
         return complex_graph, interface_points
 
@@ -133,7 +135,7 @@ class CrossDockedDataset(dgl.data.DGLDataset):
             self.rec_feat = data['rec_feat']
             self.interface_points = data['interface_points']
             self.rec_segments = data['rec_segments']
-            self.lig_segements = data['lig_segments']
+            self.lig_segments = data['lig_segments']
             self.ip_segments = data['ip_segments']
             self.rec_files = data['rec_files']
             self.lig_files = data['lig_files']

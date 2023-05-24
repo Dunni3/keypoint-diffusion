@@ -31,7 +31,7 @@ dataset:
   
 graph:
   n_keypoints: 20
-  graph_cutoffs: {'rr': 4, 'rk': 100, 'kk': 0, 'kl': 8, 'll': 5, 'lk': 8} # i suppose rk isn'y really necessary because we know all r's are connected to all k's...unless...they are not
+  graph_cutoffs: {'rr': 4, 'rk': 100, 'kk': 8, 'kl': 8, 'll': 5} # i suppose rk isn'y really necessary because we know all r's are connected to all k's...unless...they are not
 
 rec_encoder:
   n_convs: 6
@@ -40,11 +40,15 @@ rec_encoder:
   use_tanh: True
   coords_range: 10
   kp_feat_scale: 1.0
-  use_keypoint_feat_mha: False
-  feat_mha_heads: 3
   message_norm: 10
+  k_closest: 0
+  kp_rad: 3
   no_cg: False
   fix_pos: True
+  use_sameres_feat: True
+  n_kk_convs: 2
+  n_kk_heads: 4
+  norm: True
 
 diffusion:
   n_timesteps: 1000
@@ -55,10 +59,9 @@ diffusion:
 dynamics:
   n_layers: 2
   hidden_nf: 256
-  receptor_keypoint_k: 6
-  ligand_k: 8
   use_tanh: True # whether to use tanh activation for coordinate updates
-  message_norm: 10 
+  message_norm: 10
+  update_kp_feat: True 
 
 
 rec_encoder_loss:
@@ -79,7 +82,7 @@ training:
   save_interval: 100 # epoch
   sample_interval: 100 # number of epochs between sampling/testing molecules
   test_epochs: 2 # number of epochs to run when evaluating on the test set
-  num_workers: 0
+  num_workers: 2
   scheduler:
     warmup_length: 1
     rec_enc_weight_decay_midpoint: 0

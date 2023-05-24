@@ -4,7 +4,8 @@ import openbabel
 import tempfile
 import torch
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
+import dgl
 
 # this is taken from DiffSBDD, minor modification to return the file contents without writing to disk if filename=None 
 def write_xyz_file(coords, atom_types, filename = None):
@@ -88,3 +89,14 @@ def concat_graph_data(graph_data: List[torch.tensor], device=None):
     graph_indptr = torch.zeros(len(graph_data)+1, device=device, dtype=int)
     graph_indptr[1:] = torch.cumsum(graph_sizes, dim=0)
     return concat_data, graph_idx, graph_indptr
+
+def get_batch_info(g: dgl.DGLHeteroGraph) -> Tuple[dict,dict]:
+    batch_num_nodes = {}
+    for ntype in g.ntypes:
+        batch_num_nodes[ntype] = g.batch_num_nodes(ntype)
+
+    batch_num_edges = {}
+    for etype in g.canonical_etypes:
+        batch_num_edges[etype] = g.batch_num_edges(etype)
+
+    return batch_num_nodes, batch_num_edges

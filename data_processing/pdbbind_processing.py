@@ -261,7 +261,7 @@ def build_initial_complex_graph(rec_atom_positions: torch.Tensor, rec_atom_featu
     g.nodes['rec'].data['h_0'] = rec_atom_features
     
     # add edge data
-    g.edges['rr'].data['same_res'] = same_res_edge
+    g.edges['rr'].data['same_res'] = same_res_edge.view(-1, 1)
 
     return g
 
