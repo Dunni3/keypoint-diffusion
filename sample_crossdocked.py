@@ -16,16 +16,22 @@ def parse_arguments():
     p = argparse.ArgumentParser()
     p.add_argument('--model_dir', type=str, required=True, help='directory of training result for the model')
     p.add_argument('--model_file', type=str, default=None, help='Path to file containing model weights. If not specified, the most recently saved weights file in model_dir will be used')
-    p.add_argument('--epoch_sample', type=float, default=None, help='The epoch value of the model checkpoint that you want to sample. If specified, the checkpoint having the closest epoch value to the argument will be used for sampling.')
     p.add_argument('--n_replicates', type=int, default=1)
     p.add_argument('--n_complexes', type=int, default=1)
     # p.add_argument('--batch_size', type=int, default=8)
     p.add_argument('--random', action='store_true')
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--output_dir', type=str, default='sampled_mols/')
+    p.add_argument('--dataset', type=str, default='bindingmoad')
 
 
     p.add_argument('--visualize', action='store_true')
+
+    if args.model_file is not None and args.model_dir is not None:
+        raise ValueError('only model_file or model_dir can be specified but not both')
+    
+    if args.dataset not in ['crossdocked', 'bindingmoad']:
+        raise ValueError('unsupported dataset')
     
 
     args = p.parse_args()
@@ -121,7 +127,14 @@ def main():
     output_dir.mkdir(exist_ok=True)
 
     # get filepath of config file within model_dir
-    model_dir = Path(cmd_args.model_dir)
+    if cmd_args.model_dir is not None:
+        model_dir = Path(cmd_args.model_dir)
+        model_file = model_dir / 'model.pt'
+    elif cmd_args.model_file is not None:
+        model_file = Path(cmd_args.model_file)
+        model_dir = model_file.parent
+    
+    # get config file
     config_file = model_dir / 'config.yml'
 
 
@@ -158,14 +171,8 @@ def main():
         rec_encoder_loss_config=args['rec_encoder_loss'],
         **args['diffusion']).to(device=device)
 
-    # get file for model weights
-    if cmd_args.model_file is None:
-        model_weights_file = model_dir / 'model.pt'
-    else:
-        model_weights_file = cmd_args.model_file
-
     # load model weights
-    model.load_state_dict(torch.load(model_weights_file))
+    model.load_state_dict(torch.load(model_file))
     model.eval()
     
     # get dataset indexes for complexes we are going to sample
