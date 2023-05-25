@@ -192,7 +192,7 @@ def main():
         complex_output_dirs[idx] = complex_output_dir
 
         # get the data for the reference complex
-        rec_graph, ref_lig_pos, ref_lig_feat = test_dataset[idx]
+        rec_graph, ref_lig_pos, ref_lig_feat, _ = test_dataset[idx]
 
         # move data to correct device
         rec_graph = rec_graph.to(device)
