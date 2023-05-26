@@ -11,6 +11,7 @@ from data_processing.crossdocked.dataset import CrossDockedDataset
 from models.ligand_diffuser import LigandDiffuser
 from utils import write_xyz_file
 from analysis.molecule_builder import make_mol_openbabel
+from data_processing.make_bindingmoad_pocketfile import write_pocket_file
 
 def parse_arguments():
     p = argparse.ArgumentParser()
@@ -23,18 +24,18 @@ def parse_arguments():
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--output_dir', type=str, default='sampled_mols/')
     p.add_argument('--dataset', type=str, default='bindingmoad')
+    p.add_argument('--idxs', type=int, nargs='+', default=[])
 
 
     p.add_argument('--visualize', action='store_true')
+
+    args = p.parse_args()
 
     if args.model_file is not None and args.model_dir is not None:
         raise ValueError('only model_file or model_dir can be specified but not both')
     
     if args.dataset not in ['crossdocked', 'bindingmoad']:
         raise ValueError('unsupported dataset')
-    
-
-    args = p.parse_args()
 
     return args
 
@@ -48,46 +49,19 @@ def make_reference_files(dataset_idx: int, dataset: CrossDockedDataset, output_d
     ref_rec_file = Path(ref_rec_file)
     ref_lig_file = Path(ref_lig_file)
 
-    # # get receptor object and atom coordinates
-    # rec: prody.AtomGroup = prody.parsePDB(str(ref_rec_file))
-    # rec_coords = rec.getCoords()
 
-    # # get ligand object 
-    # suppl = Chem.SDMolSupplier(str(ref_lig_file), sanitize=False, removeHs=remove_hydrogen)
-    # ligands = list(suppl)
-    # if len(ligands) > 1:
-    #     raise NotImplementedError('Multiple ligands found. Code is not written to handle multiple ligands.')
-    # ligand = ligands[0]
-
-    # # get atom positions
-    # ligand_conformer = ligand.GetConformer()
-    # ligand_atom_positions = ligand_conformer.GetPositions()
-
-    # ligand_com = ligand_atom_positions.mean(axis=0, keepdims=True)
-
-    # # remove ligand COM from receptor coordinates
-    # rec.setCoords( rec_coords - ligand_com )
-
-    # # remove ligand COM from ligand coordinates
-    # new_lig_pos = ligand_atom_positions - ligand_com
-    # for i in range(ligand.GetNumAtoms()):
-    #     x,y,z = new_lig_pos[i]
-    #     ligand_conformer.SetAtomPosition(i,Point3D(x,y,z))
 
     # get filepath of new ligand and receptor files
     centered_lig_file = output_dir / ref_lig_file.name
     centered_rec_file = output_dir / ref_rec_file.name
 
-    # # write ligand to new file
-    # lig_writer = Chem.SDWriter(str(centered_lig_file))
-    # lig_writer.write(ligand)
-    # lig_writer.close()
-
-    # # write receptor to new file
-    # prody.writePDB(str(centered_rec_file), rec)
-
     shutil.copy(ref_rec_file, centered_rec_file)
     shutil.copy(ref_lig_file, centered_lig_file)
+
+
+    # write the pocket file 
+    pocket_file = output_dir / 'pocket.pdb'
+    write_pocket_file(ref_rec_file, ref_lig_file, pocket_file, cutoff=8)
 
     return output_dir
 
@@ -176,7 +150,9 @@ def main():
     model.eval()
     
     # get dataset indexes for complexes we are going to sample
-    if cmd_args.random:
+    if cmd_args.idxs != []:
+        dataset_idxs = cmd_args.idxs
+    elif cmd_args.random:
         dataset_idxs = rng.choice(len(test_dataset), size=cmd_args.n_complexes, replace=False)
     else:
         dataset_idxs = np.arange(cmd_args.n_complexes)
