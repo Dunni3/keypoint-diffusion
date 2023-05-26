@@ -78,18 +78,6 @@ def get_rec_atom_map(dataset_config: dict):
     return rec_element_map, lig_element_map
 
 
-def concat_graph_data(graph_data: List[torch.tensor], device=None):
-
-    if device is None:
-        device = graph_data[0].device
-
-    concat_data = torch.concatenate(graph_data, dim=0)
-    graph_sizes = torch.tensor([ x.shape[0] for x in graph_data], dtype=int, device=device)
-    graph_idx = torch.arange(graph_sizes.shape[0], device=device).repeat_interleave(graph_sizes)
-    graph_indptr = torch.zeros(len(graph_data)+1, device=device, dtype=int)
-    graph_indptr[1:] = torch.cumsum(graph_sizes, dim=0)
-    return concat_data, graph_idx, graph_indptr
-
 def get_batch_info(g: dgl.DGLHeteroGraph) -> Tuple[dict,dict]:
     batch_num_nodes = {}
     for ntype in g.ntypes:
@@ -108,3 +96,33 @@ def get_edges_per_batch(edge_node_idxs: torch.Tensor, batch_size: int, node_batc
     edges_per_batch_full = torch.zeros_like(batch_idxs)
     edges_per_batch_full[batches_with_edges] = edges_per_batch
     return edges_per_batch
+
+def copy_graph(g: dgl.DGLHeteroGraph, n_copies: int, lig_atoms_per_copy: torch.Tensor = None):
+
+    if lig_atoms_per_copy is not None:
+        # TODO: drop or add ligand atoms as needed 
+        raise NotImplementedError
+    
+    # get edge data
+    e_data_dict = {}
+    for etype in g.canonical_etypes:
+        e_data_dict[etype] = g.edges(form='uv', etype=etype)
+
+    # get number of nodes
+    num_nodes_dict = {}
+    for ntype in g.ntypes:
+        num_nodes_dict[ntype] = g.num_nodes(ntype=ntype)
+
+    # make copies of graph
+    g_copies = [ dgl.heterograph(e_data_dict, num_nodes_dict=num_nodes_dict, device=g.device) for _ in range(n_copies)]
+
+    # transfer over ligand, receptor, and keypoint features
+    # TODO: we don't copy edge features. at the time of writing this function, we don't need to bc this function operates only on graphs with encoded recepotrs
+    # however, in theory, to fully copy a graph of our complex, we should copy the same-residue edge features on rr edges.
+    for idx in range(n_copies):
+        for ntype in ['lig', 'rec', 'kp']:
+            for feat in ['x_0', 'h_0']:
+                g_copies[idx].nodes[ntype].data[feat] = g.nodes[ntype].data[feat]
+
+    g_batched = dgl.batch(g_copies)
+    return g_batched 

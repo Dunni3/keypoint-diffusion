@@ -80,7 +80,7 @@ class CrossDockedDataset(dgl.data.DGLDataset):
         rec_res_idx = self.rec_res_idx[rec_start_idx:rec_end_idx]
 
 
-        complex_graph = build_initial_complex_graph(rec_pos, rec_feat, lig_pos, lig_feat, rec_res_idx, n_keypoints=self.n_keypoints, cutoffs=self.graph_cutoffs)
+        complex_graph = build_initial_complex_graph(rec_pos, rec_feat, rec_res_idx, n_keypoints=self.n_keypoints, cutoffs=self.graph_cutoffs, lig_atom_positions=lig_pos, lig_atom_features=lig_feat)
 
         # complex_graph = self.data['complex_graph'][i]
         # interface_points = self.data['interface_points'][i]

@@ -13,7 +13,7 @@ from tqdm import trange
 from data_processing.crossdocked.dataset import CrossDockedDataset
 from data_processing.make_bindingmoad_pocketfile import write_pocket_file
 from models.ligand_diffuser import LigandDiffuser
-from utils import write_xyz_file
+from utils import write_xyz_file, copy_graph
 from analysis.molecule_builder import build_molecule, process_molecule
 from analysis.metrics import MoleculeProperties
 from analysis.pocket_minimization import pocket_minimization
@@ -142,7 +142,7 @@ def main():
     # create test dataset object
     dataset_path = Path(args['dataset']['location']) 
     test_dataset_path = str(dataset_path / f'{cmd_args.split}.pkl')
-    test_dataset = CrossDockedDataset(name=cmd_args.split, processed_data_file=test_dataset_path, **args['dataset'])
+    test_dataset = CrossDockedDataset(name=cmd_args.split, processed_data_file=test_dataset_path, **args['graph'], **args['dataset'])
 
     # get number of ligand and receptor atom features
     n_lig_feat = args['reconstruction']['n_lig_feat']
@@ -150,14 +150,22 @@ def main():
 
     rec_encoder_config = args["rec_encoder"]
 
+    # determine if we're using fake atoms
+    try:
+        use_fake_atoms = args['dataset']['max_fake_atom_frac'] > 0
+    except KeyError:
+        use_fake_atoms = False
+
     # create diffusion model
     model = LigandDiffuser(
         n_lig_feat, 
         n_kp_feat,
         processed_dataset_dir=Path(args['dataset']['location']),
+        graph_config=args['graph'],
         dynamics_config=args['dynamics'], 
         rec_encoder_config=rec_encoder_config, 
         rec_encoder_loss_config=args['rec_encoder_loss'],
+        use_fake_atoms=use_fake_atoms,
         **args['diffusion']).to(device=device)
 
     # load model weights
@@ -186,25 +194,24 @@ def main():
         pocket_sample_start = time.time()
 
         # get receptor graph and reference ligand positions/features from test set
-        rec_graph, ref_lig_pos, ref_lig_feat, _ = test_dataset[dataset_idx]
+        ref_graph, _ = test_dataset[dataset_idx]
         ref_rec_file, ref_lig_file = test_dataset.get_files(dataset_idx) # get original rec/lig files
 
         # move data to gpu
-        rec_graph = rec_graph.to(device)
-        # ref_lig_pos.to(device)
-        # ref_lig_feat.to(device)
+        ref_graph = ref_graph.to(device)
         
-        n_lig_atoms: int = ref_lig_pos.shape[0] # get number of atoms in the ligand
+        n_lig_atoms: int = ref_graph.num_nodes('lig') # get number of atoms in the reference ligand
         atoms_per_ligand = torch.ones(size=(cmd_args.max_batch_size,), dtype=int, device=device)*n_lig_atoms # input to sampling function 
 
         # encode the receptor
-        kp_pos, kp_feat, init_rec_atom_com, init_kp_com = model.encode_receptors([rec_graph])
+        ref_graph, init_rec_atom_com, init_kp_com = model.encode_receptors(ref_graph)
 
         # create batch_size copies of the encoded receptor
-        kp_pos = [ kp_pos[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
-        kp_feat = [ kp_feat[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
-        init_rec_atom_com = [ init_rec_atom_com[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
-        init_kp_com = [ init_kp_com[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
+        g_copies = copy_graph(ref_graph, cmd_args.max_batch_size)
+        # kp_pos = [ kp_pos[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
+        # kp_feat = [ kp_feat[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
+        # init_rec_atom_com = [ init_rec_atom_com[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
+        # init_kp_com = [ init_kp_com[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
 
         pocket_raw_mols = []
 

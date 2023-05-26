@@ -218,10 +218,17 @@ def build_receptor_graph(atom_positions: torch.Tensor, atom_features: torch.Tens
     g.ndata['h_0'] = atom_features
     return g
 
-def build_initial_complex_graph(rec_atom_positions: torch.Tensor, rec_atom_features: torch.Tensor, lig_atom_positions: torch.Tensor, lig_atom_features: torch.Tensor, pocket_res_idx: torch.Tensor, n_keypoints: int, cutoffs: dict):
+def build_initial_complex_graph(rec_atom_positions: torch.Tensor, rec_atom_features: torch.Tensor, pocket_res_idx: torch.Tensor, n_keypoints: int, cutoffs: dict, lig_atom_positions: torch.Tensor = None, lig_atom_features: torch.Tensor = None):
+
+    if (lig_atom_positions is not None) ^ (lig_atom_features is not None):
+        raise ValueError('ligand position and features must be either be both supplied or both left as None')
 
     n_rec_atoms = rec_atom_positions.shape[0]
-    n_lig_atoms = lig_atom_positions.shape[0]
+
+    if lig_atom_positions is None:
+        n_lig_atoms = 0
+    else:
+        n_lig_atoms = lig_atom_positions.shape[0]
     
 
     # i've initialized this as an empty dict just to make clear the different types of edges in graph and their names
@@ -255,8 +262,9 @@ def build_initial_complex_graph(rec_atom_positions: torch.Tensor, rec_atom_featu
     g = dgl.heterograph(graph_data, num_nodes_dict=num_nodes_dict)
 
     # add node data
-    g.nodes['lig'].data['x_0'] = lig_atom_positions
-    g.nodes['lig'].data['h_0'] = lig_atom_features
+    if lig_atom_positions is not None:
+        g.nodes['lig'].data['x_0'] = lig_atom_positions
+        g.nodes['lig'].data['h_0'] = lig_atom_features
     g.nodes['rec'].data['x_0'] = rec_atom_positions
     g.nodes['rec'].data['h_0'] = rec_atom_features
     

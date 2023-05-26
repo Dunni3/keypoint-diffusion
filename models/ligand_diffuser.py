@@ -232,25 +232,30 @@ class LigandDiffuser(nn.Module):
 
         return sigma2_t_given_s, sigma_t_given_s, alpha_t_given_s
 
-    def encode_receptors(self, receptors: List[dgl.DGLGraph]):
+    def encode_receptors(self, g: dgl.DGLHeteroGraph):
 
-        device = receptors[0].device
-        n_receptors = len(receptors)
+        device = g.device
+        n_receptors = g.batch_size
 
         # compute initial receptor atom COM
-        init_rec_atom_com = [ g.ndata["x_0"].mean(dim=0, keepdim=True) for g in receptors ]
+        init_rec_atom_com = dgl.readout_nodes(g, feat='x_0', op='mean', ntype='rec')
 
         # get keypoints positions/features
-        kp_pos, kp_feat = self.rec_encoder(dgl.batch(receptors))
+        g = self.rec_encoder(g)
 
         # get initial keypoint center of mass
-        init_kp_com = [ x.mean(dim=0, keepdim=True) for x in kp_pos ]
+        init_kp_com = dgl.readout_nodes(g, feat='x_0', op='mean', ntype='kp')
+
+        # get batch indicies of every ligand and keypoint - useful later
+        batch_idx = torch.arange(g.batch_size, device=device)
+        lig_batch_idx = batch_idx.repeat_interleave(g.batch_num_nodes('lig'))
+        kp_batch_idx = batch_idx.repeat_interleave(g.batch_num_nodes('kp'))
 
         # remove (receptor atom COM, or keypoint COM) from receptor keypoints
-        sampling_com = init_rec_atom_com
-        kp_pos = [  kp_pos[i] - sampling_com[i] for i in range(len(kp_pos)) ]
+        # TODO: does this effect sampling performance? there is an argument to be made to starting sampling at keypoint COM?
+        g.nodes['kp'].data['x_0'] = g.nodes['kp'].data['x_0'] - init_rec_atom_com[kp_batch_idx]
 
-        return kp_pos, kp_feat, init_rec_atom_com, init_kp_com
+        return g, init_rec_atom_com, init_kp_com
 
     
     @torch.no_grad()
@@ -352,19 +357,28 @@ class LigandDiffuser(nn.Module):
 
         return samples
 
-    @torch.no_grad()
-    def sample_from_encoded_receptors(self, kp_pos: List[torch.Tensor], kp_feat: List[torch.Tensor], init_atom_com: List[torch.Tensor], init_kp_com: List[torch.Tensor], n_lig_atoms: List[int], visualize=False):
+    # @torch.no_grad()
+    # def sample_from_encoded_receptors(self, kp_pos: List[torch.Tensor], kp_feat: List[torch.Tensor], 
+    #                                   init_atom_com: List[torch.Tensor], init_kp_com: List[torch.Tensor], 
+    #                                   n_lig_atoms: List[int], visualize=False):
+    def sample_from_encoded_receptors(self, g: dgl.DGLHeteroGraph, 
+                                      init_atom_com: torch.Tensor, init_kp_com: torch.Tensor, 
+                                      visualize=False):
 
-        device = kp_pos[0].device
-        n_complexes = len(kp_pos)
+        device = g.device
+        n_complexes = g.batch_size
+        
+        # get batch indicies of every ligand and keypoint - useful later
+        batch_idx = torch.arange(g.batch_size, device=device)
+        lig_batch_idx = batch_idx.repeat_interleave(g.batch_num_nodes('lig'))
+        kp_batch_idx = batch_idx.repeat_interleave(g.batch_num_nodes('kp'))
 
         # sample initial positions/features of ligands
-        lig_pos, lig_feat = [], []
-        for complex_idx in range(n_complexes):
-            lig_pos.append(torch.randn((n_lig_atoms[complex_idx], 3), device=device)) 
-            lig_feat.append(torch.randn((n_lig_atoms[complex_idx], self.n_lig_features), device=device))
+        for feat in ['x_0', 'h_0']:
+            g.nodes['lig'].data[feat] = torch.randn(g.nodes['lig'].data[feat].shape, device=device)
 
         if visualize:
+            raise NotImplementedError
             init_kp_com_cpu = [ x.detach().cpu() for x in init_kp_com ]
             # convert positions and features to cpu
             # convert positions to input frame of reference: remove current kp com and add original init kp com
@@ -373,7 +387,7 @@ class LigandDiffuser(nn.Module):
             lig_feat_frames = [ [ x.detach().cpu() for x in lig_feat ] ]
 
         # remove ligand com from every receptor/ligand complex
-        kp_pos, lig_pos = self.remove_com(kp_pos, lig_pos, com='ligand')
+        g = self.remove_com(g, lig_batch_idx, kp_batch_idx, com='ligand')
 
         # Iteratively sample p(z_s | z_t) for t = 1, ..., T, with s = t - 1.
         for s in reversed(range(0, self.n_timesteps)):
@@ -382,7 +396,7 @@ class LigandDiffuser(nn.Module):
             s_arr = s_arr / self.n_timesteps
             t_arr = t_arr / self.n_timesteps
 
-            lig_feat, lig_pos, kp_pos = self.sample_p_zs_given_zt(s_arr, t_arr, kp_pos, kp_feat, lig_pos, lig_feat)
+            lig_feat, lig_pos, kp_pos = self.sample_p_zs_given_zt(s_arr, t_arr, g, lig_batch_idx, kp_batch_idx)
 
             if visualize:
 
@@ -458,9 +472,9 @@ class LigandDiffuser(nn.Module):
         samples = self._sample(receptors=receptors, n_lig_atoms=n_lig_atoms, rec_enc_batch_size=rec_enc_batch_size, diff_batch_size=diff_batch_size)
         return samples
 
-    def sample_p_zs_given_zt(self, s, t, rec_pos: List[torch.Tensor], rec_feat: List[torch.Tensor], zt_pos: List[torch.Tensor], zt_feat: List[torch.Tensor]):
+    def sample_p_zs_given_zt(self, s: torch.Tensor, t: torch.Tensor, g: dgl.heterograph, lig_batch_idx: torch.Tensor, kp_batch_idx: torch.Tensor):
 
-        n_samples = len(s)
+        n_samples = g.batch_size
         device = rec_pos[0].device
 
         # compute the alpha and sigma terms that define p(z_s | z_t)
@@ -473,35 +487,40 @@ class LigandDiffuser(nn.Module):
 
         # predict the noise that we should remove from this example, epsilon
         # they will each be lists containing the epsilon tensors for each ligand
-        eps_h, eps_x = self.dynamics(zt_pos, zt_feat, rec_pos, rec_feat, t, unbatch_eps=True)
+        eps_h, eps_x = self.dynamics(g, lig_batch_idx, kp_batch_idx)
 
         var_terms = sigma2_t_given_s / alpha_t_given_s / sigma_t
+
+        # expand distribution parameters by batch assignment for every ligand atom
+        alpha_t_given_s = alpha_t_given_s[lig_batch_idx].view(-1, 1)
+        var_terms = var_terms[lig_batch_idx].view(-1, 1)
+
+
+
 
         # compute the mean (mu) for positions/features of the distribution p(z_s | z_t)
         # this is essentially our approximation of the completely denoised ligand i think?
         # i think that's not quite correct but i think we COULD formulate sampling this way
         # -- this is how sampling is conventionally formulated for diffusion models IIRC
         # not sure why the authors settled on the alternative formulation
-        mu_pos = []
-        mu_feat = []
-        for i in range(n_samples):
-            mu_pos_i = zt_pos[i]/alpha_t_given_s[i] - var_terms[i]*eps_x[i]
-            mu_feat_i = zt_feat[i]/alpha_t_given_s[i] - var_terms[i]*eps_h[i]
-
-            mu_pos.append(mu_pos_i)
-            mu_feat.append(mu_feat_i)
+        mu_pos = g.nodes['lig'].data['x_0']/alpha_t_given_s - var_terms*eps_x
+        mu_feat = g.nodes['lig'].data['h_0']/alpha_t_given_s - var_terms*eps_h
         
         # Compute sigma for p(zs | zt)
         sigma = sigma_t_given_s * sigma_s / sigma_t
+        sigma = sigma[lig_batch_idx].view(-1, 1)
 
         # sample zs given the mu and sigma we just computed
-        zs_pos = []
-        zs_feat = []
-        for i in range(n_samples):
-            pos_noise = torch.randn(zt_pos[i].shape, device=device)
-            feat_noise = torch.randn(zt_feat[i].shape, device=device)
-            zs_pos.append( mu_pos[i] + sigma[i]*pos_noise )
-            zs_feat.append(mu_feat[i] + sigma[i]*feat_noise)
+        # zs_pos = []
+        # zs_feat = []
+        # for i in range(n_samples):
+        #     pos_noise = torch.randn(zt_pos[i].shape, device=device)
+        #     feat_noise = torch.randn(zt_feat[i].shape, device=device)
+        #     zs_pos.append( mu_pos[i] + sigma[i]*pos_noise )
+        #     zs_feat.append(mu_feat[i] + sigma[i]*feat_noise)
+        pos_noise = torch.randn(g.nodes['lig'].data['x_0'].shape, device=device)
+        feat_noise = torch.randn(g.nodes['lig'].data['h_0'].shape, device=device)
+        # SAMPLE USING COMPUTE MUS AND SIGMAS!!!
 
         # remove ligand COM from system
         rec_pos, zs_pos = self.remove_com(rec_pos, zs_pos, com='ligand')

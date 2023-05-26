@@ -214,15 +214,14 @@ def test_model(model, test_dataloader, args, device):
     losses = defaultdict(list)
 
     for _ in range(args['training']['test_epochs']):
-        for rec_graphs, lig_atom_positions, lig_atom_features, interface_points in test_dataloader:
+        for complex_graphs, interface_points in test_dataloader:
 
-            rec_graphs = rec_graphs.to(device)
-            lig_atom_positions = [ arr.to(device) for arr in lig_atom_positions ]
-            lig_atom_features = [ arr.to(device) for arr in lig_atom_features ]
-            interface_points = [ arr.to(device) for arr in interface_points ]
+            complex_graphs = complex_graphs.to(device)
+            if args['rec_encoder_loss']['use_interface_points']:
+                interface_points = [ arr.to(device) for arr in interface_points ]
 
             # do forward pass / get losses for this batch
-            loss_dict = model(rec_graphs, lig_atom_positions, lig_atom_features, interface_points)
+            loss_dict = model(complex_graphs, interface_points)
 
             # append losses for this batch into lists of all per-batch losses computed so far
             for k,v in loss_dict.items():
