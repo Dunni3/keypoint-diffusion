@@ -9,7 +9,7 @@ from einops import rearrange
 from torch_cluster import radius_graph, radius, knn
 from torch_scatter import segment_csr
 
-from utils import get_batch_info
+from utils import get_batch_info, get_edges_per_batch
 
 class ReceptorConv(nn.Module):
     # this is adapted from the EGNN implementation in DGL
@@ -140,7 +140,7 @@ class ReceptorConv(nn.Module):
             )
             # normalize coordinate difference
             g.edges['rr'].data["x_diff"] = g.edges['rr'].data["x_diff"] / (
-                g.edges['rr'].data["radial"] + 1e-30
+                g.edges['rr'].data["radial"] + 1
             )
             g.apply_edges(self.message, etype='rr')
             g.update_all(fn.copy_e("msg_x", "m"), fn.sum("m", "x_neigh"), etype='rr')
@@ -186,7 +186,7 @@ class RecKeyConv(nn.Module):
         with complex_graph.local_scope():
 
             h_src = complex_graph.nodes['rec'].data['h']
-            h_dst = complex_graph.nodes['kp'].data['h']
+            h_dst = complex_graph.nodes['kp'].data['h_0']
 
             # get queries/keys
             ft_src = self.fc_src(h_src).view(-1, self.num_heads, self.out_feats) 
@@ -254,10 +254,7 @@ class RecKeyConv(nn.Module):
         rad_idxs = radius(x=g.nodes['rec'].data['x_0'], y=kp_pos, batch_x=rec_atom_batch, batch_y=kp_batch, r=self.kp_rad, max_num_neighbors=100) # shape (2, n_keypoints*?*batch_size)
 
         # get number of edges corresponding to each batch
-        batches_with_edges, edges_per_batch = torch.unique_consecutive(kp_batch[rad_idxs[0]], return_counts=True)
-        edges_per_batch_full = torch.zeros_like(batch_idxs)
-        edges_per_batch_full[batches_with_edges] = edges_per_batch
-        batch_num_edges['rk'] = edges_per_batch_full
+        batch_num_edges['rk'] = get_edges_per_batch(rad_idxs[0], g.batch_size, kp_batch)
 
         g.remove_edges(g.edges(form='eid', etype='rk'), etype='rk') # remove all receptor-keypoint edges
         g.add_edges(rad_idxs[1], rad_idxs[0], etype='rk') # add back the edges identified by radius
@@ -349,12 +346,12 @@ class KeyKeyConv(nn.Module):
             batch_num_nodes = { k:v for k,v in batch_num_nodes.items() if k == 'kp'}
             batch_num_edges = { k:v for k,v in batch_num_edges.items() if k[1] == 'kk' }
 
-            g_kp = dgl.to_homogeneous(dgl.node_type_subgraph(g, ntypes=['kp']), ndata=['h'])
+            g_kp = dgl.to_homogeneous(dgl.node_type_subgraph(g, ntypes=['kp']), ndata=['h_0'])
 
             g_kp.set_batch_num_edges(g.batch_num_edges('kk'))
             g_kp.set_batch_num_nodes(g.batch_num_nodes('kp'))
 
-            h_src = h_dst = self.pre_norm(g_kp.ndata['h'])
+            h_src = h_dst = self.pre_norm(g_kp.ndata['h_0'])
 
             # get queries/keys
             ft_src = self.fc_src(h_src).view(-1, self.num_heads, self.head_size) 
@@ -363,7 +360,7 @@ class KeyKeyConv(nn.Module):
             # Assign features to nodes
             g_kp.srcdata['ft'] = ft_src
             g_kp.dstdata['ft'] = ft_dst
-            g_kp.srcdata['val'] = self.val_fn(g_kp.ndata['h']).view(-1, self.num_heads, self.head_size)
+            g_kp.srcdata['val'] = self.val_fn(g_kp.ndata['h_0']).view(-1, self.num_heads, self.head_size)
 
             # Step 1. dot product
             g_kp.apply_edges(fn.u_dot_v('ft', 'ft', 'a'))
@@ -465,13 +462,13 @@ class ReceptorEncoder(nn.Module):
             nn.SiLU()
         )
 
-        self.rec_kp_conv = RecKeyConv(in_feats=self.out_n_node_feat, out_feats=out_n_node_feat, n_keypoints=self.n_keypoints, fix_pos=fix_pos, num_heads=1, k_closest=self.k_closest, kp_rad=kp_rad)
+        self.rec_kp_conv = RecKeyConv(in_feats=self.out_n_node_feat, out_feats=out_n_node_feat, n_keypoints=self.n_keypoints, fix_pos=fix_pos, num_heads=1, k_closest=self.k_closest, kp_rad=kp_rad, norm=norm)
 
-        self.n_kk_covs = n_kk_convs
-        if self.n_kk_covs > 0:
+        self.n_kk_convs = n_kk_convs
+        if self.n_kk_convs > 0:
 
             kk_convs = []
-            for conv_idx in range(self.n_kk_covs):
+            for conv_idx in range(self.n_kk_convs):
                 if conv_idx == 0:
                     pre_norm = False
                 else:
@@ -512,14 +509,14 @@ class ReceptorEncoder(nn.Module):
 
         # initialize keypoint features
         init_kp_features = self.keypoint_embedding(mean_rec_feat)
-        complex_graph.nodes['kp'].data['h'] = rearrange(init_kp_features, 'b (k d) -> (b k) d', d=self.out_n_node_feat, k=self.n_keypoints)
+        complex_graph.nodes['kp'].data['h_0'] = rearrange(init_kp_features, 'b (k d) -> (b k) d', d=self.out_n_node_feat, k=self.n_keypoints)
 
         # apply rec->kp graph attention convolution
         kp_pos, kp_feat = self.rec_kp_conv(complex_graph)
 
         # assign keypoint positions and features
-        complex_graph.nodes['kp'].data['h'] = kp_feat
-        complex_graph.nodes['kp'].data['x'] = kp_pos
+        complex_graph.nodes['kp'].data['h_0'] = kp_feat
+        complex_graph.nodes['kp'].data['x_0'] = kp_pos
 
 
         # get batch info 
@@ -539,10 +536,10 @@ class ReceptorEncoder(nn.Module):
         complex_graph.set_batch_num_edges(batch_num_edges)
         
         # do keypoint-keypoint convolutions if specified
-        if self.n_kk_covs > 0:
+        if self.n_kk_convs > 0:
             for conv in self.kk_convs:
                 kp_feat = conv(complex_graph)
-                complex_graph.nodes['kp'].data['h'] = kp_feat
+                complex_graph.nodes['kp'].data['h_0'] = kp_feat
 
         return complex_graph
 

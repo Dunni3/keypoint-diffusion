@@ -313,7 +313,7 @@ def main():
     # test_rec_graph, test_lig_pos, test_lig_feat, test_interface_points = train_dataset[0]
     test_complex_graph, _ = train_dataset[0]
     n_rec_atom_features = test_complex_graph.nodes['rec'].data['h_0'].shape[1]
-    n_lig_feat = test_complex_graph.nodes['rec'].data['h_0'].shape[1]
+    n_lig_feat = test_complex_graph.nodes['lig'].data['h_0'].shape[1]
     n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
 
     print(f'{n_rec_atom_features=}')

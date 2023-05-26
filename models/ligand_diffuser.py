@@ -111,57 +111,45 @@ class LigandDiffuser(nn.Module):
         complex_graphs = self.noised_representation(complex_graphs, lig_batch_idx, kp_batch_idx, eps, gamma_t)
 
         # predict the noise that was added
-        if self.apply_rl_hinge_loss:
-            unbatch_eps = True
-        else:
-            unbatch_eps = False
-
-        eps_h_pred, eps_x_pred = self.dynamics(complex_graphs, t, lig_batch_idx, kp_batch_idx, 
-                                               unbatch_eps=unbatch_eps)
+        eps_h_pred, eps_x_pred = self.dynamics(complex_graphs, t, lig_batch_idx, kp_batch_idx)
 
         # compute hinge loss if necessary
         if self.apply_rl_hinge_loss:
-            # predict denoised ligand
-            x0_pos_pred, _ = self.denoised_representation(zt_pos, zt_feat, eps_x_pred, eps_h_pred, gamma_t)
 
-            # translate ligand back to intitial frame of reference
-            _, x0_pos_pred = self.remove_com(kp_pos, x0_pos_pred, com='receptor')
-            x0_pos_pred = [ x+init_kp_com[i] for i,x in enumerate(x0_pos_pred) ]
+            with complex_graphs.local_scope():
 
-            # get atom positions for all receptors
-            rec_atom_positions = [g.ndata["x_0"] for g in dgl.unbatch(rec_graphs)]
+                # predict denoised ligand
+                g_denoised = self.denoised_representation(complex_graphs, lig_batch_idx, kp_batch_idx, eps_x_pred, eps_h_pred, gamma_t)
 
-            # compute hinge loss between ligand atom position and receptor atom positions
-            rl_hinge_loss = 0
-            for denoised_lig_pos, rec_atom_pos in zip(x0_pos_pred, rec_atom_positions):
-                rl_hinge_loss += self.rl_hinge_loss_fn(denoised_lig_pos, rec_atom_pos)
+                # translate ligand back to intitial frame of reference
+                g_denoised = self.remove_com(g_denoised, lig_batch_idx, kp_batch_idx, com='receptor')
+                g_denoised.nodes['lig'].data['x_0'] = g_denoised.nodes['lig'].data['x_0'] + init_kp_com[lig_batch_idx]
 
-            losses['rl_hinge'] = rl_hinge_loss
+                # compute hinge loss between ligand atom position and receptor atom positions
+                rl_hinge_loss = 0
+                for g in dgl.unbatch(g_denoised):
+                    denoised_lig_pos = g.nodes['lig'].data['x_0']
+                    rec_atom_pos = g.nodes['rec'].data['x_0']
+                    rl_hinge_loss += self.rl_hinge_loss_fn(denoised_lig_pos, rec_atom_pos)
 
-            # concat eps_h_pred and eps_x_pred along batch dim 
-            # this is so that the computaton of l2 loss is unaffected
-            eps_x_pred = torch.concat(eps_x_pred, dim=0)
-            eps_h_pred = torch.concat(eps_h_pred, dim=0)
-
-        # concatenate the added the noises together
-        eps_x = torch.concat([ eps_dict['x'] for eps_dict in eps_batch ], dim=0)
-        eps_h = torch.concat([ eps_dict['h'] for eps_dict in eps_batch ], dim=0)
+                losses['rl_hinge'] = rl_hinge_loss
 
         # compute l2 loss on noise
         if self.use_fake_atoms:
-            real_atom_mask = torch.concat([ ~(lig_feat[:, -1].bool()) for lig_feat in lig_atom_features ])[:, None]
+            # real_atom_mask = torch.concat([ ~(lig_feat[:, -1].bool()) for lig_feat in lig_atom_features ])[:, None]
+            real_atom_mask = complex_graphs.nodes['lig'].data['h_0'][:, -1:].bool()
             n_real_atoms = real_atom_mask.sum()
             n_x_loss_terms = n_real_atoms*3
-            x_loss = ((eps_x - eps_x_pred)*real_atom_mask).square().sum() # mask out loss on predicted position of fake atoms
+            x_loss = ((eps['x'] - eps_x_pred)*real_atom_mask).square().sum() # mask out loss on predicted position of fake atoms
         else:
-            x_loss = ((eps_x - eps_x_pred)).square().sum()
-            n_x_loss_terms = eps_x.numel()
+            x_loss = ((eps['x'] - eps_x_pred)).square().sum()
+            n_x_loss_terms = eps['x'].numel()
 
-        h_loss = (eps_h - eps_h_pred).square().sum()
-        losses['l2'] = (x_loss + h_loss) / (n_x_loss_terms + eps_h.numel())
+        h_loss = (eps['h'] - eps_h_pred).square().sum()
+        losses['l2'] = (x_loss + h_loss) / (n_x_loss_terms + eps['h'].numel())
 
         losses['pos'] = x_loss / n_x_loss_terms
-        losses['feat'] = h_loss / eps_h.numel()
+        losses['feat'] = h_loss / eps['h'].numel()
 
         return losses
     
@@ -192,7 +180,7 @@ class LigandDiffuser(nn.Module):
         com = dgl.readout_nodes(complex_graphs, feat=feat, ntype=ntype, op='mean')
 
         complex_graphs.nodes['lig'].data['x_0'] = complex_graphs.nodes['lig'].data['x_0'] - com[lig_batch_idx]
-        complex_graphs.nodes['kp'].data['x'] = complex_graphs.nodes['kp'].data['x'] - com[rec_batch_idx]
+        complex_graphs.nodes['kp'].data['x'] = complex_graphs.nodes['kp'].data['x_0'] - com[rec_batch_idx]
         return complex_graphs
 
     def noised_representation(self, g: dgl.DGLHeteroGraph, lig_batch_idx: torch.Tensor, kp_batch_idx: torch.Tensor,
@@ -211,18 +199,17 @@ class LigandDiffuser(nn.Module):
         
         return g
     
-    def denoised_representation(self, zt_pos, zt_feat, eps_x_pred, eps_h_pred, gamma_t):
+    def denoised_representation(self, g: dgl.DGLHeteroGraph, lig_batch_idx: torch.Tensor, kp_batch_idx: torch.Tensor,
+                              eps_x_pred: torch.Tensor, eps_h_pred: torch.Tensor, gamma_t: torch.Tensor):
         # assuming the input ligand COM is zero, we compute the denoised verison of the ligand
-        alpha_t = self.alpha(gamma_t)
-        sigma_t = self.sigma(gamma_t)
+        alpha_t = self.alpha(gamma_t)[lig_batch_idx][:, None]
+        sigma_t = self.sigma(gamma_t)[lig_batch_idx][:, None]
 
-        x0_pos, x0_feat = [], []
-        for i in range(len(gamma_t)):
-            x0_pos.append( (zt_pos[i] - sigma_t[i]*eps_x_pred[i])/alpha_t[i] )
-            x0_feat.append( (zt_feat[i] - sigma_t[i]*eps_h_pred[i])/alpha_t[i] )
+        g.nodes['lig'].data['x_0'] = (g.nodes['lig'].data['x_0'] - sigma_t*eps_x_pred)/alpha_t
+        g.nodes['lig'].data['h_0'] = (g.nodes['lig'].data['h_0'] - sigma_t*eps_h_pred)/alpha_t
 
-        return x0_pos, x0_feat
-
+        return g
+    
     def sigma(self, gamma):
         """Computes sigma given gamma."""
         return torch.sqrt(torch.sigmoid(gamma))
