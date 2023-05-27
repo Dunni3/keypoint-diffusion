@@ -97,7 +97,10 @@ def get_edges_per_batch(edge_node_idxs: torch.Tensor, batch_size: int, node_batc
     edges_per_batch_full[batches_with_edges] = edges_per_batch
     return edges_per_batch
 
-def copy_graph(g: dgl.DGLHeteroGraph, n_copies: int, lig_atoms_per_copy: torch.Tensor = None):
+def get_nodes_per_batch(node_idxs: torch.Tensor, batch_size: torch.Tensor, node_batch_dxs: torch.Tensor):
+    return get_edges_per_batch(node_idxs, batch_size, node_batch_dxs)
+
+def copy_graph(g: dgl.DGLHeteroGraph, n_copies: int, lig_atoms_per_copy: torch.Tensor = None, batched_graph=False) -> List[dgl.DGLHeteroGraph]:
 
     if lig_atoms_per_copy is not None:
         # TODO: drop or add ligand atoms as needed 
@@ -114,7 +117,24 @@ def copy_graph(g: dgl.DGLHeteroGraph, n_copies: int, lig_atoms_per_copy: torch.T
         num_nodes_dict[ntype] = g.num_nodes(ntype=ntype)
 
     # make copies of graph
-    g_copies = [ dgl.heterograph(e_data_dict, num_nodes_dict=num_nodes_dict, device=g.device) for _ in range(n_copies)]
+    if lig_atoms_per_copy is None:
+        g_copies = [ dgl.heterograph(e_data_dict, num_nodes_dict=num_nodes_dict, device=g.device) for _ in range(n_copies) ]
+    else:
+        g_copies = []
+        for copy_idx in range(n_copies):
+
+            num_nodes_clone = { k:v for k,v in num_nodes_dict.items() }
+            num_nodes_clone['lig'] = lig_atoms_per_copy[copy_idx]
+
+            g_copies.append( dgl.heterograph(e_data_dict, num_nodes_dict=num_nodes_clone, device=g.device) )
+
+    # if the input graph g was a batched graph, we must add the batch information into each of the copies
+    if batched_graph:
+        batch_num_nodes, batch_num_edges = get_batch_info(g)
+        for gidx in range(n_copies):
+            g_copies[gidx].set_batch_num_nodes(batch_num_nodes)
+            g_copies[gidx].set_batch_num_edges(batch_num_edges)
+
 
     # transfer over ligand, receptor, and keypoint features
     # TODO: we don't copy edge features. at the time of writing this function, we don't need to bc this function operates only on graphs with encoded recepotrs
@@ -122,7 +142,12 @@ def copy_graph(g: dgl.DGLHeteroGraph, n_copies: int, lig_atoms_per_copy: torch.T
     for idx in range(n_copies):
         for ntype in ['lig', 'rec', 'kp']:
             for feat in ['x_0', 'h_0']:
-                g_copies[idx].nodes[ntype].data[feat] = g.nodes[ntype].data[feat]
 
-    g_batched = dgl.batch(g_copies)
-    return g_batched 
+                if ntype == 'lig' and lig_atoms_per_copy is not None:
+                    val = torch.zeros(lig_atoms_per_copy[idx], g.nodes[ntype].data[feat].shape[1], device=g.device)
+                else:
+                    val = g.nodes[ntype].data[feat]
+
+                g_copies[idx].nodes[ntype].data[feat] = val
+
+    return g_copies

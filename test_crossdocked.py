@@ -9,6 +9,7 @@ from rdkit import Chem
 import shutil
 import pickle
 from tqdm import trange
+import dgl
 
 from data_processing.crossdocked.dataset import CrossDockedDataset
 from data_processing.make_bindingmoad_pocketfile import write_pocket_file
@@ -197,17 +198,20 @@ def main():
         ref_graph, _ = test_dataset[dataset_idx]
         ref_rec_file, ref_lig_file = test_dataset.get_files(dataset_idx) # get original rec/lig files
 
-        # move data to gpu
-        ref_graph = ref_graph.to(device)
-        
-        n_lig_atoms: int = ref_graph.num_nodes('lig') # get number of atoms in the reference ligand
-        atoms_per_ligand = torch.ones(size=(cmd_args.max_batch_size,), dtype=int, device=device)*n_lig_atoms # input to sampling function 
+        if use_fake_atoms:
+            ref_lig_batch_idx = torch.zeros(ref_graph.num_nodes('lig'), device=ref_graph.device)
+            ref_graph = model.remove_fake_atoms(ref_graph, ref_lig_batch_idx)
 
         # encode the receptor
-        ref_graph, init_rec_atom_com, init_kp_com = model.encode_receptors(ref_graph)
+        ref_graph, init_kp_com = model.encode_receptors(ref_graph)
+        assert len(init_kp_com.shape) == 2
 
         # create batch_size copies of the encoded receptor
         g_copies = copy_graph(ref_graph, cmd_args.max_batch_size)
+        init_kp_com = init_kp_com.repeat(cmd_args.max_batch_size, 1)
+
+
+        # g_copies = dgl.batch(g_copies)
         # kp_pos = [ kp_pos[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
         # kp_feat = [ kp_feat[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
         # init_rec_atom_com = [ init_rec_atom_com[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
@@ -221,13 +225,18 @@ def main():
             n_mols_to_generate = int( n_mols_needed / (cmd_args.avg_validity*0.95) ) + 1
             batch_size = min(n_mols_to_generate, cmd_args.max_batch_size)
 
+            # collect just the batch_size graphs and init_kp_coms that we need
+            g_batch = g_copies[:batch_size]
+            g_batch = dgl.batch(g_batch)
+            g_batch = g_batch.to(device)
+
+            init_kp_com_batch = init_kp_com[:batch_size]
+            init_kp_com_batch = init_kp_com_batch.to(device)
             # sample ligand atom positions/features
-            batch_lig_pos, batch_lig_feat = model.sample_from_encoded_receptors(
-                kp_pos[:batch_size], 
-                kp_feat[:batch_size], 
-                init_rec_atom_com[:batch_size], 
-                init_kp_com[:batch_size], 
-                atoms_per_ligand[:batch_size])
+            with g_batch.local_scope():
+                batch_lig_pos, batch_lig_feat = model.sample_from_encoded_receptors(
+                    g_batch,  
+                    init_kp_com_batch)
 
             # convert positions/features to rdkit molecules
             for lig_idx, (lig_pos_i, lig_feat_i) in enumerate(zip(batch_lig_pos, batch_lig_feat)):

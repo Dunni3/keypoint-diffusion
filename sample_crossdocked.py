@@ -135,6 +135,12 @@ def main():
 
     rec_encoder_config = args["rec_encoder"]
 
+    # determine if we're using fake atoms
+    try:
+        use_fake_atoms = args['dataset']['max_fake_atom_frac'] > 0
+    except KeyError:
+        use_fake_atoms = False
+
     # create diffusion model
     model = LigandDiffuser(
         n_lig_feat, 
@@ -168,22 +174,28 @@ def main():
         complex_output_dirs[idx] = complex_output_dir
 
         # get the data for the reference complex
-        rec_graph, ref_lig_pos, ref_lig_feat, _ = test_dataset[idx]
+        ref_graph, _ = test_dataset[idx]
 
         # move data to correct device
-        rec_graph = rec_graph.to(device)
+        ref_graph = ref_graph.to(device)
+
+        if use_fake_atoms:
+            ref_lig_batch_idx = torch.zeros(ref_graph.num_nodes('lig'), device=ref_graph.device)
+            ref_graph = model.remove_fake_atoms(ref_graph, ref_lig_batch_idx)
 
         # get array specifying the number of nodes in each ligand we sample
-        n_nodes = torch.ones(size=(cmd_args.n_replicates,), dtype=int, device=device)*ref_lig_pos.shape[0]
+        n_nodes = torch.ones(size=(cmd_args.n_replicates,), dtype=int, device=device)*ref_graph.num_nodes('lig')
 
         # get receptor keypoints
         # note the diffusion model does receptor encoding internally,
         # so for sampling this is not strictly necessary, but i would like to visualize the position of the keypoints
-        kp_pos, kp_feat = model.rec_encoder(rec_graph)
-        kp_pos, kp_feat = kp_pos[0], kp_feat[0] # the keypoints and features are returned as lists of length batch_size, but now our batch size is just 1
+        with ref_graph.local_scope():
+            encoded_ref_graph = model.rec_encoder(ref_graph)
+            kp_pos = encoded_ref_graph.nodes['kp'].data['x_0']
+            kp_feat = encoded_ref_graph.nodes['kp'].data['h_0']
 
         # sample ligands
-        lig_pos, lig_feat = model.sample_given_pocket(rec_graph, n_nodes, visualize=cmd_args.visualize)
+        lig_pos, lig_feat = model.sample_given_pocket(ref_graph, n_nodes, visualize=cmd_args.visualize)
 
         # write sampled ligands
         if cmd_args.visualize:

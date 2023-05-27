@@ -15,6 +15,8 @@ from losses.dist_hinge_loss import DistanceHingeLoss
 from models.dynamics import LigRecDynamics
 from models.receptor_encoder import ReceptorEncoder
 from models.n_nodes_dist import LigandSizeDistribution
+from utils import get_batch_info, get_nodes_per_batch, copy_graph
+from torch_scatter import segment_csr
 
 class LigandDiffuser(nn.Module):
 
@@ -233,9 +235,9 @@ class LigandDiffuser(nn.Module):
         return sigma2_t_given_s, sigma_t_given_s, alpha_t_given_s
 
     def encode_receptors(self, g: dgl.DGLHeteroGraph):
+        # this function is used to encode receptors ONLY during sampling/
 
         device = g.device
-        n_receptors = g.batch_size
 
         # compute initial receptor atom COM
         init_rec_atom_com = dgl.readout_nodes(g, feat='x_0', op='mean', ntype='rec')
@@ -255,11 +257,11 @@ class LigandDiffuser(nn.Module):
         # TODO: does this effect sampling performance? there is an argument to be made to starting sampling at keypoint COM?
         g.nodes['kp'].data['x_0'] = g.nodes['kp'].data['x_0'] - init_rec_atom_com[kp_batch_idx]
 
-        return g, init_rec_atom_com, init_kp_com
+        return g, init_kp_com
 
     
     @torch.no_grad()
-    def _sample(self, receptors: List[dgl.DGLGraph], n_lig_atoms: List[List[int]], rec_enc_batch_size: int = 32, diff_batch_size: int = 32, visualize=False) -> List[List[Dict[str, torch.Tensor]]]:
+    def _sample(self, ref_graphs: List[dgl.DGLHeteroGraph], n_lig_atoms: List[List[int]], rec_enc_batch_size: int = 32, diff_batch_size: int = 32, visualize=False) -> List[List[Dict[str, torch.Tensor]]]:
         """Sample multiple receptors with multiple ligands per receptor.
 
         Args:
@@ -272,53 +274,28 @@ class LigandDiffuser(nn.Module):
             List[Dict[str, torch.Tensor]]: A list of length len(receptors). Each element of this list is a dictionary with keys "positions" and "features". The values are lists of tensors, one tensor per ligand. 
         """        
 
-        device = receptors[0].device
-        n_receptors = len(receptors)
-        
-        # encode the receptors
-        kp_pos_src = []
-        kp_feat_src = []
-        init_rec_atom_com_src = []
-        init_kp_com_src = []
-        for batch_idx in range(ceil(n_receptors / rec_enc_batch_size)):
+        device = ref_graphs[0].device
+        n_receptors = len(ref_graphs)
 
-            # determine number of receptors that will be in this batch
-            n_samples_batch = min(rec_enc_batch_size, n_receptors - len(kp_pos_src))
+        # encode all the receptors
+        ref_graphs_batched = dgl.batch(ref_graphs)
+        ref_graphs_batched, ref_init_kp_com = self.encode_receptors(ref_graphs_batched)
 
-            # select receptors for this batch
-            batch_idx_start = batch_idx*rec_enc_batch_size
-            batch_idx_end = batch_idx_start + n_samples_batch
-            batch_receptors = receptors[batch_idx_start:batch_idx_end]
+        # make copies of receptors and set the appropriate number of ligand atoms for all graphs
+        graphs = []
+        init_kp_coms = []
+        for rec_idx, ref_graph in enumerate(dgl.unbatch(ref_graphs_batched)):
+            n_lig_atoms_rec = n_lig_atoms[rec_idx]
 
-            # encode receptors and get COM of receptor atoms and keypoint positions
-            batch_kp_pos, batch_kp_feat, batch_init_rec_atom_com, batch_init_kp_com = self.encode_receptors(batch_receptors)
 
-            # concat the encoded receptor information from this batch with those from previous batches
-            init_rec_atom_com_src.extend(batch_init_rec_atom_com)
-            init_kp_com_src.extend(batch_init_kp_com)
-            kp_pos_src.extend(batch_kp_pos)
-            kp_feat_src.extend(batch_kp_feat)
+            g_copies = copy_graph(ref_graph, n_copies=len(n_lig_atoms_rec), lig_atoms_per_copy=torch.tensor(n_lig_atoms_rec))
+            kp_com_copies = [ ref_init_kp_com[rec_idx].clone() for _ in range(len(n_lig_atoms_rec)) ]
 
-        # generate list of receptor/ligand pairs
-        kp_pos, kp_feat = [], []
-        init_rec_atom_com = []
-        init_kp_com = []
-        n_lig_atoms_flattened = [] # this will be a list of integers, each integer is the number of ligand atoms for a complex
-        for rec_idx in range(n_receptors):
-            
-            n_ligands = len(n_lig_atoms[rec_idx]) # number of ligands to be sampled for this receptor
-
-            n_lig_atoms_flattened.extend(n_lig_atoms[rec_idx]) # build n_lig_atoms_flattened
-
-            # extend kp_pos, kp_feat, and COM lists by the values for this receptor copied n_ligand times
-            kp_pos.extend([ kp_pos_src[rec_idx].detach().clone() for _ in range(n_ligands) ])
-            kp_feat.extend([ kp_feat_src[rec_idx].detach().clone() for _ in range(n_ligands) ])
-            init_rec_atom_com.extend([ init_rec_atom_com_src[rec_idx].detach().clone() for _ in range(n_ligands) ])
-            init_kp_com.extend([ init_kp_com_src[rec_idx].detach().clone() for _ in range(n_ligands) ])
-
+            graphs.extend(g_copies)
+            init_kp_coms.extend(kp_com_copies)
 
         # proceed to batched sampling
-        n_complexes = len(kp_pos)
+        n_complexes = len(graphs)
         n_complexes_sampled = 0
         lig_pos, lig_feat = [], []
         for batch_idx in range(ceil(n_complexes / diff_batch_size)):
@@ -329,13 +306,10 @@ class LigandDiffuser(nn.Module):
             start_idx = batch_idx*diff_batch_size
             end_idx = start_idx + n_samples_batch
 
-            batch_kp_pos = kp_pos[start_idx:end_idx]
-            batch_kp_feat = kp_feat[start_idx:end_idx]
-            batch_n_atoms = n_lig_atoms_flattened[start_idx:end_idx]
-            batch_init_kp_com = init_kp_com[start_idx:end_idx]
-            batch_init_rec_atom_com = init_rec_atom_com[start_idx:end_idx]
+            batch_graphs = dgl.batch(graphs[start_idx:end_idx])
+            batch_init_kp_com = torch.stack(init_kp_coms[start_idx:end_idx], dim=0)
 
-            batch_lig_pos, batch_lig_feat = self.sample_from_encoded_receptors(batch_kp_pos, batch_kp_feat, batch_init_rec_atom_com, batch_init_kp_com, batch_n_atoms, visualize=visualize)
+            batch_lig_pos, batch_lig_feat = self.sample_from_encoded_receptors(batch_graphs, batch_init_kp_com, visualize=visualize)
             lig_pos.extend(batch_lig_pos)
             lig_feat.extend(batch_lig_feat)
 
@@ -357,12 +331,7 @@ class LigandDiffuser(nn.Module):
 
         return samples
 
-    # @torch.no_grad()
-    # def sample_from_encoded_receptors(self, kp_pos: List[torch.Tensor], kp_feat: List[torch.Tensor], 
-    #                                   init_atom_com: List[torch.Tensor], init_kp_com: List[torch.Tensor], 
-    #                                   n_lig_atoms: List[int], visualize=False):
-    def sample_from_encoded_receptors(self, g: dgl.DGLHeteroGraph, 
-                                      init_atom_com: torch.Tensor, init_kp_com: torch.Tensor, 
+    def sample_from_encoded_receptors(self, g: dgl.DGLHeteroGraph, init_kp_com: torch.Tensor, 
                                       visualize=False):
 
         device = g.device
@@ -372,19 +341,45 @@ class LigandDiffuser(nn.Module):
         batch_idx = torch.arange(g.batch_size, device=device)
         lig_batch_idx = batch_idx.repeat_interleave(g.batch_num_nodes('lig'))
         kp_batch_idx = batch_idx.repeat_interleave(g.batch_num_nodes('kp'))
+        node_batch_idx_dict = {
+            'lig': lig_batch_idx,
+            'kp': kp_batch_idx
+        }
 
         # sample initial positions/features of ligands
         for feat in ['x_0', 'h_0']:
             g.nodes['lig'].data[feat] = torch.randn(g.nodes['lig'].data[feat].shape, device=device)
 
         if visualize:
-            raise NotImplementedError
-            init_kp_com_cpu = [ x.detach().cpu() for x in init_kp_com ]
+            
             # convert positions and features to cpu
             # convert positions to input frame of reference: remove current kp com and add original init kp com
             # note that this function assumes that the keypoints passed as arguments have the keypoint COM removed from them already, so all we need to do is add back in the initial keypoint COM
-            lig_pos_frames = [ [ x.detach().cpu() + init_kp_com_cpu[i] for i, x in enumerate(lig_pos) ] ]
-            lig_feat_frames = [ [ x.detach().cpu() for x in lig_feat ] ]
+
+            # make a copy of g
+            g_frame = copy_graph(g, n_copies=1, batched_graph=True)[0]
+
+            # unnoramlize
+            g_frame = self.unnormalize(g_frame)
+
+            # move ligand back into initial frame of reference
+            g_frame.nodes['lig'].data['x_0'] = g_frame.nodes['lig'].data['x_0'] + init_kp_com[lig_batch_idx]
+
+            # remove fake atoms
+            if self.use_fake_atoms:
+                g_frame = self.remove_fake_atoms(g_frame, lig_batch_idx)
+            
+            lig_pos_frames = []
+            lig_feat_frames = []
+            g_frame = g_frame.to('cpu')
+            lig_pos, lig_feat = [], []
+            for g_i in dgl.unbatch(g_frame):
+                lig_pos.append(g_i.nodes['lig'].data['x_0'])
+                lig_feat.append(g_i.nodes['lig'].data['h_0'])
+            lig_pos_frames.append(lig_pos)
+            lig_feat_frames.append(lig_feat)
+            
+
 
         # remove ligand com from every receptor/ligand complex
         g = self.remove_com(g, lig_batch_idx, kp_batch_idx, com='ligand')
@@ -396,41 +391,47 @@ class LigandDiffuser(nn.Module):
             s_arr = s_arr / self.n_timesteps
             t_arr = t_arr / self.n_timesteps
 
-            lig_feat, lig_pos, kp_pos = self.sample_p_zs_given_zt(s_arr, t_arr, g, lig_batch_idx, kp_batch_idx)
+            g = self.sample_p_zs_given_zt(s_arr, t_arr, g, lig_batch_idx, kp_batch_idx)
 
             if visualize:
 
-                # convert keypoints positions, ligand atom positions, and ligand features to the cpu
-                kp_pos_cpu = [ x.detach().cpu() for x in kp_pos ]
-                frame_pos = [ x.detach().cpu() for x in lig_pos ]
-                frame_feat = [ x.detach().cpu() for x in lig_feat ]
+                # make a copy of g
+                g_frame = copy_graph(g, n_copies=1, batched_graph=True)[0]
 
-                # move ligand atoms back to initial frame of reference
-                frame_pos = [ x - kp_pos_cpu[i].mean(dim=0, keepdim=True) + init_kp_com_cpu[i]  for i,x in enumerate(frame_pos) ]
-                lig_pos_frames.append(frame_pos)
-                lig_feat_frames.append(frame_feat)
+                # unnoramlize
+                g_frame = self.unnormalize(g_frame)
 
+                # move ligand back into initial frame of reference
+                kp_com = dgl.readout_nodes(g_frame, feat='x_0', ntype='kp', op='mean')
+                delta = init_kp_com - kp_com
+                g_frame.nodes['lig'].data['x_0'] = g_frame.nodes['lig'].data['x_0'] + delta[lig_batch_idx]
+
+                # remove fake atoms
+                if self.use_fake_atoms:
+                    g_frame = self.remove_fake_atoms(g_frame, lig_batch_idx)
+
+                # convert graph to cpu and split out ligand positions and features
+                g_frame = g_frame.to('cpu')
+                lig_pos, lig_feat = [], []
+                for g_i in dgl.unbatch(g_frame):
+                    lig_pos.append(g_i.nodes['lig'].data['x_0'])
+                    lig_feat.append(g_i.nodes['lig'].data['h_0'])
+                lig_pos_frames.append(lig_pos)
+                lig_feat_frames.append(lig_feat)
 
         # remove keypoint COM from system after generation
-        kp_pos, lig_pos = self.remove_com(kp_pos, lig_pos, com='receptor')
+        g = self.remove_com(g, lig_batch_idx, kp_batch_idx, com='receptor')
 
         # TODO: model P(x0 | x1)?
 
         # add initial keypoint COM to system, bringing us back into the input frame of reference
-        for i in range(n_complexes):
-            lig_pos[i] += init_kp_com[i]
-            # kp_pos[i] += init_kp_com[i]
-
+        for ntype in ['lig', 'kp']:
+            g.nodes[ntype].data['x_0'] = g.nodes[ntype].data['x_0'] + init_kp_com[ node_batch_idx_dict[ntype] ]
+            
         # unnormalize features
-        lig_pos, lig_feat = self.unnormalize(lig_pos, lig_feat)
+        g = self.unnormalize(g)
 
         if visualize:
-
-            # remove fake atoms from all frames if they're being used
-            if self.use_fake_atoms:
-                new_pos_and_feat = [ self.remove_fake_atoms(lig_pos_frames[frame_idx], lig_feat_frames[frame_idx]) for frame_idx in range(len(lig_pos_frames)) ]
-                lig_pos_frames, lig_feat_frames = list(map(list, zip(*new_pos_and_feat)))
-
             # reorganize our frames
             # right now, we have a list where each element correponds to a frame. and each element is a list of position of all ligands at that frame.
             # what we want is a list where each element corresponds to a single ligand. and that element will be a list of ligand positions at every frame
@@ -441,7 +442,14 @@ class LigandDiffuser(nn.Module):
         
         # remove fake atoms if they were used
         if self.use_fake_atoms:
-            lig_pos, lig_feat = self.remove_fake_atoms(lig_pos, lig_feat)
+            g = self.remove_fake_atoms(g, lig_batch_idx)
+
+        lig_pos = []
+        lig_feat = []
+        g = g.to('cpu')
+        for g_i in dgl.unbatch(g):
+            lig_pos.append(g_i.nodes['lig'].data['x_0'])
+            lig_feat.append(g_i.nodes['lig'].data['h_0'])
 
         return lig_pos, lig_feat
 
@@ -465,17 +473,17 @@ class LigandDiffuser(nn.Module):
         
 
     @torch.no_grad()
-    def sample_random_sizes(self, receptors: List[dgl.DGLGraph], n_replicates: int = 10, rec_enc_batch_size: int = 32, diff_batch_size: int = 32):
+    def sample_random_sizes(self, ref_graphs: List[dgl.DGLHeteroGraph], n_replicates: int = 10, rec_enc_batch_size: int = 32, diff_batch_size: int = 32):
         
-        n_receptors = len(receptors)
+        n_receptors = len(ref_graphs)
         n_lig_atoms = self.lig_size_dist.sample((n_receptors, n_replicates))
-        samples = self._sample(receptors=receptors, n_lig_atoms=n_lig_atoms, rec_enc_batch_size=rec_enc_batch_size, diff_batch_size=diff_batch_size)
+        samples = self._sample(ref_graphs=ref_graphs, n_lig_atoms=n_lig_atoms, rec_enc_batch_size=rec_enc_batch_size, diff_batch_size=diff_batch_size)
         return samples
 
     def sample_p_zs_given_zt(self, s: torch.Tensor, t: torch.Tensor, g: dgl.heterograph, lig_batch_idx: torch.Tensor, kp_batch_idx: torch.Tensor):
 
         n_samples = g.batch_size
-        device = rec_pos[0].device
+        device = g.device
 
         # compute the alpha and sigma terms that define p(z_s | z_t)
         gamma_s = self.gamma(s)
@@ -495,9 +503,6 @@ class LigandDiffuser(nn.Module):
         alpha_t_given_s = alpha_t_given_s[lig_batch_idx].view(-1, 1)
         var_terms = var_terms[lig_batch_idx].view(-1, 1)
 
-
-
-
         # compute the mean (mu) for positions/features of the distribution p(z_s | z_t)
         # this is essentially our approximation of the completely denoised ligand i think?
         # i think that's not quite correct but i think we COULD formulate sampling this way
@@ -511,34 +516,74 @@ class LigandDiffuser(nn.Module):
         sigma = sigma[lig_batch_idx].view(-1, 1)
 
         # sample zs given the mu and sigma we just computed
-        # zs_pos = []
-        # zs_feat = []
-        # for i in range(n_samples):
-        #     pos_noise = torch.randn(zt_pos[i].shape, device=device)
-        #     feat_noise = torch.randn(zt_feat[i].shape, device=device)
-        #     zs_pos.append( mu_pos[i] + sigma[i]*pos_noise )
-        #     zs_feat.append(mu_feat[i] + sigma[i]*feat_noise)
         pos_noise = torch.randn(g.nodes['lig'].data['x_0'].shape, device=device)
         feat_noise = torch.randn(g.nodes['lig'].data['h_0'].shape, device=device)
-        # SAMPLE USING COMPUTE MUS AND SIGMAS!!!
+        g.nodes['lig'].data['x_0'] = mu_pos + sigma*pos_noise
+        g.nodes['lig'].data['h_0'] = mu_feat + sigma*feat_noise
 
         # remove ligand COM from system
-        rec_pos, zs_pos = self.remove_com(rec_pos, zs_pos, com='ligand')
+        g = self.remove_com(g, lig_batch_idx, kp_batch_idx, com='ligand')
 
-        return zs_feat, zs_pos, rec_pos
+        return g
 
-    def remove_fake_atoms(self, lig_pos: List[torch.Tensor], lig_feat: List[torch.Tensor]):
-        # remove atoms marked as the "not atom" type
-        for idx, (lig_pos_i, lig_feat_i) in enumerate(zip(lig_pos, lig_feat)):
-            element_idxs = torch.argmax(lig_feat_i, dim=1)
+    def remove_fake_atoms(self, g: dgl.DGLHeteroGraph, lig_batch_idx):
 
-            # remove atoms marked as the "not atom" type
-            real_atom_mask = element_idxs != lig_feat_i.shape[1] - 1
-            lig_pos_i = lig_pos_i[real_atom_mask] # remove fake atoms from positions
-            lig_feat_i = lig_feat_i[real_atom_mask][:, :-1] # remove fake from features and slice off the "no atom" type
-            lig_pos[idx] = lig_pos_i
-            lig_feat[idx] = lig_feat_i
-        return lig_pos, lig_feat
+        batch_size = g.batch_size
+        lig_feat = g.nodes['lig'].data['h_0']
+        element_idxs = torch.argmax(lig_feat, dim=1)
+        fake_atom_mask = element_idxs == lig_feat.shape[1] - 1
+        nodes_to_remove = torch.where(fake_atom_mask)[0]
+
+        # check if there are no fake atoms
+        if nodes_to_remove.shape[0] == 0:
+            return g
+
+        # find number of nodes that will be removed per batch
+        nodes_removed_per_batch = get_nodes_per_batch(nodes_to_remove, batch_size, lig_batch_idx)
+
+        # get batch idx of every node to be removed, convert to index pointer for segment_csr
+        rm_node_batches = lig_batch_idx[nodes_to_remove]
+        _, batch_segs = torch.unique_consecutive(rm_node_batches, return_counts=True)
+        batch_segs = torch.concatenate([torch.zeros(1, device=g.device),  batch_segs ], dim=0)
+        batch_segs = torch.cumsum(batch_segs)
+
+        # find number of edges that will be removed per batch
+        edges_removed_per_batch = {}
+        for etype in ['kl', 'lk', 'll']:
+            # for each edge type, count the number of those edges that each of the nodes to be remoevd is participating in
+            # this is the number of edges that will be removed for each of the nodes
+            # if we get the batch of each of the nodes, and then scatter_sum edges_removed_pernode by the batch assignment of every node, we get edges removed per batch
+            # the issue is that scatter is not deterministic, but segment_csr is!
+
+            edges_removed_per_node = torch.zeros_like(nodes_to_remove)
+            # if ligand is dst, count in-degree for this edge type
+            if etype[1] == 'l':
+                edges_removed_per_node  += g.in_degrees(nodes_to_remove, etype=etype)
+            # if ligand is src, count out-degree for this edge type
+            if etype[0] == 'l':
+                edges_removed_per_node += g.out_degrees(nodes_to_remove, etype=etype)
+
+            edges_removed_per_batch[etype] = segment_csr(src=edges_removed_per_node, indptr=batch_segs, reduce='sum')
+
+        batch_num_nodes, batch_num_edges = get_batch_info(g)
+
+        # update batch information corresponding to node removal
+        batch_num_nodes['lig'] = batch_num_nodes['lig'] - nodes_removed_per_batch
+
+        for canonical_etype in batch_num_edges:
+            etype = canonical_etype[1]
+            if etype in edges_removed_per_batch:
+                batch_num_edges[canonical_etype] = batch_num_edges[canonical_etype] - edges_removed_per_batch[etype]
+        
+
+        # remove nodes
+        g.remove_nodes(nodes_to_remove, ntype='lig')
+
+        # add batch information back into the graph
+        g.set_batch_num_nodes(batch_num_nodes)
+        g.set_batch_num_edges(batch_num_edges)
+
+        return g
 
 # noise schedules are taken from DiffSBDD: https://github.com/arneschneuing/DiffSBDD
 def cosine_beta_schedule(timesteps, s=0.008, raise_to_power: float = 1):
