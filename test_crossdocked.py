@@ -170,7 +170,7 @@ def main():
         **args['diffusion']).to(device=device)
 
     # load model weights
-    model.load_state_dict(torch.load(model_file))
+    model.load_state_dict(torch.load(model_file, map_location=device))
     model.eval()
 
 
@@ -202,6 +202,8 @@ def main():
             ref_lig_batch_idx = torch.zeros(ref_graph.num_nodes('lig'), device=ref_graph.device)
             ref_graph = model.remove_fake_atoms(ref_graph, ref_lig_batch_idx)
 
+        ref_graph = ref_graph.to(device)
+
         # encode the receptor
         ref_graph, init_kp_com = model.encode_receptors(ref_graph)
         assert len(init_kp_com.shape) == 2
@@ -228,7 +230,6 @@ def main():
             # collect just the batch_size graphs and init_kp_coms that we need
             g_batch = g_copies[:batch_size]
             g_batch = dgl.batch(g_batch)
-            g_batch = g_batch.to(device)
 
             init_kp_com_batch = init_kp_com[:batch_size]
             init_kp_com_batch = init_kp_com_batch.to(device)
@@ -313,8 +314,8 @@ def main():
 
 
         # remove KP COM, add back in init_kp_com, then save keypoint positions
-        keypoint_positions = kp_pos[0]
-        keypoint_positions = keypoint_positions - keypoint_positions.mean(dim=0, keepdims=True) + init_kp_com[0]
+        keypoint_positions = ref_graph.nodes['kp'].data['x_0']
+        keypoint_positions = keypoint_positions - keypoint_positions.mean(dim=0, keepdims=True) + init_kp_com[:1, :]
         
         # write keypoints to an xyz file
         kp_file = pocket_dir / 'keypoints.xyz'

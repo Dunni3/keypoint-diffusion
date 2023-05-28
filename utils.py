@@ -95,7 +95,7 @@ def get_edges_per_batch(edge_node_idxs: torch.Tensor, batch_size: int, node_batc
     batches_with_edges, edges_per_batch = torch.unique_consecutive(node_batch_idxs[edge_node_idxs], return_counts=True)
     edges_per_batch_full = torch.zeros_like(batch_idxs)
     edges_per_batch_full[batches_with_edges] = edges_per_batch
-    return edges_per_batch
+    return edges_per_batch_full
 
 def get_nodes_per_batch(node_idxs: torch.Tensor, batch_size: torch.Tensor, node_batch_dxs: torch.Tensor):
     return get_edges_per_batch(node_idxs, batch_size, node_batch_dxs)

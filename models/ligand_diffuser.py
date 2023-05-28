@@ -392,7 +392,8 @@ class LigandDiffuser(nn.Module):
             t_arr = t_arr / self.n_timesteps
 
             g = self.sample_p_zs_given_zt(s_arr, t_arr, g, lig_batch_idx, kp_batch_idx)
-
+            # if g.batch_num_edges('ll').shape[0] != g.batch_size:
+            #     print('problem!')
             if visualize:
 
                 # make a copy of g
@@ -495,7 +496,7 @@ class LigandDiffuser(nn.Module):
 
         # predict the noise that we should remove from this example, epsilon
         # they will each be lists containing the epsilon tensors for each ligand
-        eps_h, eps_x = self.dynamics(g, lig_batch_idx, kp_batch_idx)
+        eps_h, eps_x = self.dynamics(g, t, lig_batch_idx, kp_batch_idx)
 
         var_terms = sigma2_t_given_s / alpha_t_given_s / sigma_t
 

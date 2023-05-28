@@ -76,14 +76,14 @@ training:
   weight_decay: 1.0e-12
   clip_grad: True
   clip_value: 1.5
-  epochs: 2
-  batch_size: 16
+  epochs: 3
+  batch_size: 32
   test_interval: 100 # measured in epochs
-  train_metrics_interval: 0.25 # epochs
-  save_interval: 1 # epoch
+  train_metrics_interval: 0.5 # epochs
+  save_interval: 100 # epoch
   sample_interval: 100 # number of epochs between sampling/testing molecules
-  test_epochs: 2 # number of epochs to run when evaluating on the test set
-  num_workers: 2
+  test_epochs: 1 # number of epochs to run when evaluating on the test set
+  num_workers: 8
   scheduler:
     warmup_length: 1
     rec_enc_weight_decay_midpoint: 0

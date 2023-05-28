@@ -351,6 +351,8 @@ class LigRecDynamics(nn.Module):
             eps_h = self.lig_decoder(h) 
             eps_x = x - g.nodes["lig"].data["x_0"]
 
+            self.remove_lig_edges(g)
+
             return eps_h, eps_x
 
     def add_lig_edges(self, g: dgl.DGLHeteroGraph, lig_batch_idx, kp_batch_idx) -> dgl.DGLHeteroGraph:
@@ -377,60 +379,29 @@ class LigRecDynamics(nn.Module):
             batch_num_edges[('lig', 'lk', 'kp')] = kl_edges_per_batch
 
         # update the graph's batch information
-        g.set_batch_num_edges(batch_num_nodes)
+        g.set_batch_num_edges(batch_num_edges)
+        g.set_batch_num_nodes(batch_num_nodes)
+
+        return g
+    
+    def remove_lig_edges(self, g: dgl.DGLHeteroGraph):
+
+        if self.update_kp_feat:
+            etypes_to_remove = ['ll', 'kl', 'lk']
+        else:
+            etypes_to_remove = ['ll', 'kl']
+        
+        batch_num_nodes, batch_num_edges = get_batch_info(g)
+
+        for canonical_etype in batch_num_edges:
+            if canonical_etype[1] in etypes_to_remove:
+                batch_num_edges[canonical_etype] = torch.zeros_like(batch_num_edges[canonical_etype])
+        
+        for etype in etypes_to_remove:
+            eids = g.edges(form='eid', etype=etype)
+            g.remove_edges(eids, etype=etype)
+        
+        g.set_batch_num_nodes(batch_num_nodes)
         g.set_batch_num_edges(batch_num_edges)
 
         return g
-
-
-    def make_graph(self, lig_pos, lig_feat, rec_pos, rec_feat):
-
-        # note that all arguments except timestep are tuples of length batch_size containing
-        # the values for each datapoint in the batch
-
-        device = lig_pos[0].device
-        
-        graphs = []
-        for i in range(len(lig_pos)):
-
-            # create graph containing just ligand-ligand edges
-            lig_graph = dgl.knn_graph(lig_pos[i], k=self.ligand_k, algorithm="bruteforce-blas", dist='euclidean', exclude_self=True).to(device)
-
-            # find edges for rec -> lig conections
-            if self.no_cg:
-                edge_idxs = radius(rec_pos[i], lig_pos[i], r=5, max_num_neighbors=10)
-                dst_nodes = edge_idxs[0]
-                src_nodes = edge_idxs[1]
-            else:
-                rl_dist = torch.cdist(rec_pos[i], lig_pos[i]) # distance between every receptor keypoint and every ligand atom
-                k = min(self.receptor_keypoint_k, lig_pos[i].shape[0])
-                topk_dist, topk_idx = torch.topk(rl_dist, k=k, dim=1, largest=False) # get k closest ligand atoms to each receptor key point
-
-                # get list of rec -> ligand edges
-                n_rec_nodes = rec_pos[i].shape[0]
-                src_nodes = torch.repeat_interleave(torch.arange(n_rec_nodes), repeats=k).to(device)
-                dst_nodes = topk_idx.flatten()
-
-            # create heterograph
-            graph_data = {
-
-            ('lig', 'll', 'lig'): lig_graph.edges(),
-
-            ('rec', 'rl', 'lig'): (src_nodes, dst_nodes)
-
-            }
-
-            num_nodes_dict= {
-                'lig': lig_pos[i].shape[0],
-                'rec': rec_pos[i].shape[0]
-            }
-
-            g = dgl.heterograph(graph_data, num_nodes_dict=num_nodes_dict)
-            g.nodes['lig'].data['x_0'] = lig_pos[i]
-            g.nodes['lig'].data['h_0'] = lig_feat[i]
-            g.nodes['rec'].data['x_0'] = rec_pos[i]
-            g.nodes['rec'].data['h_0'] = rec_feat[i]
-            graphs.append(g)
-        
-        batched_graph = dgl.batch(graphs)
-        return batched_graph
