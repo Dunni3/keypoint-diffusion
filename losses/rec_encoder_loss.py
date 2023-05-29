@@ -55,7 +55,7 @@ class ReceptorEncoderLoss(nn.Module):
         # for kp_pos, rec_graph in zip(keypoint_positions, unbatched_graphs):
         for g in unbatched_graphs:
 
-            kp_pos = g.nodes["kp"].data["x"]
+            kp_pos = g.nodes["kp"].data["x_0"]
             rec_atom_pos = g.nodes["rec"].data["x_0"]
 
             # compute cost matrix
@@ -70,7 +70,7 @@ class ReceptorEncoderLoss(nn.Module):
     
     def compute_interface_point_loss(self, batched_complex_graphs, interface_points):
 
-        keypoint_positions = [ g.nodes["kp"].data["x"] for g in dgl.unbatch(batched_complex_graphs) ]
+        keypoint_positions = [ g.nodes["kp"].data["x_0"] for g in dgl.unbatch(batched_complex_graphs) ]
 
         ot_loss = 0
         for kp_pos, if_points in zip(keypoint_positions, interface_points):

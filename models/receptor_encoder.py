@@ -254,7 +254,7 @@ class RecKeyConv(nn.Module):
         rad_idxs = radius(x=g.nodes['rec'].data['x_0'], y=kp_pos, batch_x=rec_atom_batch, batch_y=kp_batch, r=self.kp_rad, max_num_neighbors=100) # shape (2, n_keypoints*?*batch_size)
 
         # get number of edges corresponding to each batch
-        batch_num_edges['rk'] = get_edges_per_batch(rad_idxs[0], g.batch_size, kp_batch)
+        batch_num_edges[('rec', 'rk', 'kp')] = get_edges_per_batch(rad_idxs[0], g.batch_size, kp_batch)
 
         g.remove_edges(g.edges(form='eid', etype='rk'), etype='rk') # remove all receptor-keypoint edges
         g.add_edges(rad_idxs[1], rad_idxs[0], etype='rk') # add back the edges identified by radius

@@ -66,7 +66,7 @@ dynamics:
 
 
 rec_encoder_loss:
-  loss_type: 'none' # can be optimal_transport, gaussian_repulsion, hinge, or none
+  loss_type: 'optimal_transport' # can be optimal_transport, gaussian_repulsion, hinge, or none
   use_interface_points: False
 
 training:
@@ -77,7 +77,7 @@ training:
   clip_grad: True
   clip_value: 1.5
   epochs: 3
-  batch_size: 32
+  batch_size: 4
   test_interval: 100 # measured in epochs
   train_metrics_interval: 0.5 # epochs
   save_interval: 100 # epoch
