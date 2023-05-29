@@ -482,6 +482,7 @@ class ReceptorEncoder(nn.Module):
 
         x = complex_graph.nodes['rec'].data['x_0']
         h = complex_graph.nodes['rec'].data['h_0']
+        batch_size = complex_graph.batch_size
 
         if self.use_sameres_feat:
             rec_edge_feat = complex_graph.edges['rr'].data['same_res']
@@ -528,9 +529,7 @@ class ReceptorEncoder(nn.Module):
         complex_graph.add_edges(kk_edges[0], kk_edges[1], etype='kk')
 
         # get number of keypoint-keypoint edges in each batch
-        edge_batch_idx = kk_edges[0] // self.n_keypoints
-        _, batch_kk_edges = torch.unique_consecutive(edge_batch_idx, return_counts=True)
-        batch_num_edges[('kp', 'kk', 'kp')] = batch_kk_edges
+        batch_num_edges[('kp', 'kk', 'kp')] = get_edges_per_batch(kk_edges[0], batch_size, kp_batch_idx)
 
         complex_graph.set_batch_num_nodes(batch_num_nodes)
         complex_graph.set_batch_num_edges(batch_num_edges)
