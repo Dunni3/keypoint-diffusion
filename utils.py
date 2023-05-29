@@ -101,10 +101,6 @@ def get_nodes_per_batch(node_idxs: torch.Tensor, batch_size: torch.Tensor, node_
     return get_edges_per_batch(node_idxs, batch_size, node_batch_dxs)
 
 def copy_graph(g: dgl.DGLHeteroGraph, n_copies: int, lig_atoms_per_copy: torch.Tensor = None, batched_graph=False) -> List[dgl.DGLHeteroGraph]:
-
-    if lig_atoms_per_copy is not None:
-        # TODO: drop or add ligand atoms as needed 
-        raise NotImplementedError
     
     # get edge data
     e_data_dict = {}

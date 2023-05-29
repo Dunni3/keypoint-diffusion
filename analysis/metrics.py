@@ -34,17 +34,22 @@ class ModelAnalyzer:
             self.train_smiles: set = pickle.load(f)
 
     @torch.no_grad()
-    def sample_and_analyze(self, n_receptors: int = 10, n_replicates: int = 10, rec_enc_batch_size: int = 16, diff_batch_size: int = 32):
+    def sample_and_analyze(self, n_receptors: int = 10, n_replicates: int = 10, rec_enc_batch_size: int = 64, diff_batch_size: int = 64):
 
         # randomly select n_receptors from the dataset
         receptor_idxs = torch.randint(low=0, high=len(self.dataset), size=(n_receptors,))
-        rec_graphs = [self.dataset[int(idx)][0].to(device=self.device) for idx in receptor_idxs]
+        graphs = [self.dataset[int(idx)][0].to(device=self.device) for idx in receptor_idxs]
+
+        n_lig_atoms = []
+        for g in graphs:
+            n_lig_atoms_i = g.num_nodes('lig')
+            n_lig_atoms.append( [n_lig_atoms_i]*n_replicates )
 
         # sample n_replicates ligands in each receptor
         sampling_start = time.time()
-        samples = self.model.sample_random_sizes(
-            rec_graphs, 
-            n_replicates=n_replicates, 
+        samples = self.model._sample(
+            graphs, 
+            n_lig_atoms=n_lig_atoms, 
             rec_enc_batch_size=rec_enc_batch_size, 
             diff_batch_size=diff_batch_size)
         sample_time = time.time() - sampling_start
