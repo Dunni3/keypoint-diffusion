@@ -85,7 +85,7 @@ class LigandDiffuser(nn.Module):
         kp_batch_idx = batch_idx.repeat_interleave(complex_graphs.batch_num_nodes('kp'))
                 
         # encode the receptor
-        complex_graphs = self.rec_encoder(complex_graphs)
+        complex_graphs = self.rec_encoder(complex_graphs, lig_batch_idx, kp_batch_idx)
 
         # if we are applying the RL hinge loss, we will need to be able to put receptor atoms and the ligand into the same
         # referance frame. in order to do this, we need the initial COM of the keypoints

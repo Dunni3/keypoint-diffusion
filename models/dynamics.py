@@ -12,7 +12,7 @@ class LigRecConv(nn.Module):
     # original code: https://github.com/dmlc/dgl/blob/76bb54044eb387e9e3009bc169e93d66aa004a74/python/dgl/nn/pytorch/conv/egnnconv.py
     # I have extended the EGNN graph conv layer to operate on heterogeneous graphs containing containing receptor and ligand nodes
 
-    def __init__(self, in_size, hidden_size, out_size, edge_feat_size=0, use_tanh=False, coords_range=10, message_norm=1, update_kp_feat: bool = False, norm: bool = False):
+    def __init__(self, in_size, hidden_size, out_size, edge_feat_size=0, use_tanh=False, coords_range=10, update_kp_feat: bool = False, norm: bool = False):
         super().__init__()
 
         self.in_size = in_size
@@ -21,7 +21,6 @@ class LigRecConv(nn.Module):
         self.edge_feat_size = edge_feat_size
         act_fn = nn.SiLU()
         self.use_tanh = use_tanh
-        self.message_norm = message_norm
         self.update_kp_feat = update_kp_feat
         self.norm = norm
 
@@ -122,7 +121,7 @@ class LigRecConv(nn.Module):
 
         return {"msg_x": msg_x, "msg_h": msg_h}
 
-    def forward(self, graph: dgl.DGLHeteroGraph, node_feat: Dict[str, torch.Tensor], coord_feat: Dict[str, torch.Tensor], edge_feat=None):
+    def forward(self, graph: dgl.DGLHeteroGraph, node_feat: Dict[str, torch.Tensor], coord_feat: Dict[str, torch.Tensor], z_dict: Dict[str, torch.Tensor], edge_feat=None):
         r"""
         Description
         -----------
@@ -187,10 +186,10 @@ class LigRecConv(nn.Module):
 
             # normalize messages
             for key in graph.ndata['h_neigh']:
-                graph.ndata['h_neigh'][key] = graph.ndata['h_neigh'][key]/self.message_norm
+                graph.ndata['h_neigh'][key] = graph.ndata['h_neigh'][key]/z_dict[key]
 
             for key in graph.ndata['x_neigh']:
-                graph.ndata['x_neigh'][key] = graph.ndata['x_neigh'][key]/self.message_norm
+                graph.ndata['x_neigh'][key] = graph.ndata['x_neigh'][key]/z_dict[key]
 
             # get aggregated messages
             h_neigh, x_neigh = graph.ndata["h_neigh"], graph.ndata["x_neigh"]
@@ -230,6 +229,14 @@ class LigRecEGNN(nn.Module):
         self.out_size = out_size
         self.update_kp_feat = update_kp_feat
         self.norm = norm
+        self.message_norm = message_norm
+
+        if update_kp_feat:
+            self.edge_types = ["ll", "kl", "lk", "kk"]
+            self.updated_node_types = ['lig', 'kp']
+        else:
+            self.edge_types = ["ll", "kl"]
+            self.updated_node_types = ['lig']
 
         self.conv_layers = []
         for i in range(self.n_layers):
@@ -251,12 +258,12 @@ class LigRecEGNN(nn.Module):
                 layer_out_size = hidden_size
 
             self.conv_layers.append( 
-                LigRecConv(in_size=layer_in_size, hidden_size=layer_hidden_size, out_size=layer_out_size, use_tanh=use_tanh, message_norm=message_norm, update_kp_feat=update_kp_feat, norm=norm)
+                LigRecConv(in_size=layer_in_size, hidden_size=layer_hidden_size, out_size=layer_out_size, use_tanh=use_tanh, update_kp_feat=update_kp_feat, norm=norm)
             )
 
             self.conv_layers = nn.ModuleList(self.conv_layers)
 
-    def forward(self, graph: dgl.DGLHeteroGraph):
+    def forward(self, graph: dgl.DGLHeteroGraph, lig_batch_idx, kp_batch_idx):
 
         h = {}
         x = {}
@@ -264,9 +271,22 @@ class LigRecEGNN(nn.Module):
             h[ntype] = graph.nodes[ntype].data['h_0']
             x[ntype] = graph.nodes[ntype].data['x_0']
 
+
+        # compute z, the normalization factor for messages passed on the graph, for each node type that is updated
+        # we choose z to be the average in-degree of nodes being update, across all node types that are updated.
+        z_dict = {}
+        batch_dict = { 'lig': lig_batch_idx, 'kp': kp_batch_idx}
+        for ntype in self.updated_node_types:
+            # TODO: possibly faster to do one sum call with torch.sum
+            if self.message_norm == 0:
+                z_dict[ntype] = torch.stack([graph.batch_num_edges(etype) for etype in self.edge_types if etype[-1] == ntype[0] ], dim=0).sum(dim=0) / graph.batch_num_nodes(ntype)
+                z_dict[ntype] = z_dict[ntype][ batch_dict[ntype] ].view(-1, 1) + 1
+            else:
+                z_dict[ntype] = self.message_norm
+
         # do equivariant message passing on the heterograph
         for layer in self.conv_layers:
-            h,x = layer(graph, h, x)
+            h,x = layer(graph, h, x, z_dict)
 
         return h['lig'], x['lig']
 
@@ -341,7 +361,7 @@ class LigRecDynamics(nn.Module):
             g = self.add_lig_edges(g, lig_batch_idx, kp_batch_idx)
 
             # pass through convolutions and get updated h and x for the ligand
-            h, x = self.egnn(g)
+            h, x = self.egnn(g, lig_batch_idx, kp_batch_idx)
 
             # slice off time dimension
             h = h[:, :-1]
