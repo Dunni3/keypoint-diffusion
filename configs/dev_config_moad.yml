@@ -80,7 +80,7 @@ training:
   batch_size: 4
   test_interval: 100 # measured in epochs
   train_metrics_interval: 0.5 # epochs
-  save_interval: 100 # epoch
+  save_interval: 1 # epoch
   sample_interval: 100 # number of epochs between sampling/testing molecules
   test_epochs: 1 # number of epochs to run when evaluating on the test set
   num_workers: 8

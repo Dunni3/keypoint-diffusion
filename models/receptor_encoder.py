@@ -478,7 +478,7 @@ class ReceptorEncoder(nn.Module):
             self.kk_convs = nn.ModuleList(kk_convs)
 
 
-    def forward(self, g: dgl.DGLGraph, lig_batch_idx, kp_batch_idx):
+    def forward(self, g: dgl.DGLGraph, kp_batch_idx: torch.Tensor):
 
         x = g.nodes['rec'].data['x_0']
         h = g.nodes['rec'].data['h_0']

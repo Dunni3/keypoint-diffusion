@@ -85,7 +85,7 @@ class LigandDiffuser(nn.Module):
         kp_batch_idx = batch_idx.repeat_interleave(complex_graphs.batch_num_nodes('kp'))
                 
         # encode the receptor
-        complex_graphs = self.rec_encoder(complex_graphs, lig_batch_idx, kp_batch_idx)
+        complex_graphs = self.rec_encoder(complex_graphs, kp_batch_idx)
 
         # if we are applying the RL hinge loss, we will need to be able to put receptor atoms and the ligand into the same
         # referance frame. in order to do this, we need the initial COM of the keypoints
@@ -242,16 +242,15 @@ class LigandDiffuser(nn.Module):
         # compute initial receptor atom COM
         init_rec_atom_com = dgl.readout_nodes(g, feat='x_0', op='mean', ntype='rec')
 
+        # get batch indicies of every ligand and keypoint - useful later
+        batch_idx = torch.arange(g.batch_size, device=device)
+        kp_batch_idx = batch_idx.repeat_interleave(g.batch_num_nodes('kp'))
+
         # get keypoints positions/features
-        g = self.rec_encoder(g)
+        g = self.rec_encoder(g, kp_batch_idx)
 
         # get initial keypoint center of mass
         init_kp_com = dgl.readout_nodes(g, feat='x_0', op='mean', ntype='kp')
-
-        # get batch indicies of every ligand and keypoint - useful later
-        batch_idx = torch.arange(g.batch_size, device=device)
-        lig_batch_idx = batch_idx.repeat_interleave(g.batch_num_nodes('lig'))
-        kp_batch_idx = batch_idx.repeat_interleave(g.batch_num_nodes('kp'))
 
         # remove (receptor atom COM, or keypoint COM) from receptor keypoints
         # TODO: does this effect sampling performance? there is an argument to be made to starting sampling at keypoint COM?
