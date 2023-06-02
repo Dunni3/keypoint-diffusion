@@ -211,6 +211,10 @@ def main():
         # create batch_size copies of the encoded receptor
         g_copies = copy_graph(ref_graph, cmd_args.max_batch_size)
         init_kp_com = init_kp_com.repeat(cmd_args.max_batch_size, 1)
+        # TODO: i don't thinks approach works of pre-generating copies of graphs
+        # because the forward pass will probably change the positions of g_copies
+        # so we may need to do something to fix g_copies after every sampling call or 
+        # maybe we just generate the number of copies needed on every iteration
 
 
         # g_copies = dgl.batch(g_copies)

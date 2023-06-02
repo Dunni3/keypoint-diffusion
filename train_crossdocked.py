@@ -75,6 +75,20 @@ def parse_arguments():
     training_group.add_argument('--restart_interval', type=float, default=None)
     training_group.add_argument('--restart_type', type=str, default=None)
 
+    # arguments added in refactor
+    rec_encoder_group.add_argument('--kp_rad', type=float, default=None)
+    rec_encoder_group.add_argument('--use_sameres_feat', type=int, default=None)
+    rec_encoder_group.add_argument('--n_kk_convs', type=int, default=None)
+    rec_encoder_group.add_argument('--n_kk_heads', type=int, default=None)
+    p.add_argument('--norm', type=int, default=None)
+    p.add_argument('--ll_cutoff', type=float, default=None)
+    p.add_argument('--rr_cutoff', type=float, default=None)
+    p.add_argument('--kk_cutoff', type=float, default=None)
+    p.add_argument('--kl_cutoff', type=float, default=None)
+    p.add_argument('--use_interface_points', type=int, default=None)
+    p.add_argument('--fix_pos', type=int, default=None)
+    p.add_argument('--update_kp_feat', type=int, default=None)
+
     p.add_argument('--max_fake_atom_frac', type=float, default=None)
 
     p.add_argument('--use_tanh', type=str, default=None)
@@ -99,8 +113,38 @@ def parse_arguments():
         config_dict['experiment']['name'] = f"{config_dict['experiment']['name']}_resumed"
 
     # override config file args with command line args
-
     args_dict = vars(args)
+    
+    if args.use_sameres_feat is not None:
+        check_bool_int(args.use_sameres_feat)
+        config_dict['rec_encoder']['use_sameres_feat'] = bool(args.use_sameres_feat)
+
+    for arg_name in ['n_kk_convs', 'n_kk_heads', 'kp_rad']:
+        if args_dict[arg_name] is not None:
+            config_dict['rec_encoder'][arg_name] = args_dict[arg_name]
+
+    for etype in ['ll', 'rr', 'kk', 'kl']:
+        if args_dict[f'{etype}_cutoff'] is not None:
+            config_dict['graph']['graph_cutoffs'][etype] = args_dict[f'{etype}_cutoff']
+
+    if args.norm is not None:
+        check_bool_int(args.norm)
+        config_dict['rec_encoder']['norm'] = bool(args.norm)
+        config_dict['dynamics']['norm'] = bool(args.norm)
+    
+    if args.use_interface_points is not None:
+        check_bool_int(args.use_interface_points)
+        config_dict['rec_encoder_loss']['use_interface_points'] = bool(args.use_interface_points)
+
+    if args.fix_pos is not None:
+        check_bool_int(args.fix_pos)
+        config_dict['rec_encoder']['fix_pos'] = bool(args.fix_pos)
+    
+    if args.update_kp_feat is not None:
+        check_bool_int(args.update_kp_feat)
+        config_dict['dynamics']['update_kp_feat'] = bool(args.update_kp_feat)
+
+    
     scheduler_args = ['warmup_length', 
                       'rec_enc_weight_decay_midpoint', 
                       'rec_enc_weight_decay_scale', 
@@ -140,7 +184,7 @@ def parse_arguments():
         config_dict['rec_encoder']['fix_pos'] = bool(args.fix_rec_pos)
 
     if args.n_keypoints is not None:
-        config_dict['rec_encoder']['n_keypoints'] = args.n_keypoints
+        config_dict['graph']['n_keypoints'] = args.n_keypoints
 
     if args.n_convs_encoder is not None:
         config_dict['rec_encoder']['n_convs'] = args.n_convs_encoder
@@ -206,6 +250,10 @@ def parse_arguments():
         config_dict['training']['clip_value'] = args.clip_value
 
     return args, config_dict
+
+def check_bool_int(val):
+    if val not in [0, 1]:
+        raise ValueError
 
 @torch.no_grad()
 def test_model(model, test_dataloader, args, device):

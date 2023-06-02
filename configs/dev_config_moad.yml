@@ -66,11 +66,11 @@ dynamics:
 
 
 rec_encoder_loss:
-  loss_type: 'none' # can be optimal_transport, gaussian_repulsion, hinge, or none
-  use_interface_points: False
+  loss_type: 'optimal_transport' # can be optimal_transport, gaussian_repulsion, hinge, or none
+  use_interface_points: True
 
 training:
-  rec_encoder_loss_weight: 0.00
+  rec_encoder_loss_weight: 0.1
   rl_hinge_loss_weight: 0
   learning_rate: 1.0e-4
   weight_decay: 1.0e-12
