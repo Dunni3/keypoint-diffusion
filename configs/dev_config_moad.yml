@@ -61,13 +61,13 @@ dynamics:
   hidden_nf: 256
   use_tanh: True # whether to use tanh activation for coordinate updates
   message_norm: 0
-  update_kp_feat: True
+  update_kp_feat: False
   norm: True 
 
 
 rec_encoder_loss:
   loss_type: 'optimal_transport' # can be optimal_transport, gaussian_repulsion, hinge, or none
-  use_interface_points: True
+  use_interface_points: False
 
 training:
   rec_encoder_loss_weight: 0.1

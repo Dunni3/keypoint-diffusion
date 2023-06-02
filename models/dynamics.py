@@ -286,6 +286,9 @@ class LigRecEGNN(nn.Module):
 
         # do equivariant message passing on the heterograph
         for layer in self.conv_layers:
+            if 'kp' not in h: # this occurs when update_kp_feat = False
+                h['kp'] = graph.nodes['kp'].data['h_0']
+                x['kp'] = graph.nodes['kp'].data['x_0']
             h,x = layer(graph, h, x, z_dict)
 
         return h['lig'], x['lig']
