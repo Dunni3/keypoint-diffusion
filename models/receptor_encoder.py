@@ -278,7 +278,7 @@ class RecKeyConv(nn.Module):
         batch_num_nodes, batch_num_edges = get_batch_info(g)
 
         # we have to change the number of rk edges per batch because we will be altering that
-        batch_num_edges['rk'] = torch.ones(g.batch_size, device=g.device, dtype=int)*self.n_keypoints*self.k_closest
+        batch_num_edges[('rec', 'rk', 'kp')] = torch.ones(g.batch_size, device=g.device, dtype=int)*self.n_keypoints*self.k_closest
 
         g.remove_edges(g.edges(form='eid', etype='rk'), etype='rk') # remove all receptor-keypoint edges
         g.add_edges(knn_idxs[1], knn_idxs[0], etype='rk') # add back the edges identified by knn
@@ -289,7 +289,7 @@ class RecKeyConv(nn.Module):
 
         # get mean rec feature on every keypoint
         g.update_all(fn.copy_u('h', 'm'), fn.mean('m', 'h_m'), etype='rk')
-        g.apply_edges(fn.u_sub_v('x', 'x', 'x_diff'), etype='rk')
+        g.apply_edges(fn.u_sub_v('x_0', 'x_0', 'x_diff'), etype='rk')
         g.edges['rk'].data['d'] = torch.norm(g.edges['rk'].data['x_diff']+1e-30, dim=1)
         g.update_all(fn.copy_e('d', 'd'), self.collect_dists, etype='rk')
         

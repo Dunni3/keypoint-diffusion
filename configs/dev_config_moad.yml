@@ -41,8 +41,8 @@ rec_encoder:
   coords_range: 10
   kp_feat_scale: 1.0
   message_norm: 0
-  k_closest: 0
-  kp_rad: 3
+  k_closest: 4
+  kp_rad: 0
   no_cg: False
   fix_pos: True
   use_sameres_feat: True
