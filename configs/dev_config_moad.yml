@@ -62,7 +62,9 @@ dynamics:
   use_tanh: True # whether to use tanh activation for coordinate updates
   message_norm: 0
   update_kp_feat: False
-  norm: True 
+  norm: True
+  ll_k: 5
+  kl_k: 5
 
 
 rec_encoder_loss:
@@ -80,7 +82,7 @@ training:
   batch_size: 4
   test_interval: 100 # measured in epochs
   train_metrics_interval: 0.5 # epochs
-  save_interval: 1 # epoch
+  save_interval: 100 # epoch
   sample_interval: 100 # number of epochs between sampling/testing molecules
   test_epochs: 1 # number of epochs to run when evaluating on the test set
   num_workers: 8

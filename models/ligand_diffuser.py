@@ -163,7 +163,7 @@ class LigandDiffuser(nn.Module):
         complex_graphs.nodes['lig'].data['h_0'] = complex_graphs.nodes['lig'].data['h_0'] * self.lig_feat_norm_constant
         return complex_graphs
 
-    def remove_com(self, complex_graphs, lig_batch_idx, rec_batch_idx, com: str = None):
+    def remove_com(self, complex_graphs, lig_batch_idx, kp_batch_idx, com: str = None):
         """Remove center of mass from ligand atom positions and receptor keypoint positions.
 
         This method can remove either the ligand COM, receptor keypoint COM or the complex COM.
@@ -172,17 +172,15 @@ class LigandDiffuser(nn.Module):
             raise NotImplementedError('removing COM of receptor/ligand complex not implemented')
         elif com == 'ligand':
             ntype = 'lig'
-            feat = 'x_0'
         elif com == 'receptor':
             ntype = 'kp'
-            feat = 'x'
         else:
             raise ValueError(f'invalid value for com: {com=}')
         
-        com = dgl.readout_nodes(complex_graphs, feat=feat, ntype=ntype, op='mean')
+        com = dgl.readout_nodes(complex_graphs, feat='x_0', ntype=ntype, op='mean')
 
         complex_graphs.nodes['lig'].data['x_0'] = complex_graphs.nodes['lig'].data['x_0'] - com[lig_batch_idx]
-        complex_graphs.nodes['kp'].data['x'] = complex_graphs.nodes['kp'].data['x_0'] - com[rec_batch_idx]
+        complex_graphs.nodes['kp'].data['x_0'] = complex_graphs.nodes['kp'].data['x_0'] - com[kp_batch_idx]
         return complex_graphs
 
     def noised_representation(self, g: dgl.DGLHeteroGraph, lig_batch_idx: torch.Tensor, kp_batch_idx: torch.Tensor,

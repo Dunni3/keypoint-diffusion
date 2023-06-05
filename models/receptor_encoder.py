@@ -218,7 +218,7 @@ class RecKeyConv(nn.Module):
 
             # get keypoint positions
             kp_pos = g.dstdata['agg_u']['kp'].mean(dim=1)
-            g.nodes['kp'].data['x'] = kp_pos
+            g.nodes['kp'].data['x_0'] = kp_pos
 
 
             # get keypoint features
@@ -241,7 +241,7 @@ class RecKeyConv(nn.Module):
         # graph topology and add it back afterwards
         batch_num_nodes, batch_num_edges = get_batch_info(g)
 
-        kp_pos = g.nodes['kp'].data['x']
+        kp_pos = g.nodes['kp'].data['x_0']
         batch_idxs = torch.arange(g.batch_size, device=g.device)
         rec_atom_batch = batch_idxs.repeat_interleave(g.batch_num_nodes('rec'))
         rad_idxs = radius(x=g.nodes['rec'].data['x_0'], y=kp_pos, batch_x=rec_atom_batch, batch_y=kp_batch_idx, r=self.kp_rad, max_num_neighbors=100) # shape (2, n_keypoints*?*batch_size)
@@ -265,7 +265,7 @@ class RecKeyConv(nn.Module):
 
     def k_closest_feats(self, g: dgl.DGLHeteroGraph):
         # get k edges having the lowest distance to each keypoint
-        kp_pos = g.nodes['kp'].data['x']
+        kp_pos = g.nodes['kp'].data['x_0']
 
         batch_idxs = torch.arange(g.batch_size, device=g.device)
         rec_atom_batch = batch_idxs.repeat_interleave(g.batch_num_nodes('rec'))

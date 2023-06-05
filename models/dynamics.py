@@ -3,7 +3,7 @@ import torch.nn as nn
 from typing import Dict, List
 import dgl.function as fn
 import dgl
-from torch_cluster import radius, radius_graph
+from torch_cluster import radius, radius_graph, knn_graph, knn
 from utils import get_batch_info, get_edges_per_batch
 
 class LigRecConv(nn.Module):
@@ -298,13 +298,17 @@ class LigRecEGNN(nn.Module):
 class LigRecDynamics(nn.Module):
 
     def __init__(self, atom_nf, rec_nf, n_layers=4, hidden_nf=255, act_fn=nn.SiLU, use_tanh=False, message_norm=1, no_cg: bool = False,
-                 n_keypoints: int = 20, graph_cutoffs: dict = {}, update_kp_feat: bool = False, norm: bool = False):
+                 n_keypoints: int = 20, graph_cutoffs: dict = {}, update_kp_feat: bool = False, norm: bool = False, 
+                 ll_k: int = 0, kl_k: int = 0):
         super().__init__()
 
         self.no_cg = no_cg    
         self.n_keypoints = n_keypoints
         self.graph_cutoffs = graph_cutoffs
         self.update_kp_feat = update_kp_feat
+
+        self.ll_k = ll_k
+        self.kl_k = kl_k
     
         self.lig_encoder = nn.Sequential(
             nn.Linear(atom_nf, 64),
@@ -384,11 +388,17 @@ class LigRecDynamics(nn.Module):
         batch_size = g.batch_size
 
         # add lig-lig edges
-        ll_idxs = radius_graph(g.nodes['lig'].data['x_0'], r=self.graph_cutoffs['ll'], batch=lig_batch_idx, max_num_neighbors=200)
+        if self.ll_k > 0: # if ll_k is 0, we use radius graph, otherwise we use knn graphs with ll_k neighbors
+            ll_idxs = knn_graph(g.nodes['lig'].data['x_0'], k=self.ll_k, batch=lig_batch_idx)
+        else:
+            ll_idxs = radius_graph(g.nodes['lig'].data['x_0'], r=self.graph_cutoffs['ll'], batch=lig_batch_idx, max_num_neighbors=200)
         g.add_edges(ll_idxs[0], ll_idxs[1], etype='ll')
 
         # compute kp -> lig edges
-        kl_idxs = radius(x=g.nodes['lig'].data['x_0'], y=g.nodes['kp'].data['x'], batch_x=lig_batch_idx, batch_y=kp_batch_idx, r=self.graph_cutoffs['kl'], max_num_neighbors=100)
+        if self.kl_k > 0: # if kl_k is 0, we use radius graph, otherwise we use knn graphs with kl_k neighbors
+            kl_idxs = knn(x=g.nodes['lig'].data['x_0'], y=g.nodes['kp'].data['x_0'], k=self.kl_k, batch_x=lig_batch_idx, batch_y=kp_batch_idx)
+        else:
+            kl_idxs = radius(x=g.nodes['lig'].data['x_0'], y=g.nodes['kp'].data['x_0'], batch_x=lig_batch_idx, batch_y=kp_batch_idx, r=self.graph_cutoffs['kl'], max_num_neighbors=100)
         g.add_edges(kl_idxs[0], kl_idxs[1], etype='kl')
 
         # compute batch information

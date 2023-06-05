@@ -88,6 +88,8 @@ def parse_arguments():
     p.add_argument('--use_interface_points', type=int, default=None)
     p.add_argument('--fix_pos', type=int, default=None)
     p.add_argument('--update_kp_feat', type=int, default=None)
+    p.add_argument('--ll_k', type=int, default=None)
+    p.add_argument('--kl_k', type=int, default=None)
 
     p.add_argument('--max_fake_atom_frac', type=float, default=None)
 
@@ -122,6 +124,10 @@ def parse_arguments():
     for arg_name in ['n_kk_convs', 'n_kk_heads', 'kp_rad']:
         if args_dict[arg_name] is not None:
             config_dict['rec_encoder'][arg_name] = args_dict[arg_name]
+
+    for arg_name in ['ll_k', 'kl_k']:
+        if args_dict[arg_name] is not None:
+            config_dict['dynamics'][arg_name] = args_dict[arg_name]
 
     for etype in ['ll', 'rr', 'kk', 'kl']:
         if args_dict[f'{etype}_cutoff'] is not None:
