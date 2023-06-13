@@ -51,7 +51,8 @@ class ModelAnalyzer:
             graphs, 
             n_lig_atoms=n_lig_atoms, 
             rec_enc_batch_size=rec_enc_batch_size, 
-            diff_batch_size=diff_batch_size)
+            diff_batch_size=diff_batch_size,
+            use_ref_lig_com=True)
         sample_time = time.time() - sampling_start
         print(f'sampling {n_receptors=} and {n_replicates=}')
         print(f'sampling time per molecule = {sample_time/(n_receptors*n_replicates):.2f} s', flush=True)

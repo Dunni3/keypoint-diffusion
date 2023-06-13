@@ -262,7 +262,7 @@ class LigandDiffuser(nn.Module):
 
     
     @torch.no_grad()
-    def _sample(self, ref_graphs: List[dgl.DGLHeteroGraph], n_lig_atoms: List[List[int]], rec_enc_batch_size: int = 32, diff_batch_size: int = 32, visualize=False) -> List[List[Dict[str, torch.Tensor]]]:
+    def _sample(self, ref_graphs: List[dgl.DGLHeteroGraph], n_lig_atoms: List[List[int]], rec_enc_batch_size: int = 32, diff_batch_size: int = 32, visualize=False, use_ref_lig_com: bool = False) -> List[List[Dict[str, torch.Tensor]]]:
         """Sample multiple receptors with multiple ligands per receptor.
 
         Args:
@@ -306,7 +306,12 @@ class LigandDiffuser(nn.Module):
 
             batch_graphs = dgl.batch(graphs[start_idx:end_idx])
 
-            batch_lig_pos, batch_lig_feat = self.sample_from_encoded_receptors(batch_graphs, visualize=visualize)
+            if use_ref_lig_com:
+                init_lig_pos = dgl.readout_nodes(batch_graphs, feat='x_0', op='mean', ntype='lig')
+            else:
+                init_lig_pos = None
+
+            batch_lig_pos, batch_lig_feat = self.sample_from_encoded_receptors(batch_graphs, visualize=visualize, init_lig_pos=init_lig_pos)
             lig_pos.extend(batch_lig_pos)
             lig_feat.extend(batch_lig_feat)
 
