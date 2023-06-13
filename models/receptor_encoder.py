@@ -399,6 +399,8 @@ class ReceptorEncoder(nn.Module):
 
         if kp_rad != 0 and k_closest != 0:
             raise ValueError('one of kp_rad and kp_closest can be zero but not both')
+        elif kp_rad == 0 and k_closest == 0:
+            raise ValueError('one of kp_rad and kp_closest must be non-zero')
 
         self.n_convs = n_convs
         self.n_keypoints = n_keypoints
