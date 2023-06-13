@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 import rdkit.Chem as Chem
 import pickle
+import numpy as np
 
 from analysis.metrics import MoleculeProperties
 
@@ -33,6 +34,11 @@ if __name__ == "__main__":
     # write metrics into a big wile
     metrics_dict = {
         'qed': qed, 'sa':sa, 'logp':logp, 'diversity': per_pocket_diversity, 'pocket_dirs': pocket_dirs }
+    
+    # convert qed, sa, logp, and diversity to numpy arrays and print their mean values
+    for key in ['qed', 'sa', 'logp', 'diversity']:
+        vals = np.asarray(metrics_dict[key])
+        print(f'{key}: {vals.mean(): .3f} +/- {vals.std(): .3f}')
 
     with open(args.sampled_mols_dir.parent / 'metrics.pkl', 'wb') as f:
         pickle.dump(metrics_dict, f)

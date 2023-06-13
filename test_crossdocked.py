@@ -38,6 +38,8 @@ def parse_arguments():
     # p.add_argument('--no_minimization', action='store_true')
     p.add_argument('--ligand_only_minimization', action='store_true')
     p.add_argument('--pocket_minimization', action='store_true')
+
+    p.add_argument('--use_ref_lig_com', action='store_true', help="Initialize each ligand's position at the reference ligand's center of mass" )
     
     args = p.parse_args()
 
@@ -174,9 +176,9 @@ def main():
     model.eval()
 
 
-    pocket_mols = []
+    # pocket_mols = []
     pocket_sampling_times = []
-    keypoints = []
+    # keypoints = []
 
     # generate the iterator over the dataset
     if cmd_args.dataset_idx is None:
@@ -205,23 +207,15 @@ def main():
         ref_graph = ref_graph.to(device)
 
         # encode the receptor
-        ref_graph, init_kp_com = model.encode_receptors(ref_graph)
-        assert len(init_kp_com.shape) == 2
-
-        # create batch_size copies of the encoded receptor
-        g_copies = copy_graph(ref_graph, cmd_args.max_batch_size)
-        init_kp_com = init_kp_com.repeat(cmd_args.max_batch_size, 1)
-        # TODO: i don't thinks approach works of pre-generating copies of graphs
-        # because the forward pass will probably change the positions of g_copies
-        # so we may need to do something to fix g_copies after every sampling call or 
-        # maybe we just generate the number of copies needed on every iteration
+        ref_graph = model.encode_receptors(ref_graph)
 
 
-        # g_copies = dgl.batch(g_copies)
-        # kp_pos = [ kp_pos[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
-        # kp_feat = [ kp_feat[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
-        # init_rec_atom_com = [ init_rec_atom_com[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
-        # init_kp_com = [ init_kp_com[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
+        # compute initial ligand COM
+        if cmd_args.use_ref_lig_com:
+            ref_init_lig_com = dgl.readout_nodes(ref_graph, ntype='lig', feat='x_0', op='mean')
+            assert ref_init_lig_com.shape == (1, 3)
+        else:
+            ref_init_lig_com = None
 
         pocket_raw_mols = []
 
@@ -232,16 +226,20 @@ def main():
             batch_size = min(n_mols_to_generate, cmd_args.max_batch_size)
 
             # collect just the batch_size graphs and init_kp_coms that we need
-            g_batch = g_copies[:batch_size]
+            g_batch = copy_graph(ref_graph, batch_size)
             g_batch = dgl.batch(g_batch)
 
-            init_kp_com_batch = init_kp_com[:batch_size]
-            init_kp_com_batch = init_kp_com_batch.to(device)
+            # copy the ref_lig_com out batch_size times
+            if cmd_args.use_ref_lig_com:
+                init_lig_com_batch = ref_init_lig_com.repeat(batch_size, 1)
+            else:
+                init_lig_com_batch = None
+
             # sample ligand atom positions/features
             with g_batch.local_scope():
                 batch_lig_pos, batch_lig_feat = model.sample_from_encoded_receptors(
                     g_batch,  
-                    init_kp_com_batch)
+                    init_lig_pos=init_lig_com_batch)
 
             # convert positions/features to rdkit molecules
             for lig_idx, (lig_pos_i, lig_feat_i) in enumerate(zip(batch_lig_pos, batch_lig_feat)):
@@ -251,7 +249,7 @@ def main():
                 atom_elements = test_dataset.lig_atom_idx_to_element(element_idxs)
 
                 # build molecule
-                mol = build_molecule(batch_lig_pos[lig_idx], atom_elements, add_hydrogens=False, sanitize=True, largest_frag=True, relax_iter=0)
+                mol = build_molecule(lig_pos_i, atom_elements, add_hydrogens=False, sanitize=True, largest_frag=True, relax_iter=0)
 
                 if mol is not None:
                     pocket_raw_mols.append(mol)
@@ -272,6 +270,12 @@ def main():
             f.write(f'{pocket_sample_time:.2f}')
         with open(pocket_dir / 'sample_time.pkl', 'wb') as f:
             pickle.dump(pocket_sample_time, f)
+
+        # print the sampling time
+        print(f'pocket {dataset_idx} sampling time: {pocket_sample_time:.2f}')
+
+        # print the sampling time per molecule
+        print(f'pocket {dataset_idx} sampling time per molecule: {pocket_sample_time/len(pocket_raw_mols):.2f}')
 
 
         # write the pocket used for minimization to the pocket dir
@@ -319,7 +323,7 @@ def main():
 
         # remove KP COM, add back in init_kp_com, then save keypoint positions
         keypoint_positions = ref_graph.nodes['kp'].data['x_0']
-        keypoint_positions = keypoint_positions - keypoint_positions.mean(dim=0, keepdims=True) + init_kp_com[:1, :]
+        # keypoint_positions = keypoint_positions - keypoint_positions.mean(dim=0, keepdims=True) + ref_init_kp_com
         
         # write keypoints to an xyz file
         kp_file = pocket_dir / 'keypoints.xyz'
