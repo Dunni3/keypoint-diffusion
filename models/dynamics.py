@@ -3,6 +3,8 @@ import torch.nn as nn
 from typing import Dict, List
 import dgl.function as fn
 import dgl
+from torch_cluster import radius, radius_graph, knn_graph, knn
+from utils import get_batch_info, get_edges_per_batch
 
 class LigRecConv(nn.Module):
 
@@ -10,7 +12,7 @@ class LigRecConv(nn.Module):
     # original code: https://github.com/dmlc/dgl/blob/76bb54044eb387e9e3009bc169e93d66aa004a74/python/dgl/nn/pytorch/conv/egnnconv.py
     # I have extended the EGNN graph conv layer to operate on heterogeneous graphs containing containing receptor and ligand nodes
 
-    def __init__(self, in_size, hidden_size, out_size, edge_feat_size=0, use_tanh=False, coords_range=10, message_norm=1):
+    def __init__(self, in_size, hidden_size, out_size, edge_feat_size=0, use_tanh=False, coords_range=10, update_kp_feat: bool = False, norm: bool = False):
         super().__init__()
 
         self.in_size = in_size
@@ -19,11 +21,17 @@ class LigRecConv(nn.Module):
         self.edge_feat_size = edge_feat_size
         act_fn = nn.SiLU()
         self.use_tanh = use_tanh
-        self.message_norm = message_norm
+        self.update_kp_feat = update_kp_feat
+        self.norm = norm
 
         self.coords_range = coords_range
 
-        self.edge_types = ["ll", "rl"]
+        if self.update_kp_feat:
+            self.edge_types = ["ll", "kl", "lk", "kk"]
+            self.updated_node_types = ['lig', 'kp']
+        else:
+            self.edge_types = ["ll", "kl"]
+            self.updated_node_types = ['lig']
 
         # \phi_e^t
         self.edge_mlp = {}
@@ -37,12 +45,23 @@ class LigRecConv(nn.Module):
             )
         self.edge_mlp = nn.ModuleDict(self.edge_mlp)
 
-        # \phi_h
-        self.node_mlp = nn.Sequential(
-            nn.Linear(in_size + hidden_size, hidden_size),
-            act_fn,
-            nn.Linear(hidden_size, out_size),
+        self.soft_attention = {}
+        for edge_type in self.edge_types:
+            self.soft_attention[edge_type] = nn.Sequential(
+            nn.Linear(hidden_size, 1),
+            nn.Sigmoid()
         )
+        self.soft_attention = nn.ModuleDict(self.soft_attention)
+
+        # \phi_h
+        self.node_mlp = {}
+        for ntype in self.updated_node_types:
+            self.node_mlp[ntype] = nn.Sequential(
+                nn.Linear(in_size + hidden_size, hidden_size),
+                act_fn,
+                nn.Linear(hidden_size, out_size),
+            )
+        self.node_mlp = nn.ModuleDict(self.node_mlp)
 
         # \phi_x^t
         self.coord_mlp = {}
@@ -58,6 +77,14 @@ class LigRecConv(nn.Module):
                 layer
             )
         self.coord_mlp = nn.ModuleDict(self.coord_mlp)
+
+        self.layer_norm = {}
+        for ntype in self.updated_node_types:
+            if self.norm:
+                self.layer_norm[ntype] = nn.LayerNorm(out_size)
+            else:
+                self.layer_norm[ntype] = nn.Identity()
+        self.layer_norm = nn.ModuleDict(self.layer_norm)
 
     def message(self, edges):
         """message function for EGNN"""
@@ -82,16 +109,19 @@ class LigRecConv(nn.Module):
 
         # compute feature messages
         msg_h = self.edge_mlp[edge_type](f)
+        msg_h = msg_h*self.soft_attention[edge_type](msg_h)
 
         # compute coordinate messages
-        if self.use_tanh:
+        if edge_type[1] in ["kk", "lk"]:
+            msg_x = torch.zeros_like(edges.data["radial"])
+        elif self.use_tanh:
             msg_x = torch.tanh( self.coord_mlp[edge_type](f) )* edges.data["x_diff"] * self.coords_range
         else:
             msg_x = self.coord_mlp[edge_type](f)*edges.data["x_diff"]
 
         return {"msg_x": msg_x, "msg_h": msg_h}
 
-    def forward(self, graph, node_feat, coord_feat, edge_feat=None):
+    def forward(self, graph: dgl.DGLHeteroGraph, node_feat: Dict[str, torch.Tensor], coord_feat: Dict[str, torch.Tensor], z_dict: Dict[str, torch.Tensor], edge_feat=None):
         r"""
         Description
         -----------
@@ -113,7 +143,6 @@ class LigRecConv(nn.Module):
         node_feat_out : Dict[str, torch.Tensor]
         coord_feat_out: Dict[str, torch.Tensor]
         """
-        assert graph.etypes == self.edge_types
         with graph.local_scope():
             # node feature
             graph.ndata["h"] = node_feat
@@ -122,50 +151,59 @@ class LigRecConv(nn.Module):
             
             # edge feature
             if self.edge_feat_size > 0:
-                assert edge_feat is not None, "Edge features must be provided."
-                graph.edata["a"] = edge_feat
+                raise NotImplementedError
+                # assert edge_feat is not None, "Edge features must be provided."
+                # graph.edata["a"] = edge_feat
 
             # compute displacement vector between nodes for all edges
-            # TODO: this is u_sub_v ... should we do v_sub_u? which way is information flowing? does this 
-            # affect how I construct edges in my initial graph??
-            graph.apply_edges(fn.u_sub_v("x", "x", "x_diff"))
+            for etype in self.edge_types:
+                graph.apply_edges(fn.u_sub_v("x", "x", "x_diff"), etype=etype)
 
             # compute euclidean distance across all edges
-            for etype in graph.etypes:
+            for etype in self.edge_types:
                 graph.apply_edges(self.compute_dij, etype=etype)
 
             # normalize displacement vectors to unit length
-            for etype in graph.etypes:
+            for etype in self.edge_types:
                 graph.apply_edges(
-                    lambda edges: {'x_diff': edges.data['x_diff'] / (edges.data['dij'] + 1e-9)},
+                    lambda edges: {'x_diff': edges.data['x_diff'] / (edges.data['dij'] + 1)},
                     etype=etype)
 
             # compute messages and store them on every edge
-            for etype in graph.etypes:
+            for etype in self.edge_types:
                 graph.apply_edges(self.message, etype=etype)
 
             # aggregating messages from all edges
-            graph.update_all(fn.copy_e("msg_x", "m"), fn.sum("m", "x_neigh"))
-            graph.update_all(fn.copy_e("msg_h", "m"), fn.sum("m", "h_neigh"))
+            x_update_dict = {}
+            for etype in self.edge_types:
+                x_update_dict[etype] = (fn.copy_e("msg_x", "m"), fn.sum("m", "x_neigh"))
+            graph.multi_update_all(x_update_dict, cross_reducer='sum')
+
+            h_update_dict = {}
+            for etype in self.edge_types:
+                h_update_dict[etype] = (fn.copy_e("msg_h", "m"), fn.sum("m", "h_neigh"))
+            graph.multi_update_all(h_update_dict, cross_reducer='sum')
 
             # normalize messages
             for key in graph.ndata['h_neigh']:
-                graph.ndata['h_neigh'][key] = graph.ndata['h_neigh'][key]/self.message_norm
+                graph.ndata['h_neigh'][key] = graph.ndata['h_neigh'][key]/z_dict[key]
 
             for key in graph.ndata['x_neigh']:
-                graph.ndata['x_neigh'][key] = graph.ndata['x_neigh'][key]/self.message_norm
+                graph.ndata['x_neigh'][key] = graph.ndata['x_neigh'][key]/z_dict[key]
 
             # get aggregated messages
             h_neigh, x_neigh = graph.ndata["h_neigh"], graph.ndata["x_neigh"]
 
             # compute updated features/coordinates
-            # note that the receptor features/coordinates are not updated
-            node_mlp_input = torch.cat([node_feat['lig'], h_neigh['lig']], dim=-1)
-            h = {'lig': node_feat['lig'] + self.node_mlp(node_mlp_input),
-                 'rec': node_feat['rec']}
-
-            x = {'lig': coord_feat['lig'] + x_neigh['lig'],
-                 'rec': coord_feat['rec']}
+            # note that updates for kp positions will always be 0
+            h = {}
+            x = {}
+            for ntype in self.updated_node_types:
+                node_mlp_input = torch.concatenate([ node_feat[ntype], h_neigh[ntype] ], dim=1)
+                new_node_feat = node_feat[ntype] + self.node_mlp[ntype](node_mlp_input)
+                new_node_feat = self.layer_norm[ntype](new_node_feat)
+                h[ntype] = new_node_feat
+                x[ntype] = coord_feat[ntype] + x_neigh[ntype]
 
             return h, x
 
@@ -182,13 +220,23 @@ class LigRecConv(nn.Module):
 
 class LigRecEGNN(nn.Module):
 
-    def __init__(self, n_layers, in_size, hidden_size, out_size, use_tanh=False, message_norm=1):
+    def __init__(self, n_layers, in_size, hidden_size, out_size, use_tanh=False, message_norm=1, update_kp_feat: bool = False, norm: bool = False):
         super().__init__()
 
         self.n_layers = n_layers
         self.in_size = in_size
         self.hidden_size = hidden_size
         self.out_size = out_size
+        self.update_kp_feat = update_kp_feat
+        self.norm = norm
+        self.message_norm = message_norm
+
+        if update_kp_feat:
+            self.edge_types = ["ll", "kl", "lk", "kk"]
+            self.updated_node_types = ['lig', 'kp']
+        else:
+            self.edge_types = ["ll", "kl"]
+            self.updated_node_types = ['lig']
 
         self.conv_layers = []
         for i in range(self.n_layers):
@@ -210,39 +258,63 @@ class LigRecEGNN(nn.Module):
                 layer_out_size = hidden_size
 
             self.conv_layers.append( 
-                LigRecConv(in_size=layer_in_size, hidden_size=layer_hidden_size, out_size=layer_out_size, use_tanh=use_tanh, message_norm=message_norm)
+                LigRecConv(in_size=layer_in_size, hidden_size=layer_hidden_size, out_size=layer_out_size, use_tanh=use_tanh, update_kp_feat=update_kp_feat, norm=norm)
             )
 
             self.conv_layers = nn.ModuleList(self.conv_layers)
 
-    def forward(self, graph):
+    def forward(self, graph: dgl.DGLHeteroGraph, lig_batch_idx, kp_batch_idx):
 
-        node_coords = graph.ndata['x_0']
-        node_features = graph.ndata['h_0']
+        h = {}
+        x = {}
+        for ntype in ['lig', 'kp']:
+            h[ntype] = graph.nodes[ntype].data['h_0']
+            x[ntype] = graph.nodes[ntype].data['x_0']
+
+
+        # compute z, the normalization factor for messages passed on the graph, for each node type that is updated
+        # we choose z to be the average in-degree of nodes being update, across all node types that are updated.
+        z_dict = {}
+        batch_dict = { 'lig': lig_batch_idx, 'kp': kp_batch_idx}
+        for ntype in self.updated_node_types:
+            # TODO: possibly faster to do one sum call with torch.sum
+            if self.message_norm == 0:
+                z_dict[ntype] = torch.stack([graph.batch_num_edges(etype) for etype in self.edge_types if etype[-1] == ntype[0] ], dim=0).sum(dim=0) / graph.batch_num_nodes(ntype)
+                z_dict[ntype] = z_dict[ntype][ batch_dict[ntype] ].view(-1, 1) + 1
+            else:
+                z_dict[ntype] = self.message_norm
 
         # do equivariant message passing on the heterograph
-        h, x = self.conv_layers[0](graph, node_features, node_coords)
-        if len(self.conv_layers) > 1:
-            for conv_layer in self.conv_layers[1:]:
-                h, x = conv_layer(graph, h, x)
+        for layer in self.conv_layers:
+            if 'kp' not in h: # this occurs when update_kp_feat = False
+                h['kp'] = graph.nodes['kp'].data['h_0']
+                x['kp'] = graph.nodes['kp'].data['x_0']
+            h,x = layer(graph, h, x, z_dict)
 
-        return h, x
+        return h['lig'], x['lig']
 
 
 
 class LigRecDynamics(nn.Module):
 
-    def __init__(self, atom_nf, rec_nf, n_layers=4, hidden_nf=255, act_fn=nn.SiLU, receptor_keypoint_k=6, ligand_k=8, use_tanh=False, message_norm=1):
+    def __init__(self, atom_nf, rec_nf, n_layers=4, hidden_nf=255, act_fn=nn.SiLU, use_tanh=False, message_norm=1, no_cg: bool = False,
+                 n_keypoints: int = 20, graph_cutoffs: dict = {}, update_kp_feat: bool = False, norm: bool = False, 
+                 ll_k: int = 0, kl_k: int = 0):
         super().__init__()
 
-        self.receptor_keypoint_k = receptor_keypoint_k
-        self.ligand_k = ligand_k    
+        self.no_cg = no_cg    
+        self.n_keypoints = n_keypoints
+        self.graph_cutoffs = graph_cutoffs
+        self.update_kp_feat = update_kp_feat
 
+        self.ll_k = ll_k
+        self.kl_k = kl_k
     
         self.lig_encoder = nn.Sequential(
-            nn.Linear(atom_nf, 2 * atom_nf),
+            nn.Linear(atom_nf, 64),
             act_fn(),
-            nn.Linear(2 * atom_nf, hidden_nf)
+            nn.Linear(64, hidden_nf),
+            act_fn()
         )
 
         self.lig_decoder = nn.Sequential(
@@ -251,112 +323,118 @@ class LigRecDynamics(nn.Module):
             nn.Linear(2 * atom_nf, atom_nf)
         )
 
-        self.rec_encoder = nn.Sequential(
-            nn.Linear(rec_nf, 2 * rec_nf),
-            act_fn(),
-            nn.Linear(2 * rec_nf, hidden_nf)
-        )
+        if rec_nf != hidden_nf:
+            self.rec_encoder = nn.Sequential(
+                nn.Linear(rec_nf, 2 * rec_nf),
+                act_fn(),
+                nn.Linear(2 * rec_nf, hidden_nf),
+                act_fn()
+            )
+        else:
+            self.rec_encoder = nn.Identity()
 
         # we add +1 to the feature size for the timestep
-        self.egnn = LigRecEGNN(n_layers=n_layers, in_size=hidden_nf+1, hidden_size=hidden_nf+1, out_size=hidden_nf+1, use_tanh=use_tanh, message_norm=message_norm)
+        self.egnn = LigRecEGNN(n_layers=n_layers, in_size=hidden_nf+1, hidden_size=hidden_nf+1, 
+                               out_size=hidden_nf+1, use_tanh=use_tanh, 
+                               message_norm=message_norm, update_kp_feat=update_kp_feat, norm=norm)
 
 
-    def forward(self, lig_pos, lig_feat, rec_pos, rec_feat, timestep, unbatch_eps=False):
-        # inputs: ligand/receptor positions/features, timestep
+    def forward(self, g: dgl.DGLHeteroGraph, timestep, lig_batch_idx, kp_batch_idx):
+        # inputs: ligand/keypoint positions/features, timestep
         # outputs: predicted noise
 
-        lig_feat = list(lig_feat)
-        rec_feat = list(rec_feat)
+        with g.local_scope():
 
+            # get initial lig and rec features from graph
+            lig_feat = g.nodes['lig'].data['h_0']
+            kp_feat = g.nodes['kp'].data['h_0']
 
-        # encode lig/rec features
-        for i in range(len(lig_feat)):
-            lig_feat[i] = self.lig_encoder(lig_feat[i])
-            rec_feat[i] = self.rec_encoder(rec_feat[i])
+            # encode lig/rec features
+            lig_feat = self.lig_encoder(lig_feat)
+            kp_feat = self.rec_encoder(kp_feat)
 
+            # add timestep to node features
+            t_lig = timestep[lig_batch_idx].view(-1, 1)
+            lig_feat = torch.concatenate([lig_feat, t_lig], dim=1)
+
+            t_kp = timestep[kp_batch_idx].view(-1, 1)
+            kp_feat = torch.concatenate([kp_feat, t_kp], dim=1)
+
+            # set lig and rec encoded features in the graph
+            g.nodes['lig'].data['h_0'] = lig_feat
+            g.nodes['kp'].data['h_0'] = kp_feat
+
+            # add lig-lig and kp<->lig edges to graph
+            g = self.add_lig_edges(g, lig_batch_idx, kp_batch_idx)
+
+            # pass through convolutions and get updated h and x for the ligand
+            h, x = self.egnn(g, lig_batch_idx, kp_batch_idx)
+
+            # slice off time dimension
+            h = h[:, :-1]
+
+            # decode lig features and substract off original node coordinates from predicted ones
+            # these become our noise predictions, \hat{\epsilon}
+            eps_h = self.lig_decoder(h) 
+            eps_x = x - g.nodes["lig"].data["x_0"]
+
+            self.remove_lig_edges(g)
+
+            return eps_h, eps_x
+
+    def add_lig_edges(self, g: dgl.DGLHeteroGraph, lig_batch_idx, kp_batch_idx) -> dgl.DGLHeteroGraph:
+
+        batch_num_nodes, batch_num_edges = get_batch_info(g)
+        batch_size = g.batch_size
+
+        # add lig-lig edges
+        if self.ll_k > 0: # if ll_k is 0, we use radius graph, otherwise we use knn graphs with ll_k neighbors
+            ll_idxs = knn_graph(g.nodes['lig'].data['x_0'], k=self.ll_k, batch=lig_batch_idx)
+        else:
+            ll_idxs = radius_graph(g.nodes['lig'].data['x_0'], r=self.graph_cutoffs['ll'], batch=lig_batch_idx, max_num_neighbors=200)
+        g.add_edges(ll_idxs[0], ll_idxs[1], etype='ll')
+
+        # compute kp -> lig edges
+        if self.kl_k > 0: # if kl_k is 0, we use radius graph, otherwise we use knn graphs with kl_k neighbors
+            kl_idxs = knn(x=g.nodes['lig'].data['x_0'], y=g.nodes['kp'].data['x_0'], k=self.kl_k, batch_x=lig_batch_idx, batch_y=kp_batch_idx)
+        else:
+            kl_idxs = radius(x=g.nodes['lig'].data['x_0'], y=g.nodes['kp'].data['x_0'], batch_x=lig_batch_idx, batch_y=kp_batch_idx, r=self.graph_cutoffs['kl'], max_num_neighbors=100)
+        g.add_edges(kl_idxs[0], kl_idxs[1], etype='kl')
+
+        # compute batch information
+        batch_num_edges[('lig', 'll', 'lig')] = get_edges_per_batch(ll_idxs[0], batch_size, lig_batch_idx)
+        kl_edges_per_batch = get_edges_per_batch(kl_idxs[0], batch_size, kp_batch_idx)
+        batch_num_edges[('kp', 'kl', 'lig')] = kl_edges_per_batch
+
+        # add lig -> kp edges if necessary
+        if self.update_kp_feat:
+            g.add_edges(kl_idxs[1], kl_idxs[0], etype='lk')
+            batch_num_edges[('lig', 'lk', 'kp')] = kl_edges_per_batch
+
+        # update the graph's batch information
+        g.set_batch_num_edges(batch_num_edges)
+        g.set_batch_num_nodes(batch_num_nodes)
+
+        return g
     
-        # add timestep to node features
-        lig_feat_time = []
-        rec_feat_time = []
-        for i in range(len(lig_feat)):
-            t_reshaped = timestep[i].repeat(lig_feat[i].shape[0]).view(-1,1)
-            lig_feat_time.append( torch.cat([lig_feat[i], t_reshaped], dim=1) )
+    def remove_lig_edges(self, g: dgl.DGLHeteroGraph):
 
-            t_reshaped = timestep[i].repeat(rec_feat[i].shape[0]).view(-1,1)
-            rec_feat_time.append( torch.cat([rec_feat[i], t_reshaped], dim=1) )
-
-        # construct heterograph
-        batched_graph = self.make_graph(lig_pos, lig_feat_time, rec_pos, rec_feat_time)
-
-        # check that graph batching simply concats features - it does!
-        # this means we can return the batched eps predictions and then the ligand diffusion model
-        # can simply concat the added noise for input to the loss function
-
-        # pass through LigRecEGNN
-        h, x = self.egnn(batched_graph)
+        if self.update_kp_feat:
+            etypes_to_remove = ['ll', 'kl', 'lk']
+        else:
+            etypes_to_remove = ['ll', 'kl']
         
-        # slice off time dimension
-        h_final = h['lig'][:, :-1]
+        batch_num_nodes, batch_num_edges = get_batch_info(g)
 
-        # decode lig features and substract off original node coordinates from predicted ones
-        # these become our noise predictions, \hat{\epsilon}
-        eps_h = self.lig_decoder(h_final) 
-        eps_x = x['lig'] - batched_graph.nodes["lig"].data["x_0"]
-
-        # unbatch noise estimates - this is necessary when sampling because
-        # we are going to use these noise estimates to denoise the input data.
-        # during training, we just compute the l2 loss over all the predicted noise values
-        # so we can deal with all of the noise predictions being lumped into one tensor
-        if unbatch_eps:
-            batched_graph.nodes["lig"].data["eps_h"] = eps_h
-            batched_graph.nodes["lig"].data["eps_x"] = eps_x
-
-            unbatched_graphs = dgl.unbatch(batched_graph)
-            eps_h = [ g.nodes['lig'].data['eps_h'] for g in unbatched_graphs ]
-            eps_x = [ g.nodes['lig'].data['eps_x'] for g in unbatched_graphs ]
- 
-        return eps_h, eps_x
-
-
-    def make_graph(self, lig_pos, lig_feat, rec_pos, rec_feat):
-
-        # note that all arguments except timestep are tuples of length batch_size containing
-        # the values for each datapoint in the batch
-
-        device = lig_pos[0].device
+        for canonical_etype in batch_num_edges:
+            if canonical_etype[1] in etypes_to_remove:
+                batch_num_edges[canonical_etype] = torch.zeros_like(batch_num_edges[canonical_etype])
         
-        graphs = []
-        for i in range(len(lig_pos)):
-
-            # create graph containing just ligand-ligand edges
-            # TODO: expose all these k's as hyperparameters. Also, there is an issue when the ligand has less than k atoms. Maybe fix this by some method other than excluding small ligands?
-            lig_graph = dgl.knn_graph(lig_pos[i], k=self.ligand_k, algorithm="bruteforce-blas", dist='euclidean', exclude_self=True).to(device)
-
-            # find edges for rec -> lig conections
-            rl_dist = torch.cdist(rec_pos[i], lig_pos[i]) # distance between every receptor keypoint and every ligand atom
-            k = min(self.receptor_keypoint_k, lig_pos[i].shape[0])
-            topk_dist, topk_idx = torch.topk(rl_dist, k=k, dim=1, largest=False) # get k closest ligand atoms to each receptor key point
-
-            # get list of rec -> ligand edges
-            n_rec_nodes = rec_pos[i].shape[0]
-            src_nodes = torch.repeat_interleave(torch.arange(n_rec_nodes), repeats=k).to(device)
-            dst_nodes = topk_idx.flatten()
-
-            # create heterograph
-            graph_data = {
-
-            ('lig', 'll', 'lig'): lig_graph.edges(),
-
-            ('rec', 'rl', 'lig'): (src_nodes, dst_nodes)
-
-            }
-
-            g = dgl.heterograph(graph_data)
-            g.nodes['lig'].data['x_0'] = lig_pos[i]
-            g.nodes['lig'].data['h_0'] = lig_feat[i]
-            g.nodes['rec'].data['x_0'] = rec_pos[i]
-            g.nodes['rec'].data['h_0'] = rec_feat[i]
-            graphs.append(g)
+        for etype in etypes_to_remove:
+            eids = g.edges(form='eid', etype=etype)
+            g.remove_edges(eids, etype=etype)
         
-        batched_graph = dgl.batch(graphs)
-        return batched_graph
+        g.set_batch_num_nodes(batch_num_nodes)
+        g.set_batch_num_edges(batch_num_edges)
+
+        return g

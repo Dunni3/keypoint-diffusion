@@ -44,6 +44,7 @@ def parse_arguments():
     rec_encoder_group.add_argument('--apply_kp_wise_mlp', type=bool, default=None)
     rec_encoder_group.add_argument('--rec_enc_hinge_threshold', type=float, default=None)
     rec_encoder_group.add_argument('--k_closest', type=int, default=None)
+    rec_encoder_group.add_argument('--fix_rec_pos', type=int, default=None)
 
     dynamics_group = p.add_argument_group('dynamics')
     dynamics_group.add_argument('--n_convs_dynamics', type=int, default=None, help='number of graph convolutions in the dynamics model')
@@ -74,6 +75,24 @@ def parse_arguments():
     training_group.add_argument('--restart_interval', type=float, default=None)
     training_group.add_argument('--restart_type', type=str, default=None)
 
+    # arguments added in refactor
+    rec_encoder_group.add_argument('--kp_rad', type=float, default=None)
+    rec_encoder_group.add_argument('--use_sameres_feat', type=int, default=None)
+    rec_encoder_group.add_argument('--n_kk_convs', type=int, default=None)
+    rec_encoder_group.add_argument('--n_kk_heads', type=int, default=None)
+    p.add_argument('--norm', type=int, default=None)
+    p.add_argument('--ll_cutoff', type=float, default=None)
+    p.add_argument('--rr_cutoff', type=float, default=None)
+    p.add_argument('--kk_cutoff', type=float, default=None)
+    p.add_argument('--kl_cutoff', type=float, default=None)
+    p.add_argument('--use_interface_points', type=int, default=None)
+    p.add_argument('--fix_pos', type=int, default=None)
+    p.add_argument('--update_kp_feat', type=int, default=None)
+    p.add_argument('--ll_k', type=int, default=None)
+    p.add_argument('--kl_k', type=int, default=None)
+
+    p.add_argument('--max_fake_atom_frac', type=float, default=None)
+
     p.add_argument('--use_tanh', type=str, default=None)
     p.add_argument('--message_norm', type=float, default=None)
 
@@ -96,8 +115,42 @@ def parse_arguments():
         config_dict['experiment']['name'] = f"{config_dict['experiment']['name']}_resumed"
 
     # override config file args with command line args
-
     args_dict = vars(args)
+    
+    if args.use_sameres_feat is not None:
+        check_bool_int(args.use_sameres_feat)
+        config_dict['rec_encoder']['use_sameres_feat'] = bool(args.use_sameres_feat)
+
+    for arg_name in ['n_kk_convs', 'n_kk_heads', 'kp_rad']:
+        if args_dict[arg_name] is not None:
+            config_dict['rec_encoder'][arg_name] = args_dict[arg_name]
+
+    for arg_name in ['ll_k', 'kl_k']:
+        if args_dict[arg_name] is not None:
+            config_dict['dynamics'][arg_name] = args_dict[arg_name]
+
+    for etype in ['ll', 'rr', 'kk', 'kl']:
+        if args_dict[f'{etype}_cutoff'] is not None:
+            config_dict['graph']['graph_cutoffs'][etype] = args_dict[f'{etype}_cutoff']
+
+    if args.norm is not None:
+        check_bool_int(args.norm)
+        config_dict['rec_encoder']['norm'] = bool(args.norm)
+        config_dict['dynamics']['norm'] = bool(args.norm)
+    
+    if args.use_interface_points is not None:
+        check_bool_int(args.use_interface_points)
+        config_dict['rec_encoder_loss']['use_interface_points'] = bool(args.use_interface_points)
+
+    if args.fix_pos is not None:
+        check_bool_int(args.fix_pos)
+        config_dict['rec_encoder']['fix_pos'] = bool(args.fix_pos)
+    
+    if args.update_kp_feat is not None:
+        check_bool_int(args.update_kp_feat)
+        config_dict['dynamics']['update_kp_feat'] = bool(args.update_kp_feat)
+
+    
     scheduler_args = ['warmup_length', 
                       'rec_enc_weight_decay_midpoint', 
                       'rec_enc_weight_decay_scale', 
@@ -107,6 +160,9 @@ def parse_arguments():
     for scheduler_arg in scheduler_args:
         if args_dict[scheduler_arg] is not None:
             config_dict['training']['scheduler'][scheduler_arg] = args_dict[scheduler_arg]
+
+    if args.max_fake_atom_frac is not None:
+        config_dict['dataset']['max_fake_atom_frac'] = args.max_fake_atom_frac
 
     if args.use_tanh is not None:
 
@@ -128,8 +184,13 @@ def parse_arguments():
     if args.rl_dist_threshold is not None:
         config_dict['diffusion']['rl_dist_threshold'] = args.rl_dist_threshold
 
+    if args.fix_rec_pos is not None:
+        if args.fix_rec_pos not in [0, 1]:
+            raise ValueError
+        config_dict['rec_encoder']['fix_pos'] = bool(args.fix_rec_pos)
+
     if args.n_keypoints is not None:
-        config_dict['rec_encoder']['n_keypoints'] = args.n_keypoints
+        config_dict['graph']['n_keypoints'] = args.n_keypoints
 
     if args.n_convs_encoder is not None:
         config_dict['rec_encoder']['n_convs'] = args.n_convs_encoder
@@ -196,6 +257,10 @@ def parse_arguments():
 
     return args, config_dict
 
+def check_bool_int(val):
+    if val not in [0, 1]:
+        raise ValueError
+
 @torch.no_grad()
 def test_model(model, test_dataloader, args, device):
 
@@ -203,14 +268,14 @@ def test_model(model, test_dataloader, args, device):
     losses = defaultdict(list)
 
     for _ in range(args['training']['test_epochs']):
-        for rec_graphs, lig_atom_positions, lig_atom_features in test_dataloader:
+        for complex_graphs, interface_points in test_dataloader:
 
-            rec_graphs = rec_graphs.to(device)
-            lig_atom_positions = [ arr.to(device) for arr in lig_atom_positions ]
-            lig_atom_features = [ arr.to(device) for arr in lig_atom_features ]
+            complex_graphs = complex_graphs.to(device)
+            if args['rec_encoder_loss']['use_interface_points']:
+                interface_points = [ arr.to(device) for arr in interface_points ]
 
             # do forward pass / get losses for this batch
-            loss_dict = model(rec_graphs, lig_atom_positions, lig_atom_features)
+            loss_dict = model(complex_graphs, interface_points)
 
             # append losses for this batch into lists of all per-batch losses computed so far
             for k,v in loss_dict.items():
@@ -287,8 +352,8 @@ def main():
     dataset_path = Path(args['dataset']['location']) 
     train_dataset_path = str(dataset_path / 'train.pkl') 
     test_dataset_path = str(dataset_path / 'test.pkl')
-    train_dataset = CrossDockedDataset(name='train', processed_data_file=train_dataset_path, **args['dataset'])
-    test_dataset = CrossDockedDataset(name='test', processed_data_file=test_dataset_path, **args['dataset'])
+    train_dataset = CrossDockedDataset(name='train', processed_data_file=train_dataset_path, **args['graph'], **args['dataset'])
+    test_dataset = CrossDockedDataset(name='test', processed_data_file=test_dataset_path, **args['graph'], **args['dataset'])
 
     # compute number of iterations per epoch - necessary for deciding when to do test evaluations/saves/etc. 
     iterations_per_epoch = len(train_dataset) / batch_size
@@ -298,9 +363,10 @@ def main():
     test_dataloader = get_dataloader(test_dataset, batch_size=batch_size, num_workers=args['training']['num_workers'])
 
     # get number of ligand and receptor atom features
-    test_rec_graph, test_lig_pos, test_lig_feat = train_dataset[0]
-    n_rec_atom_features = test_rec_graph.ndata['h_0'].shape[1]
-    n_lig_feat = test_lig_feat.shape[1]
+    # test_rec_graph, test_lig_pos, test_lig_feat, test_interface_points = train_dataset[0]
+    test_complex_graph, _ = train_dataset[0]
+    n_rec_atom_features = test_complex_graph.nodes['rec'].data['h_0'].shape[1]
+    n_lig_feat = test_complex_graph.nodes['lig'].data['h_0'].shape[1]
     n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
 
     print(f'{n_rec_atom_features=}')
@@ -310,14 +376,28 @@ def main():
     rec_encoder_config["in_n_node_feat"] = n_rec_atom_features
     args["rec_encoder"]["in_n_node_feat"] = n_rec_atom_features
 
+    # determine if we're using fake atoms
+    try:
+        use_fake_atoms = args['dataset']['max_fake_atom_frac'] > 0
+    except KeyError:
+        use_fake_atoms = False
+
+    # determine if we are using interface points
+    use_interface_points = args['rec_encoder_loss']['use_interface_points']
+
+    # get number of keyponts
+    n_keypoints = args['graph']['n_keypoints']
+
     # create diffusion model
     model = LigandDiffuser(
         n_lig_feat, 
         n_kp_feat,
         processed_dataset_dir=Path(args['dataset']['location']), # TODO: on principle, i don't like that our model needs access to the processed data dir for which it was trained.. need to fix/reorganize to avoid this
+        graph_config=args['graph'],
         dynamics_config=args['dynamics'], 
         rec_encoder_config=rec_encoder_config, 
         rec_encoder_loss_config=args['rec_encoder_loss'],
+        use_fake_atoms=use_fake_atoms,
         **args['diffusion']).to(device=device)
     
     if resume:
@@ -392,7 +472,7 @@ def main():
     for epoch_idx in range(args['training']['epochs']):
 
         for iter_idx, iter_data in enumerate(train_dataloader):
-            rec_graphs, lig_atom_positions, lig_atom_features = iter_data
+            complex_graphs, interface_points = iter_data
 
             current_epoch = epoch_idx + iter_idx/iterations_per_epoch
 
@@ -404,17 +484,21 @@ def main():
             # if iter_idx < 10:
             #     print(f'{iter_idx=}, {time.time() - training_start:.2f} seconds since start', flush=True)
 
-            rec_graphs.ndata['h_0'] = rec_graphs.ndata['h_0'].float()
-            rec_graphs = rec_graphs.to(device)
-            lig_atom_positions = [ arr.to(device) for arr in lig_atom_positions ]
-            lig_atom_features = [ arr.float().to(device) for arr in lig_atom_features ]
+            # set data type of atom features
+            for ntype in ['lig', 'rec']:
+                complex_graphs.nodes[ntype].data['h_0'] = complex_graphs.nodes[ntype].data['h_0'].float()
+
+            # move data to the gpu
+            complex_graphs = complex_graphs.to(device)
+            if use_interface_points:
+                interface_points = [ arr.to(device) for arr in interface_points ]
 
             optimizer.zero_grad()
             # TODO: add random translations to the complex positions??
 
             # encode receptor, add noise to ligand and predict noise
             # noise_loss, rec_encoder_loss = model(rec_graphs, lig_atom_positions, lig_atom_features)
-            loss_dict = model(rec_graphs, lig_atom_positions, lig_atom_features)
+            loss_dict = model(complex_graphs, interface_points)
             # noise_loss, rec_encoder_loss = loss_dict['l2'], loss_dict['rec_encoder']
 
             # append losses for this batch into lists of all per-batch losses computed so far

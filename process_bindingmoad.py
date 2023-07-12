@@ -23,7 +23,7 @@ import constants
 import utils
 import pickle
 
-from data_processing.pdbbind_processing import rec_atom_featurizer, lig_atom_featurizer, Unparsable, build_receptor_graph
+from data_processing.pdbbind_processing import rec_atom_featurizer, lig_atom_featurizer, Unparsable, build_receptor_graph, get_interface_points, InterfacePointException, build_initial_complex_graph
 from utils import get_rec_atom_map
 
 
@@ -80,8 +80,8 @@ def ligand_list_to_dict(ligand_list):
 
 def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi,
                                   rec_element_map, lig_element_map,
-                                  receptor_k: int, pocket_edge_algorithm: str, 
-                                  dist_cutoff: float, remove_hydrogen: bool = True):
+                                  ip_dist_threshold: float, ip_exclusion_threshold: float, 
+                                  pocket_cutoff: float, remove_hydrogen: bool = True):
     
     try:
         residues = {obj.id[1]: obj for obj in
@@ -89,9 +89,15 @@ def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi
     except KeyError as e:
         raise Unparsable(f'Chain {e} not found ({pdbfile}, '
                        f'{ligand_name}:{ligand_chain}:{ligand_resi})')
-    ligand = residues[ligand_resi]
-    assert ligand.get_resname() == ligand_name, \
-        f"{ligand.get_resname()} != {ligand_name}"
+    try:
+        ligand = residues[ligand_resi]
+    except KeyError:
+        raise Unparsable('ligand residue index not found')
+    try:
+        assert ligand.get_resname() == ligand_name, \
+            f"{ligand.get_resname()} != {ligand_name}"
+    except AssertionError:
+        raise Unparsable('ligand resname assertion failed')
 
     lig_atoms = [a for a in ligand.get_atoms()]
 
@@ -112,6 +118,9 @@ def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi
     lig_atom_features = lig_atom_features[:, :-1]
 
 
+    # make ligand data into torch tensors
+    lig_coords = torch.tensor(lig_coords, dtype=torch.float32)
+
     # get residues which constitute the binding pocket
     pocket_residues = []
     for residue in pdb_struct[0].get_residues():
@@ -124,15 +133,22 @@ def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi
         if not is_residue:
             continue
         min_rl_dist = cdist(lig_coords, res_coords).min()
-        if min_rl_dist < dist_cutoff:
+        if min_rl_dist < pocket_cutoff:
             pocket_residues.append(residue)
 
     if len(pocket_residues) == 0:
         raise Unparsable(f'no valid pocket residues found in {pdbfile}: {ligand_name}:{ligand_chain}:{ligand_resi})', )
 
-    pocket_atoms = [a for res in pocket_residues for a in res.get_atoms() ]
     if remove_hydrogen:
-        pocket_atoms = [ a for a in pocket_atoms if a.element != "H" ]
+        atom_filter = lambda a: a.element != "H"
+    else:
+        atom_filter = lambda a: True
+
+    pocket_atomres = [(a, res) for res in pocket_residues for a in res.get_atoms() if atom_filter(a) ]
+    pocket_atoms, atom_residues = list(map(list, zip(*pocket_atomres)))
+    res_to_idx = { res:i for i, res in enumerate(pocket_residues) }
+    pocket_res_idx = list(map(lambda res: res_to_idx[res], atom_residues)) #  list containing the residue of every atom using integers to index pocket residues
+    pocket_res_idx = torch.tensor(pocket_res_idx)
 
     pocket_coords = torch.tensor(np.array([a.get_coord() for a in pocket_atoms]))
     pocket_elements = np.array([ element_fixer(a.element) for a in pocket_atoms ])
@@ -143,12 +159,16 @@ def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi
     pocket_coords = pocket_coords[~other_atoms_mask]
     pocket_atom_features = pocket_atom_features[~other_atoms_mask]
 
-    rec_graph = build_receptor_graph(pocket_coords, pocket_atom_features, k=receptor_k, edge_algorithm=pocket_edge_algorithm)
+    # rec_graph = build_receptor_graph(pocket_coords, pocket_atom_features, k=receptor_k, edge_algorithm=pocket_edge_algorithm)
+    # complex_graph = build_initial_complex_graph(pocket_coords, pocket_atom_features, lig_coords, lig_atom_features, pocket_res_idx, n_keypoints=n_keypoints, cutoffs=graph_cutoffs)
 
+    # compute interface points
+    try:
+        interface_points = get_interface_points(lig_coords, pocket_coords, distance_threshold=ip_dist_threshold, exclusion_threshold=ip_exclusion_threshold)
+    except Exception as e:
+        raise InterfacePointException(e)
 
-    lig_coords = torch.tensor(lig_coords)
-
-    return rec_graph, lig_coords, lig_atom_features
+    return pocket_coords, pocket_atom_features, lig_coords, lig_atom_features, pocket_res_idx, interface_points
 
 
 def compute_smiles(lig_pos, lig_feat, lig_decoder):
@@ -279,17 +299,25 @@ if __name__ == '__main__':
                         ligand_resi = int(ligand_resi)
 
                         try:
-                            rec_graph, lig_atom_positions, lig_atom_features = process_ligand_and_pocket(pdb_struct, 
+                            rec_pos, rec_feat, lig_pos, lig_feat, rec_res_idx, interface_points = process_ligand_and_pocket(pdb_struct, 
                                                         ligand_name, 
                                                         ligand_chain, 
                                                         ligand_resi,
                                                         rec_element_map=rec_element_map,
                                                         lig_element_map=lig_element_map,
-                                                        receptor_k=dataset_config['receptor_k'],
-                                                        pocket_edge_algorithm=dataset_config['pocket_edge_algorithm'], 
-                                                        dist_cutoff=dataset_config['pocket_cutoff'], 
+                                                        ip_dist_threshold=dataset_config['interface_distance_threshold'],
+                                                        ip_exclusion_threshold=dataset_config['interface_exclusion_threshold'], 
+                                                        pocket_cutoff=dataset_config['pocket_cutoff'], 
                                                         remove_hydrogen=dataset_config['remove_hydrogen'])
                         except Unparsable as e:
+                            print(e)
+                            continue
+                        except InterfacePointException as e:
+                            print('interface point exception occured', flush=True)
+                            print(e)
+                            print(e.original_exception)
+                            continue
+                        except Exception as e:
                             print(e)
                             continue
 
@@ -309,9 +337,9 @@ if __name__ == '__main__':
                                 continue
 
                             # Create SDF file
-                            atom_types = [ lig_decoder[x] for x in torch.argmax(lig_atom_features.int(), dim=1).tolist() ]
+                            atom_types = [ lig_decoder[x] for x in torch.argmax(lig_feat.int(), dim=1).tolist() ]
                             xyz_file = Path(pdb_sdf_dir, 'tmp.xyz')
-                            xyz_file_str = utils.write_xyz_file(lig_atom_positions, atom_types)
+                            xyz_file_str = utils.write_xyz_file(lig_pos, atom_types)
 
                             obConversion = openbabel.OBConversion()
                             obConversion.SetInAndOutFormats("xyz", "sdf")
@@ -324,22 +352,25 @@ if __name__ == '__main__':
 
                         # update counts of atom types
                         if atom_type_counts is None:
-                            atom_type_counts = lig_atom_features.sum(dim=0)
+                            atom_type_counts = lig_feat.sum(dim=0)
                         else:
-                            atom_type_counts += lig_atom_features.sum(dim=0)
+                            atom_type_counts += lig_feat.sum(dim=0)
 
                         # record ligand size
-                        ligand_size_counter[lig_atom_positions.shape[0]] += 1
+                        ligand_size_counter[lig_pos.shape[0]] += 1
 
                         # compute/record smiles
-                        smi = compute_smiles(lig_atom_positions, lig_atom_features, lig_decoder)
+                        smi = compute_smiles(lig_pos, lig_feat, lig_decoder)
                         if smi is not None:
                             smiles.add(smi)
 
                         # add graphs, ligand positions, and ligand features to the dataset
-                        data['receptor_graph'].append(rec_graph)
-                        data['lig_atom_positions'].append(lig_atom_positions)
-                        data['lig_atom_features'].append(lig_atom_features)
+                        data['lig_pos'].append(lig_pos)
+                        data['lig_feat'].append(lig_feat)
+                        data['rec_pos'].append(rec_pos)
+                        data['rec_feat'].append(rec_feat)
+                        data['rec_res_idx'].append(rec_res_idx)
+                        data['interface_points'].append(interface_points)
                         if split in {'val', 'test'}:
                             data['rec_files'].append(str(pdb_file_out))
                             data['lig_files'].append(str(sdf_file))
@@ -356,6 +387,26 @@ if __name__ == '__main__':
                 pbar.update(len(pair_dict[p]))
                 num_failed += (len(pair_dict[p]) - len(pdb_successful))
                 pbar.set_description(f'#failed: {num_failed}')
+
+
+        # concatenate data for this split and compute idx lookups so we can split data examples back out
+
+        n_graphs = len(data['lig_pos'])
+        rec_segments = torch.zeros(n_graphs+1, dtype=int)
+        lig_segments = rec_segments.clone()
+        ip_segments = rec_segments.clone()
+        rec_segments[1:] = torch.tensor([ x.shape[0] for x in data['rec_pos'] ], dtype=int)
+        lig_segments[1:] = torch.tensor([ x.shape[0] for x in data['lig_pos'] ], dtype=int)
+        ip_segments[1:] = torch.tensor([ x.shape[0] for x in data['interface_points'] ], dtype=int)
+
+        for key in data:
+            if 'files' in key:
+                continue
+            data[key] = torch.concatenate(data[key], dim=0)
+
+        data['rec_segments'] = torch.cumsum(rec_segments, dim=0)
+        data['lig_segments'] = torch.cumsum(lig_segments, dim=0)
+        data['ip_segments'] = torch.cumsum(ip_segments, dim=0)
 
 
         # save data for this split

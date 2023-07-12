@@ -1,18 +1,21 @@
-from errno import E2BIG
-import torch
+from typing import Dict, List
+
 import dgl
-import torch.nn as nn
-# from dgl.nn import EGNNConv
-from typing import List
-from einops import rearrange
-
 import dgl.function as fn
+import torch
+import torch.nn as nn
+from dgl.nn.functional import edge_softmax
+from einops import rearrange
+from torch_cluster import radius_graph, radius, knn
+from torch_scatter import segment_csr
 
-class EGNNConv(nn.Module):
+from utils import get_batch_info, get_edges_per_batch
+
+class ReceptorConv(nn.Module):
     # this is adapted from the EGNN implementation in DGL
 
-    def __init__(self, in_size, hidden_size, out_size, edge_feat_size=0, use_tanh=True, coords_range=10, message_norm=1):
-        super(EGNNConv, self).__init__()
+    def __init__(self, in_size, hidden_size, out_size, edge_feat_size=0, use_tanh=True, coords_range=10, message_norm=1, fix_pos: bool = False, norm: bool = False):
+        super(ReceptorConv, self).__init__()
 
         self.in_size = in_size
         self.hidden_size = hidden_size
@@ -22,6 +25,8 @@ class EGNNConv(nn.Module):
         self.use_tanh = use_tanh
         self.coords_range = coords_range
         self.message_norm = message_norm
+        self.fix_pos = fix_pos
+        self.norm = norm
 
         # \phi_e
         self.edge_mlp = nn.Sequential(
@@ -39,12 +44,24 @@ class EGNNConv(nn.Module):
             nn.Linear(hidden_size, out_size),
         )
 
+        self.soft_attention = nn.Sequential(
+            nn.Linear(hidden_size, 1),
+            nn.Sigmoid()
+        )
+
+        if self.norm:
+            self.layer_norm = nn.LayerNorm(out_size)
+        else:
+            self.layer_norm = nn.Identity()
+
+        if self.fix_pos:
+            return
 
         # \phi_x
         coord_output_layer = nn.Linear(hidden_size, 1, bias=False)
         nn.init.xavier_uniform_(coord_output_layer.weight, gain=0.001)
         self.coord_mlp = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
+            nn.Linear(in_size * 2 + edge_feat_size + 1, hidden_size),
             act_fn,
             coord_output_layer
         )
@@ -68,14 +85,17 @@ class EGNNConv(nn.Module):
             )
 
         msg_h = self.edge_mlp(f)
-        if self.use_tanh:
-            msg_x = torch.tanh( self.coord_mlp(msg_h) ) * edges.data["x_diff"] * self.coords_range
+        msg_h = msg_h*self.soft_attention(msg_h)
+        if self.fix_pos:
+            msg_x = torch.zeros_like(edges.data["radial"])
+        elif self.use_tanh:
+            msg_x = torch.tanh( self.coord_mlp(f) ) * edges.data["x_diff"] * self.coords_range
         else:
-            msg_x = self.coord_mlp(msg_h) * edges.data["x_diff"]
+            msg_x = self.coord_mlp(f) * edges.data["x_diff"]
 
         return {"msg_x": msg_x, "msg_h": msg_h}
 
-    def forward(self, graph, node_feat, coord_feat, edge_feat=None):
+    def forward(self, g: dgl.DGLHeteroGraph, node_feat: torch.Tensor, coord_feat: torch.Tensor, z: torch.Tensor, edge_feat: torch.Tensor=None):
         r"""
         Description
         -----------
@@ -83,7 +103,7 @@ class EGNNConv(nn.Module):
 
         Parameters
         ----------
-        graph : DGLGraph
+        g : DGLGraph
             The graph.
         node_feat : torch.Tensor
             The input feature of shape :math:`(N, h_n)`. :math:`N` is the number of
@@ -104,91 +124,283 @@ class EGNNConv(nn.Module):
             The output coordinate feature of shape :math:`(N, h_x)` where :math:`h_x`
             is the same as the input coordinate feature dimension.
         """
-        with graph.local_scope():
+        with g.local_scope():
             # node feature
-            graph.ndata["h"] = node_feat
+            g.nodes['rec'].data["h"] = node_feat
             # coordinate feature
-            graph.ndata["x"] = coord_feat
+            g.nodes['rec'].data["x"] = coord_feat
             # edge feature
             if self.edge_feat_size > 0:
                 assert edge_feat is not None, "Edge features must be provided."
-                graph.edata["a"] = edge_feat
+                g.edges['rr'].data["a"] = edge_feat
             # get coordinate diff & radial features
-            graph.apply_edges(fn.u_sub_v("x", "x", "x_diff"))
-            graph.edata["radial"] = (
-                graph.edata["x_diff"].square().sum(dim=1).unsqueeze(-1)
-            )
+            g.apply_edges(fn.u_sub_v("x", "x", "x_diff"), etype='rr')
+            g.edges['rr'].data["radial"] = torch.norm(g.edges['rr'].data["x_diff"], dim=1).unsqueeze(-1)
             # normalize coordinate difference
-            graph.edata["x_diff"] = graph.edata["x_diff"] / (
-                graph.edata["radial"].sqrt() + 1e-30
+            g.edges['rr'].data["x_diff"] = g.edges['rr'].data["x_diff"] / (
+                g.edges['rr'].data["radial"] + 1
             )
-            graph.apply_edges(self.message)
-            graph.update_all(fn.copy_e("msg_x", "m"), fn.mean("m", "x_neigh"))
-            graph.update_all(fn.copy_e("msg_h", "m"), fn.sum("m", "h_neigh"))
+            g.apply_edges(self.message, etype='rr')
+            g.update_all(fn.copy_e("msg_x", "m"), fn.sum("m", "x_neigh"), etype='rr')
+            g.update_all(fn.copy_e("msg_h", "m"), fn.sum("m", "h_neigh"), etype='rr')
 
-            h_neigh, x_neigh = graph.ndata["h_neigh"]/self.message_norm, graph.ndata["x_neigh"]/self.message_norm
+            h_neigh, x_neigh = g.nodes['rec'].data["h_neigh"]/z, g.nodes['rec'].data["x_neigh"]/z
 
             h = self.node_mlp(torch.cat([node_feat, h_neigh], dim=-1))
             x = coord_feat + x_neigh
 
+            h = self.layer_norm(h)
+
             return h, x
+        
+class RecKeyConv(nn.Module):
 
-class KeypointMHA(nn.Module):
-
-    def __init__(self, n_heads: int, in_dim: int, hidden_dim: int, out_dim: int, act_fn = nn.SiLU):
+    def __init__(self, in_feats: int, out_feats: int, n_keypoints: int, num_heads: int = 1, k_closest: int = 0, kp_rad: float = 0, fix_pos: bool = False, norm: bool = False):
         super().__init__()
-        self.n_heads = n_heads
-        self.hidden_dim = hidden_dim
-        self.in_dim = in_dim
-        self.out_dim = out_dim
 
-        self.key_fn = nn.Linear(in_dim, hidden_dim*n_heads, bias=False)
-        self.query_fn = nn.Linear(in_dim, hidden_dim*n_heads, bias=False)
-        self.val_fn = nn.Linear(in_dim, hidden_dim*n_heads, bias=False)
+        self.num_heads = num_heads
+        self.out_feats = out_feats
+        self.n_keypoints = n_keypoints
+        self.fix_pos = fix_pos
+        self.k_closest = k_closest
+        self.kp_rad = kp_rad
+        self.norm = norm
 
-        self.out_map = nn.Linear(hidden_dim*n_heads, out_dim, bias=False)
+        self.fc_src = nn.Linear(in_feats, out_feats*num_heads, bias=False)
+        self.fc_dst = nn.Linear(in_feats, out_feats*num_heads, bias=False)
 
-        self.kq_norm = self.hidden_dim**0.5
-        self.dist_norm = 3**0.5
-        self.att_norm = 2**0.5
+        self.kp_feature_mlp = nn.Sequential(
+            nn.Linear(out_feats+self.k_closest, out_feats),
+            nn.SiLU()
+        )
 
-    def forward(self, kp_feat, kp_dist, rec_atom_feats):
+        if self.norm:
+            self.layer_norm = nn.LayerNorm(out_feats)
+        else:
+            self.layer_norm = nn.Identity()
 
-        # kp_feat (n_keypoints, in_dim)
-        # kp_dist (n_keypoints, n_receptor_atoms)
-        # rec_atom_feats (n_rec_atoms, in_dim)
-        n_keypoints = kp_feat.shape[0]
-        n_rec_atoms = rec_atom_feats.shape[0]
+    def forward(self, g: dgl.DGLHeteroGraph, kp_batch_idx):
 
-        # generate keys and values from kp_feat
-        keys = self.key_fn(rec_atom_feats).view(self.n_heads, n_rec_atoms, self.hidden_dim) # (n_heads, n_rec_atoms, hidden_dim)
-        values = self.val_fn(rec_atom_feats).view(self.n_heads, n_rec_atoms, self.hidden_dim) # (n_heads, n_rec_atoms, hidden_dim)
+        with g.local_scope():
 
-        # generate queries
-        queries = self.query_fn(kp_feat).view(self.n_heads, n_keypoints, self.hidden_dim) # (n_heads, n_keypoints, hidden_dim)
+            h_src = g.nodes['rec'].data['h']
+            h_dst = g.nodes['kp'].data['h_0']
 
-        # compute dot-product of keys/queries for all pairs of keypoints
-        qk_dot = torch.einsum('hkd,had->hka' , queries, keys) # (n_heads, n_keypoints, n_rec_atoms)
+            # get queries/keys
+            ft_src = self.fc_src(h_src).view(-1, self.num_heads, self.out_feats) 
+            ft_dst = self.fc_src(h_dst).view(-1, self.num_heads, self.out_feats)
 
-        # compute pre-softmax attention matrix, then take its softmax
-        att_mat = (kp_dist.unsqueeze(0)/self.dist_norm + qk_dot/self.kq_norm)/self.att_norm # (n_heads, n_keypoints, n_rec_atoms)
-        att_weights = torch.softmax(att_mat, dim=2)
+            # Assign features to nodes
+            g.srcdata['ft'] = {'rec': ft_src}
+            g.dstdata['ft'] = {'kp': ft_dst}
 
-        # multiply attention weights by values
-        updated_values = torch.einsum('hka,had->hkd', att_weights, values) # (n_heads, n_keypoints, hidden_dim)
+            # Step 1. dot product
+            g.apply_edges(fn.u_dot_v('ft', 'ft', 'a'), etype='rk')
 
-        # combine n_heads and hidden_dim dimensons
-        kp_wise_values = rearrange(updated_values, 'h k d -> k (h d)') # (n_keypoints, n_heads*hidden_dim)
+            # Step 2. edge softmax to compute attention scores
+            a = g.edges['rk'].data['a'] / self.out_feats**0.5
+            a = torch.exp(a)
 
-        updated_kp_feat = self.out_map(kp_wise_values)
-        return updated_kp_feat
+            edges_per_kp = g.batch_num_nodes('rec')[kp_batch_idx] # (n_keypoints*batch_size) -> number of edges going to every keypoint
+            indptr = torch.zeros(edges_per_kp.shape[0]+1, dtype=int, device=g.device) # index pointer used for segmented sum
+            indptr[1:] = edges_per_kp
+            indptr = torch.cumsum(indptr, 0)
+            dst_node_denominators = segment_csr(src=a, indptr=indptr) # (n_kp_nodes, num_heads, 1), sum of incoming weights for each node
+            g.dstdata['denom'] = {'kp': 1/dst_node_denominators}
+            g.apply_edges(fn.v_mul_e('denom', 'a', 'sa'), etype='rk')
+
+            # Step 3. Broadcast softmax value to each edge, and aggregate dst node
+            if self.fix_pos:
+                val_str = 'x_0'
+            else:
+                val_str = 'x'
+            g.update_all(fn.u_mul_e(val_str, 'sa', 'attn'), fn.sum('attn', 'agg_u'), etype='rk')
+
+            # get keypoint positions
+            kp_pos = g.dstdata['agg_u']['kp'].mean(dim=1)
+            g.nodes['kp'].data['x_0'] = kp_pos
+
+
+            # get keypoint features
+            if self.k_closest != 0:
+                kp_feat = self.k_closest_feats(g)
+            elif self.kp_rad != 0:
+                kp_feat = self.kp_rad_feats(g, kp_batch_idx=kp_batch_idx)
+            else:
+                raise NotImplementedError
+
+            kp_feat = self.kp_feature_mlp(kp_feat)
+            kp_feat = self.layer_norm(kp_feat)
+
+
+        return kp_pos, kp_feat
+    
+    def kp_rad_feats(self, g: dgl.DGLHeteroGraph, kp_batch_idx: torch.Tensor):
+
+        # we are going to remove and then add edges which destroy batch information. we have to record batch info before mutating
+        # graph topology and add it back afterwards
+        batch_num_nodes, batch_num_edges = get_batch_info(g)
+
+        kp_pos = g.nodes['kp'].data['x_0']
+        batch_idxs = torch.arange(g.batch_size, device=g.device)
+        rec_atom_batch = batch_idxs.repeat_interleave(g.batch_num_nodes('rec'))
+        rad_idxs = radius(x=g.nodes['rec'].data['x_0'], y=kp_pos, batch_x=rec_atom_batch, batch_y=kp_batch_idx, r=self.kp_rad, max_num_neighbors=100) # shape (2, n_keypoints*?*batch_size)
+
+        # get number of edges corresponding to each batch
+        batch_num_edges[('rec', 'rk', 'kp')] = get_edges_per_batch(rad_idxs[0], g.batch_size, kp_batch_idx)
+
+        g.remove_edges(g.edges(form='eid', etype='rk'), etype='rk') # remove all receptor-keypoint edges
+        g.add_edges(rad_idxs[1], rad_idxs[0], etype='rk') # add back the edges identified by radius
+
+        # reset batch info
+        g.set_batch_num_nodes(batch_num_nodes)
+        g.set_batch_num_edges(batch_num_edges)
+
+        # accumulate features from receptors in each keypoint's neighborhood
+        g.update_all(fn.copy_u('h', 'm'), fn.sum('m', 'h_m'), etype='rk')
+        z = g.batch_num_edges('rk') / g.batch_num_nodes('kp')
+        z = z[kp_batch_idx].view(-1, 1) + 1 
+        kp_feats = g.nodes['kp'].data['h_m']/z
+        return kp_feats
+
+    def k_closest_feats(self, g: dgl.DGLHeteroGraph):
+        # get k edges having the lowest distance to each keypoint
+        kp_pos = g.nodes['kp'].data['x_0']
+
+        batch_idxs = torch.arange(g.batch_size, device=g.device)
+        rec_atom_batch = batch_idxs.repeat_interleave(g.batch_num_nodes('rec'))
+        kp_batch = batch_idxs.repeat_interleave(g.batch_num_nodes('kp'))
+        knn_idxs = knn(x=g.nodes['rec'].data['x_0'], y=kp_pos, batch_x=rec_atom_batch, batch_y=kp_batch, k=self.k_closest) # shape (2, n_keypoints*k*batch_size)
+
+
+        # we are going to remove and then add edges which destroy batch information. we have to record batch info before mutating
+        # graph topology and add it back afterwards
+        batch_num_nodes, batch_num_edges = get_batch_info(g)
+
+        # we have to change the number of rk edges per batch because we will be altering that
+        batch_num_edges[('rec', 'rk', 'kp')] = torch.ones(g.batch_size, device=g.device, dtype=int)*self.n_keypoints*self.k_closest
+
+        g.remove_edges(g.edges(form='eid', etype='rk'), etype='rk') # remove all receptor-keypoint edges
+        g.add_edges(knn_idxs[1], knn_idxs[0], etype='rk') # add back the edges identified by knn
+
+        # reset batch info
+        g.set_batch_num_nodes(batch_num_nodes)
+        g.set_batch_num_edges(batch_num_edges)
+
+        # get mean rec feature on every keypoint
+        g.update_all(fn.copy_u('h', 'm'), fn.mean('m', 'h_m'), etype='rk')
+        g.apply_edges(fn.u_sub_v('x_0', 'x_0', 'x_diff'), etype='rk')
+        g.edges['rk'].data['d'] = torch.norm(g.edges['rk'].data['x_diff']+1e-30, dim=1)
+        g.update_all(fn.copy_e('d', 'd'), self.collect_dists, etype='rk')
+        
+        kp_feat = torch.concatenate([g.nodes['kp'].data['h_m'], g.nodes['kp'].data['d_k']], dim=1)
+        return kp_feat
+
+    def collect_dists(self, nodes):
+        return {'d_k': nodes.mailbox['d']}
+
+    
+class KeyKeyConv(nn.Module):
+
+    def __init__(self, in_feats: int, out_feats: int, num_heads: int = 1, pre_norm=False, post_norm=True) -> None:
+        super().__init__()
+
+        self.head_size = in_feats // num_heads 
+        self.num_heads = num_heads 
+
+        self.fc_src = nn.Linear(in_feats, self.head_size*num_heads, bias=False)
+        self.fc_dst = nn.Linear(in_feats, self.head_size*num_heads, bias=False)
+        self.val_fn = nn.Linear(in_feats, self.head_size*num_heads, bias=False)
+
+        self.merge_heads = nn.Linear(self.head_size*num_heads, out_feats, bias=False)
+
+        # self.norm = nn.LayerNorm()
+        if pre_norm:
+            self.pre_norm = nn.LayerNorm(in_feats)
+        else:
+            self.pre_norm = nn.Identity()
+
+        if post_norm:
+            self.post_norm = nn.LayerNorm(out_feats)
+        else:
+            self.post_norm = nn.Identity()
+
+        self.dense = nn.Sequential(
+            nn.Linear(out_feats, out_feats*2),
+            nn.SiLU(),
+            nn.Linear(out_feats*2, out_feats),
+            nn.SiLU()
+        )
+
+    def forward(self, g: dgl.DGLHeteroGraph):
+
+        raise NotImplementedError
+        # TODO: I really want to add euclidean distance as something used to compute edge features here. Right now we do atteniton on keypoint features but include no information about
+        # relative position other than through the connectivity of the graph
+
+        with g.local_scope():
+
+            batch_num_nodes, batch_num_edges = get_batch_info(g)
+            
+            batch_num_nodes = { k:v for k,v in batch_num_nodes.items() if k == 'kp'}
+            batch_num_edges = { k:v for k,v in batch_num_edges.items() if k[1] == 'kk' }
+
+            g_kp = dgl.to_homogeneous(dgl.node_type_subgraph(g, ntypes=['kp']), ndata=['h_0'])
+
+            g_kp.set_batch_num_edges(g.batch_num_edges('kk'))
+            g_kp.set_batch_num_nodes(g.batch_num_nodes('kp'))
+
+            h_src = h_dst = self.pre_norm(g_kp.ndata['h_0'])
+
+            # get queries/keys
+            ft_src = self.fc_src(h_src).view(-1, self.num_heads, self.head_size) 
+            ft_dst = self.fc_src(h_dst).view(-1, self.num_heads, self.head_size)
+
+            # Assign features to nodes
+            g_kp.srcdata['ft'] = ft_src
+            g_kp.dstdata['ft'] = ft_dst
+            g_kp.srcdata['val'] = self.val_fn(g_kp.ndata['h_0']).view(-1, self.num_heads, self.head_size)
+
+            # Step 1. dot product
+            g_kp.apply_edges(fn.u_dot_v('ft', 'ft', 'a'))
+
+            # Step 2. edge softmax to compute attention scores
+            g_kp.edata['a'] = g_kp.edata['a'] / self.head_size**0.5 
+            g_kp.edata['sa'] = edge_softmax(g_kp, g_kp.edata['a'], norm_by='dst')
+
+            # multiply values by attention weights and collect sums on destination nodes
+            g_kp.update_all(fn.v_mul_e('val', 'sa', 'msg'), fn.sum('msg', 'h_att'))
+            h_att = self.merge_heads(rearrange(g_kp.ndata['h_att'], 'n h d -> n (h d)'))
+
+            h = h_src + h_att
+
+        h = self.dense(self.post_norm(h))
+
+        return h
 
 class ReceptorEncoder(nn.Module):
 
-    def __init__(self, n_convs: int = 6, n_keypoints: int = 10, in_n_node_feat: int = 13, 
-        hidden_n_node_feat: int = 256, out_n_node_feat: int = 256, use_tanh=True, coords_range=10, kp_feat_scale=1,
-        use_keypoint_feat_mha: bool = False, feat_mha_heads=5, message_norm=1, k_closest: int = 0):
+    def __init__(self, n_convs: int = 6, n_keypoints: int = 10, graph_cutoffs: dict = {}, in_n_node_feat: int = 13, 
+                use_sameres_feat: bool = False,
+                hidden_n_node_feat: int = 256, 
+                out_n_node_feat: int = 256, 
+                use_tanh=True, 
+                coords_range=10, 
+                kp_feat_scale=1, 
+                message_norm=1,
+                kp_rad: float = 0, 
+                k_closest: int = 0,
+                norm: bool = False, 
+                no_cg=False, 
+                fix_pos=False,
+                n_kk_convs: int = 0,
+                n_kk_heads: int = 4):
         super().__init__()
+
+        if kp_rad != 0 and k_closest != 0:
+            raise ValueError('one of kp_rad and kp_closest can be zero but not both')
+        elif kp_rad == 0 and k_closest == 0:
+            raise ValueError('one of kp_rad and kp_closest must be non-zero')
 
         self.n_convs = n_convs
         self.n_keypoints = n_keypoints
@@ -196,15 +408,21 @@ class ReceptorEncoder(nn.Module):
         self.kp_feat_scale = kp_feat_scale
         self.kp_pos_norm = out_n_node_feat**0.5
         self.k_closest = k_closest
+        self.kp_rad = kp_rad
+        self.no_cg = no_cg
+        self.fix_pos = fix_pos
+        self.use_sameres_feat = use_sameres_feat
+        self.message_norm = message_norm
 
-        # TODO: should there be a position-wise MLP after graph convolution?
-        # TODO: this model is written to use the same output dimension from the graph message passing as for the keypoint feature attention mechianism -- this is an articifical constraint
+        self.graph_cutoffs = graph_cutoffs
+        
+        if self.use_sameres_feat:
+            n_rr_conv_edge_feat = 1
+        else:
+            n_rr_conv_edge_feat = 0
 
-        self.egnn_convs = []
+        self.rec_convs = []
 
-        # TODO: the DGL EGNN implementation uses two-layer MLPs - does the EDM paper use 1 or 2?
-        # TODO: the EDM paper has a skip connection in the update of node features (which is not specified in model equations)
-        # - does DGL have this as well?
         for i in range(self.n_convs):
             if i == 0 and self.n_convs == 1: # first and only convolutional layer
                 in_size = in_n_node_feat
@@ -223,97 +441,114 @@ class ReceptorEncoder(nn.Module):
                 hidden_size = hidden_n_node_feat
                 out_size = hidden_n_node_feat
 
-            self.egnn_convs.append( 
-                EGNNConv(in_size=in_size, hidden_size=hidden_size, out_size=out_size, use_tanh=use_tanh, coords_range=coords_range, message_norm=message_norm)
+            self.rec_convs.append( 
+                ReceptorConv(in_size=in_size, 
+                             hidden_size=hidden_size, 
+                             out_size=out_size, 
+                             use_tanh=use_tanh, 
+                             coords_range=coords_range, 
+                             message_norm=message_norm,
+                             norm=norm, 
+                             fix_pos=fix_pos, 
+                             edge_feat_size=n_rr_conv_edge_feat)
             )
 
-        self.egnn_convs = nn.ModuleList(self.egnn_convs)
+        self.rec_convs = nn.ModuleList(self.rec_convs)
 
+        if no_cg:
+            raise NotImplementedError
 
         # embedding function for the mean node feature before keypoint position generation
-        self.node_feat_embedding = nn.Sequential(
-            nn.Linear(out_n_node_feat, out_n_node_feat),
+        self.keypoint_embedding = nn.Sequential(
+            nn.Linear(out_n_node_feat, out_n_node_feat*n_keypoints),
             nn.SiLU()
         )
 
+        self.rec_kp_conv = RecKeyConv(in_feats=self.out_n_node_feat, out_feats=out_n_node_feat, n_keypoints=self.n_keypoints, fix_pos=fix_pos, num_heads=1, k_closest=self.k_closest, kp_rad=kp_rad, norm=norm)
 
-        # query and key functions for keypoint position generation
-        self.eqv_keypoint_query_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints)
-        self.eqv_keypoint_key_fn = nn.Linear(in_features=out_n_node_feat, out_features=out_n_node_feat*n_keypoints)
+        self.n_kk_convs = n_kk_convs
+        if self.n_kk_convs > 0:
 
+            kk_convs = []
+            for conv_idx in range(self.n_kk_convs):
+                if conv_idx == 0:
+                    pre_norm = False
+                else:
+                    pre_norm = True
 
-        # keypoint-wise MLP applied to keypoint features when they are first
-        # generated as weighted averages over receptor atom features
-        self.kp_wise_mlp = nn.Sequential(
-            nn.Linear(out_n_node_feat+self.k_closest, out_n_node_feat*2),
-            nn.SiLU(),
-            nn.Linear(out_n_node_feat*2, out_n_node_feat),
-            nn.SiLU()
-        )
-
-        self.use_keypoint_feat_mha = use_keypoint_feat_mha
-        if self.use_keypoint_feat_mha:
-            self.keypoint_feat_mha = KeypointMHA(n_heads=feat_mha_heads, in_dim=out_n_node_feat, hidden_dim=out_n_node_feat, out_dim=out_n_node_feat)
-            self.post_mha_dense_layer = nn.Sequential(
-                nn.Linear(out_n_node_feat, out_n_node_feat*4),
-                nn.SiLU(),
-                nn.Linear(out_n_node_feat*4, out_n_node_feat),
-                nn.SiLU()
-            )
+                kk_convs.append(KeyKeyConv(in_feats=out_size, out_feats=out_size, num_heads=n_kk_heads, pre_norm=pre_norm))
+            self.kk_convs = nn.ModuleList(kk_convs)
 
 
-    def forward(self, rec_graph: dgl.DGLGraph):
-        node_positions = rec_graph.ndata['x_0']
-        node_features = rec_graph.ndata['h_0']
+    def forward(self, g: dgl.DGLGraph, kp_batch_idx: torch.Tensor):
+
+        x = g.nodes['rec'].data['x_0']
+        h = g.nodes['rec'].data['h_0']
+        batch_size = g.batch_size
+
+        if self.use_sameres_feat:
+            rec_edge_feat = g.edges['rr'].data['same_res']
+        else:
+            rec_edge_feat = None
+
+        # compute rec_batch_idx, the batch index of every receptor atom
+        rec_batch_idx = torch.arange(batch_size, device=g.device).repeat_interleave(g.batch_num_nodes('rec'))
+
+        # compute normalization factor, z, for receptor-receptor message passing
+        if self.message_norm == 0:
+            z_rr = g.batch_num_edges(etype='rr') / g.batch_num_nodes('rec')
+            z_rr = z_rr[rec_batch_idx].view(-1, 1)
+        else:
+            z_rr = self.message_norm
 
         # do equivariant message passing over nodes
-        h, x = self.egnn_convs[0](rec_graph, node_features, node_positions)
-        if len(self.egnn_convs) > 1:
-            for conv_layer in self.egnn_convs[1:]:
-                h, x = conv_layer(rec_graph, h, x)
+        for conv_layer in self.rec_convs:
+            h, x = conv_layer(g, node_feat=h, coord_feat=x, edge_feat=rec_edge_feat, z=z_rr)
 
         # record learned positions and features
-        rec_graph.ndata['x'] = x
-        rec_graph.ndata['h'] = h
+        # TODO: is this necessary??
+        g.nodes['rec'].data['x'] = x
+        g.nodes['rec'].data['h'] = h
 
-        # TODO: apply atom-wise MLP in h?
-        # not necessary because sum of messages goes through an MLP
+        if self.no_cg:
+            raise NotImplementedError
+            # TODO: remove keypoint nodes, add in n_keypoints = n_rec_atoms and set positions and features to the x and h we just obtained
+            return g
+        
+        # compute the mean feature of the receptor
+        mean_rec_feat = dgl.readout_nodes(g, 'h', op='mean', ntype='rec') # (batch_size, hidden_size)
 
-        keypoint_positions = []
-        keypoint_features = []
-        for graph_idx, graph in enumerate(dgl.unbatch(rec_graph)):
+        # initialize keypoint features
+        init_kp_features = self.keypoint_embedding(mean_rec_feat)
+        g.nodes['kp'].data['h_0'] = rearrange(init_kp_features, 'b (k d) -> (b k) d', d=self.out_n_node_feat, k=self.n_keypoints)
 
-            # compute equivariant keypoints
-            mean_node_feature = self.node_feat_embedding(graph.ndata['h']).mean(dim=0) # shape (1, n_node_features)
-            eqv_queries = self.eqv_keypoint_key_fn(mean_node_feature).view(self.n_keypoints, self.out_n_node_feat) # shape (n_attn_heads, n_node_feautres)
-            eqv_keys = self.eqv_keypoint_query_fn(graph.ndata['h']).view(-1, self.n_keypoints, self.out_n_node_feat) # (n_nodes, n_attn_heads, n_node_features)
-            eqv_att_logits = torch.einsum('ijk,jk->ji', eqv_keys, eqv_queries) # (n_attn_heads, n_nodes)
-            eqv_att_weights = torch.softmax(eqv_att_logits/self.kp_pos_norm, dim=1)
-            kp_pos = eqv_att_weights @ graph.ndata['x'] # (n_keypoints, 3)
-            keypoint_positions.append(kp_pos)
+        # apply rec->kp graph attention convolution
+        kp_pos, kp_feat = self.rec_kp_conv(g, kp_batch_idx)
 
-            # compute distance between keypoints and binding pocket points
-            kp_dist = torch.cdist(kp_pos, graph.ndata['x_0'])
+        # assign keypoint positions and features
+        g.nodes['kp'].data['h_0'] = kp_feat
+        g.nodes['kp'].data['x_0'] = kp_pos
 
-            # get keypoint features as softmax over distance to receptor atoms
-            if self.k_closest == 0:
-                kp_feat_weights = torch.softmax(-1.0*kp_dist*self.kp_feat_scale, dim=1) # (n_keypoints, n_pocket_atoms)
-                kp_feat = kp_feat_weights @ graph.ndata["h"]
-            else:
-                top_vals, top_idx = torch.topk(kp_dist, k=self.k_closest, dim=1, largest=False)
-                kp_feat = graph.ndata["h"][top_idx, :].mean(dim=1)
-                kp_feat = torch.concat([kp_feat, top_vals], dim=1)
+        # get batch info 
+        batch_num_nodes, batch_num_edges = get_batch_info(g)
 
-            # apply keypoint-wise MLP before input to attention mechanism
-            kp_feat = self.kp_wise_mlp(kp_feat)
+        # add keypoint-keypoint edges
+        kk_edges = radius_graph(x=kp_pos, r=self.graph_cutoffs['kk'], batch=kp_batch_idx, max_num_neighbors=100)
+        g.add_edges(kk_edges[0], kk_edges[1], etype='kk')
 
-            # update keypoint features by receptor-kp cross-attention
-            if self.use_keypoint_feat_mha:
-                kp_feat = kp_feat + self.keypoint_feat_mha(kp_feat, kp_dist, graph.ndata["h"])
-                kp_feat = self.post_mha_dense_layer(kp_feat)
+        # get number of keypoint-keypoint edges in each batch
+        batch_num_edges[('kp', 'kk', 'kp')] = get_edges_per_batch(kk_edges[0], batch_size, kp_batch_idx)
 
-            keypoint_features.append(kp_feat)
+        g.set_batch_num_nodes(batch_num_nodes)
+        g.set_batch_num_edges(batch_num_edges)
+        
+        # do keypoint-keypoint convolutions if specified
+        if self.n_kk_convs > 0:
+            for conv in self.kk_convs:
+                kp_feat = conv(g)
+                g.nodes['kp'].data['h_0'] = kp_feat
 
-        return keypoint_positions, keypoint_features
+        return g
+
 
 

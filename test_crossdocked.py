@@ -9,11 +9,12 @@ from rdkit import Chem
 import shutil
 import pickle
 from tqdm import trange
+import dgl
 
 from data_processing.crossdocked.dataset import CrossDockedDataset
 from data_processing.make_bindingmoad_pocketfile import write_pocket_file
 from models.ligand_diffuser import LigandDiffuser
-from utils import write_xyz_file
+from utils import write_xyz_file, copy_graph
 from analysis.molecule_builder import build_molecule, process_molecule
 from analysis.metrics import MoleculeProperties
 from analysis.pocket_minimization import pocket_minimization
@@ -37,6 +38,8 @@ def parse_arguments():
     # p.add_argument('--no_minimization', action='store_true')
     p.add_argument('--ligand_only_minimization', action='store_true')
     p.add_argument('--pocket_minimization', action='store_true')
+
+    p.add_argument('--use_ref_lig_com', action='store_true', help="Initialize each ligand's position at the reference ligand's center of mass" )
     
     args = p.parse_args()
 
@@ -142,7 +145,7 @@ def main():
     # create test dataset object
     dataset_path = Path(args['dataset']['location']) 
     test_dataset_path = str(dataset_path / f'{cmd_args.split}.pkl')
-    test_dataset = CrossDockedDataset(name=cmd_args.split, processed_data_file=test_dataset_path, **args['dataset'])
+    test_dataset = CrossDockedDataset(name=cmd_args.split, processed_data_file=test_dataset_path, **args['graph'], **args['dataset'])
 
     # get number of ligand and receptor atom features
     n_lig_feat = args['reconstruction']['n_lig_feat']
@@ -150,24 +153,32 @@ def main():
 
     rec_encoder_config = args["rec_encoder"]
 
+    # determine if we're using fake atoms
+    try:
+        use_fake_atoms = args['dataset']['max_fake_atom_frac'] > 0
+    except KeyError:
+        use_fake_atoms = False
+
     # create diffusion model
     model = LigandDiffuser(
         n_lig_feat, 
         n_kp_feat,
         processed_dataset_dir=Path(args['dataset']['location']),
+        graph_config=args['graph'],
         dynamics_config=args['dynamics'], 
         rec_encoder_config=rec_encoder_config, 
         rec_encoder_loss_config=args['rec_encoder_loss'],
+        use_fake_atoms=use_fake_atoms,
         **args['diffusion']).to(device=device)
 
     # load model weights
-    model.load_state_dict(torch.load(model_file))
+    model.load_state_dict(torch.load(model_file, map_location=device))
     model.eval()
 
 
-    pocket_mols = []
+    # pocket_mols = []
     pocket_sampling_times = []
-    keypoints = []
+    # keypoints = []
 
     # generate the iterator over the dataset
     if cmd_args.dataset_idx is None:
@@ -186,25 +197,25 @@ def main():
         pocket_sample_start = time.time()
 
         # get receptor graph and reference ligand positions/features from test set
-        rec_graph, ref_lig_pos, ref_lig_feat = test_dataset[dataset_idx]
+        ref_graph, _ = test_dataset[dataset_idx]
         ref_rec_file, ref_lig_file = test_dataset.get_files(dataset_idx) # get original rec/lig files
 
-        # move data to gpu
-        rec_graph = rec_graph.to(device)
-        # ref_lig_pos.to(device)
-        # ref_lig_feat.to(device)
-        
-        n_lig_atoms: int = ref_lig_pos.shape[0] # get number of atoms in the ligand
-        atoms_per_ligand = torch.ones(size=(cmd_args.max_batch_size,), dtype=int, device=device)*n_lig_atoms # input to sampling function 
+        if use_fake_atoms:
+            ref_lig_batch_idx = torch.zeros(ref_graph.num_nodes('lig'), device=ref_graph.device)
+            ref_graph = model.remove_fake_atoms(ref_graph, ref_lig_batch_idx)
+
+        ref_graph = ref_graph.to(device)
 
         # encode the receptor
-        kp_pos, kp_feat, init_rec_atom_com, init_kp_com = model.encode_receptors([rec_graph])
+        ref_graph = model.encode_receptors(ref_graph)
 
-        # create batch_size copies of the encoded receptor
-        kp_pos = [ kp_pos[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
-        kp_feat = [ kp_feat[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
-        init_rec_atom_com = [ init_rec_atom_com[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
-        init_kp_com = [ init_kp_com[0].detach().clone() for _ in range(cmd_args.max_batch_size) ]
+
+        # compute initial ligand COM
+        if cmd_args.use_ref_lig_com:
+            ref_init_lig_com = dgl.readout_nodes(ref_graph, ntype='lig', feat='x_0', op='mean')
+            assert ref_init_lig_com.shape == (1, 3)
+        else:
+            ref_init_lig_com = None
 
         pocket_raw_mols = []
 
@@ -214,23 +225,31 @@ def main():
             n_mols_to_generate = int( n_mols_needed / (cmd_args.avg_validity*0.95) ) + 1
             batch_size = min(n_mols_to_generate, cmd_args.max_batch_size)
 
+            # collect just the batch_size graphs and init_kp_coms that we need
+            g_batch = copy_graph(ref_graph, batch_size)
+            g_batch = dgl.batch(g_batch)
+
+            # copy the ref_lig_com out batch_size times
+            if cmd_args.use_ref_lig_com:
+                init_lig_com_batch = ref_init_lig_com.repeat(batch_size, 1)
+            else:
+                init_lig_com_batch = None
+
             # sample ligand atom positions/features
-            batch_lig_pos, batch_lig_feat = model.sample_from_encoded_receptors(
-                kp_pos[:batch_size], 
-                kp_feat[:batch_size], 
-                init_rec_atom_com[:batch_size], 
-                init_kp_com[:batch_size], 
-                atoms_per_ligand[:batch_size])
+            with g_batch.local_scope():
+                batch_lig_pos, batch_lig_feat = model.sample_from_encoded_receptors(
+                    g_batch,  
+                    init_lig_pos=init_lig_com_batch)
 
             # convert positions/features to rdkit molecules
-            for lig_idx in range(batch_size):
+            for lig_idx, (lig_pos_i, lig_feat_i) in enumerate(zip(batch_lig_pos, batch_lig_feat)):
 
                 # convert lig atom features to atom elements
-                element_idxs = torch.argmax(batch_lig_feat[lig_idx], dim=1).tolist()
+                element_idxs = torch.argmax(lig_feat_i, dim=1).tolist()
                 atom_elements = test_dataset.lig_atom_idx_to_element(element_idxs)
 
                 # build molecule
-                mol = build_molecule(batch_lig_pos[lig_idx], atom_elements, add_hydrogens=False, sanitize=True, largest_frag=True, relax_iter=0)
+                mol = build_molecule(lig_pos_i, atom_elements, add_hydrogens=False, sanitize=True, largest_frag=True, relax_iter=0)
 
                 if mol is not None:
                     pocket_raw_mols.append(mol)
@@ -251,6 +270,12 @@ def main():
             f.write(f'{pocket_sample_time:.2f}')
         with open(pocket_dir / 'sample_time.pkl', 'wb') as f:
             pickle.dump(pocket_sample_time, f)
+
+        # print the sampling time
+        print(f'pocket {dataset_idx} sampling time: {pocket_sample_time:.2f}')
+
+        # print the sampling time per molecule
+        print(f'pocket {dataset_idx} sampling time per molecule: {pocket_sample_time/len(pocket_raw_mols):.2f}')
 
 
         # write the pocket used for minimization to the pocket dir
@@ -297,8 +322,8 @@ def main():
 
 
         # remove KP COM, add back in init_kp_com, then save keypoint positions
-        keypoint_positions = kp_pos[0]
-        keypoint_positions = keypoint_positions - keypoint_positions.mean(dim=0, keepdims=True) + init_kp_com[0]
+        keypoint_positions = ref_graph.nodes['kp'].data['x_0']
+        # keypoint_positions = keypoint_positions - keypoint_positions.mean(dim=0, keepdims=True) + ref_init_kp_com
         
         # write keypoints to an xyz file
         kp_file = pocket_dir / 'keypoints.xyz'

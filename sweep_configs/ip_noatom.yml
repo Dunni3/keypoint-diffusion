@@ -1,0 +1,25 @@
+command:
+  - /net/dali/home/mscbio/icd3/.conda/envs/ligdiff/bin/python
+  - ${program}
+  - --config=configs/ip_noatom.yml
+  - ${args}
+method: grid
+metric:
+  goal: minimize
+  name: test_l2_loss
+parameters:
+  max_fake_atom_frac:
+    values:
+      - 0.0
+      - 0.2
+      - 0.4
+  restart_interval:
+    values:
+      - 0
+      - 60
+      - 120
+  lr:
+    values:
+      - 1.0e-4
+      - 3.0e-4
+program: train_crossdocked.py

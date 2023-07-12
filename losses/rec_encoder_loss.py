@@ -19,10 +19,11 @@ def compute_ot_emd(cost_mat, device):
 
 class ReceptorEncoderLoss(nn.Module):
 
-    def __init__(self, loss_type='optimal_transport', hinge_threshold: float = 4):
+    def __init__(self, loss_type='optimal_transport', use_interface_points: bool = False, hinge_threshold: float = 4):
         super().__init__()
 
         self.loss_type = loss_type
+        self.use_interface_points = use_interface_points
 
         if self.loss_type not in ['optimal_transport', 'gaussian_repulsion', 'hinge', 'none']:
             raise ValueError
@@ -30,37 +31,59 @@ class ReceptorEncoderLoss(nn.Module):
         if self.loss_type == 'hinge':
             self._hinge_loss = DistanceHingeLoss(distance_threshold=hinge_threshold)
 
-    def forward(self, keypoint_positions: List[torch.Tensor] = None, batched_rec_graphs: dgl.DGLGraph = None):
+    def forward(self, batched_complex_graphs: dgl.DGLGraph = None, interface_points: List[torch.Tensor] = None):
 
-        if self.loss_type == "optimal_transport":
-            return self.compute_ot_loss(keypoint_positions=keypoint_positions, batched_rec_graphs=batched_rec_graphs)
+        if self.loss_type == "optimal_transport" and not self.use_interface_points:
+            return self.compute_ot_loss(batched_complex_graphs)
+        elif self.loss_type == 'optimal_transport' and self.use_interface_points:
+            return self.compute_interface_point_loss(batched_complex_graphs, interface_points)
         elif self.loss_type == 'gaussian_repulsion':
-            return self.compute_repulsion_loss(keypoint_positions=keypoint_positions)
+            return self.compute_repulsion_loss(batched_complex_graphs)
         elif self.loss_type == 'hinge':
-            return self.compute_hinge_loss(keypoint_positions=keypoint_positions)
+            return self.compute_hinge_loss(batched_complex_graphs)
         elif self.loss_type == 'none':
-            device = keypoint_positions[0].device
-            dtype = keypoint_positions[0].dtype
+            device = batched_complex_graphs.device
+            dtype = batched_complex_graphs.nodes["rec"].data["x_0"].dtype
             return torch.tensor(0.0, device=device, dtype=dtype)
 
-    def compute_ot_loss(self, keypoint_positions: List[torch.Tensor], batched_rec_graphs: dgl.DGLGraph):
+    def compute_ot_loss(self, batched_complex_graphs: dgl.DGLGraph):
+
         ot_loss = 0
 
-        unbatched_graphs = dgl.unbatch(batched_rec_graphs)
+        unbatched_graphs = dgl.unbatch(batched_complex_graphs)
 
-        for kp_pos, rec_graph in zip(keypoint_positions, unbatched_graphs):
+        # for kp_pos, rec_graph in zip(keypoint_positions, unbatched_graphs):
+        for g in unbatched_graphs:
+
+            kp_pos = g.nodes["kp"].data["x_0"]
+            rec_atom_pos = g.nodes["rec"].data["x_0"]
+
             # compute cost matrix
-            cost_mat = torch.square(torch.cdist(kp_pos, rec_graph.ndata['x_0']))
+            cost_mat = torch.square(torch.cdist(kp_pos, rec_atom_pos))
             # compute OT distance
             # TODO: what should device be? not really sure how devices work in pytorch...need to figure that out
             ot_dist, _ = compute_ot_emd(cost_mat, device=cost_mat.device)
             ot_loss += ot_dist
         
         ot_loss = ot_loss / len(unbatched_graphs)
+        return ot_loss
+    
+    def compute_interface_point_loss(self, batched_complex_graphs, interface_points):
 
+        keypoint_positions = [ g.nodes["kp"].data["x_0"] for g in dgl.unbatch(batched_complex_graphs) ]
+
+        ot_loss = 0
+        for kp_pos, if_points in zip(keypoint_positions, interface_points):
+            cost_mat = torch.square(torch.cdist(kp_pos, if_points))
+            ot_dist, _ = compute_ot_emd(cost_mat, device=cost_mat.device)
+            ot_loss += ot_dist
+        
+        ot_loss = ot_loss / len(interface_points)
         return ot_loss
 
-    def compute_repulsion_loss(self, keypoint_positions: List[torch.Tensor]):
+    def compute_repulsion_loss(self, batched_complex_graphs: dgl.DGLHeteroGraph):
+
+        raise NotImplementedError
 
         batch_size = len(keypoint_positions)
         n_keypoints = keypoint_positions[0].shape[0]
@@ -79,7 +102,9 @@ class ReceptorEncoderLoss(nn.Module):
         
         return repulsion_loss
     
-    def compute_hinge_loss(self, keypoint_positions: List[torch.Tensor]):
+    def compute_hinge_loss(self, batched_complex_graphs: dgl.DGLHeteroGraph):
+
+        raise NotImplementedError
 
         batch_size = len(keypoint_positions)
         n_keypoints = keypoint_positions[0].shape[0]

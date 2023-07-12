@@ -11,6 +11,7 @@ from data_processing.crossdocked.dataset import CrossDockedDataset
 from models.ligand_diffuser import LigandDiffuser
 from utils import write_xyz_file
 from analysis.molecule_builder import make_mol_openbabel
+from data_processing.make_bindingmoad_pocketfile import write_pocket_file
 
 def parse_arguments():
     p = argparse.ArgumentParser()
@@ -23,18 +24,18 @@ def parse_arguments():
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--output_dir', type=str, default='sampled_mols/')
     p.add_argument('--dataset', type=str, default='bindingmoad')
+    p.add_argument('--idxs', type=int, nargs='+', default=[])
 
 
     p.add_argument('--visualize', action='store_true')
+
+    args = p.parse_args()
 
     if args.model_file is not None and args.model_dir is not None:
         raise ValueError('only model_file or model_dir can be specified but not both')
     
     if args.dataset not in ['crossdocked', 'bindingmoad']:
         raise ValueError('unsupported dataset')
-    
-
-    args = p.parse_args()
 
     return args
 
@@ -48,46 +49,19 @@ def make_reference_files(dataset_idx: int, dataset: CrossDockedDataset, output_d
     ref_rec_file = Path(ref_rec_file)
     ref_lig_file = Path(ref_lig_file)
 
-    # # get receptor object and atom coordinates
-    # rec: prody.AtomGroup = prody.parsePDB(str(ref_rec_file))
-    # rec_coords = rec.getCoords()
 
-    # # get ligand object 
-    # suppl = Chem.SDMolSupplier(str(ref_lig_file), sanitize=False, removeHs=remove_hydrogen)
-    # ligands = list(suppl)
-    # if len(ligands) > 1:
-    #     raise NotImplementedError('Multiple ligands found. Code is not written to handle multiple ligands.')
-    # ligand = ligands[0]
-
-    # # get atom positions
-    # ligand_conformer = ligand.GetConformer()
-    # ligand_atom_positions = ligand_conformer.GetPositions()
-
-    # ligand_com = ligand_atom_positions.mean(axis=0, keepdims=True)
-
-    # # remove ligand COM from receptor coordinates
-    # rec.setCoords( rec_coords - ligand_com )
-
-    # # remove ligand COM from ligand coordinates
-    # new_lig_pos = ligand_atom_positions - ligand_com
-    # for i in range(ligand.GetNumAtoms()):
-    #     x,y,z = new_lig_pos[i]
-    #     ligand_conformer.SetAtomPosition(i,Point3D(x,y,z))
 
     # get filepath of new ligand and receptor files
     centered_lig_file = output_dir / ref_lig_file.name
     centered_rec_file = output_dir / ref_rec_file.name
 
-    # # write ligand to new file
-    # lig_writer = Chem.SDWriter(str(centered_lig_file))
-    # lig_writer.write(ligand)
-    # lig_writer.close()
-
-    # # write receptor to new file
-    # prody.writePDB(str(centered_rec_file), rec)
-
     shutil.copy(ref_rec_file, centered_rec_file)
     shutil.copy(ref_lig_file, centered_lig_file)
+
+
+    # write the pocket file 
+    pocket_file = output_dir / 'pocket.pdb'
+    write_pocket_file(ref_rec_file, ref_lig_file, pocket_file, cutoff=8)
 
     return output_dir
 
@@ -161,6 +135,12 @@ def main():
 
     rec_encoder_config = args["rec_encoder"]
 
+    # determine if we're using fake atoms
+    try:
+        use_fake_atoms = args['dataset']['max_fake_atom_frac'] > 0
+    except KeyError:
+        use_fake_atoms = False
+
     # create diffusion model
     model = LigandDiffuser(
         n_lig_feat, 
@@ -176,7 +156,9 @@ def main():
     model.eval()
     
     # get dataset indexes for complexes we are going to sample
-    if cmd_args.random:
+    if cmd_args.idxs != []:
+        dataset_idxs = cmd_args.idxs
+    elif cmd_args.random:
         dataset_idxs = rng.choice(len(test_dataset), size=cmd_args.n_complexes, replace=False)
     else:
         dataset_idxs = np.arange(cmd_args.n_complexes)
@@ -192,22 +174,28 @@ def main():
         complex_output_dirs[idx] = complex_output_dir
 
         # get the data for the reference complex
-        rec_graph, ref_lig_pos, ref_lig_feat = test_dataset[idx]
+        ref_graph, _ = test_dataset[idx]
 
         # move data to correct device
-        rec_graph = rec_graph.to(device)
+        ref_graph = ref_graph.to(device)
+
+        if use_fake_atoms:
+            ref_lig_batch_idx = torch.zeros(ref_graph.num_nodes('lig'), device=ref_graph.device)
+            ref_graph = model.remove_fake_atoms(ref_graph, ref_lig_batch_idx)
 
         # get array specifying the number of nodes in each ligand we sample
-        n_nodes = torch.ones(size=(cmd_args.n_replicates,), dtype=int, device=device)*ref_lig_pos.shape[0]
+        n_nodes = torch.ones(size=(cmd_args.n_replicates,), dtype=int, device=device)*ref_graph.num_nodes('lig')
 
         # get receptor keypoints
         # note the diffusion model does receptor encoding internally,
         # so for sampling this is not strictly necessary, but i would like to visualize the position of the keypoints
-        kp_pos, kp_feat = model.rec_encoder(rec_graph)
-        kp_pos, kp_feat = kp_pos[0], kp_feat[0] # the keypoints and features are returned as lists of length batch_size, but now our batch size is just 1
+        with ref_graph.local_scope():
+            encoded_ref_graph = model.rec_encoder(ref_graph)
+            kp_pos = encoded_ref_graph.nodes['kp'].data['x_0']
+            kp_feat = encoded_ref_graph.nodes['kp'].data['h_0']
 
         # sample ligands
-        lig_pos, lig_feat = model.sample_given_pocket(rec_graph, n_nodes, visualize=cmd_args.visualize)
+        lig_pos, lig_feat = model.sample_given_pocket(ref_graph, n_nodes, visualize=cmd_args.visualize)
 
         # write sampled ligands
         if cmd_args.visualize:
