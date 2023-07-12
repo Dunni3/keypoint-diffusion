@@ -509,7 +509,6 @@ class LigandDiffuser(nn.Module):
         sigma_t = self.sigma(gamma_t)
 
         # predict the noise that we should remove from this example, epsilon
-        # they will each be lists containing the epsilon tensors for each ligand
         eps_h, eps_x = self.dynamics(g, t, lig_batch_idx, kp_batch_idx)
 
         var_terms = sigma2_t_given_s / alpha_t_given_s / sigma_t
