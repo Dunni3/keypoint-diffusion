@@ -372,9 +372,15 @@ def main():
     print(f'{n_rec_atom_features=}')
     print(f'{n_lig_feat=}', flush=True)
 
-    rec_encoder_config = args["rec_encoder"]
-    rec_encoder_config["in_n_node_feat"] = n_rec_atom_features
-    args["rec_encoder"]["in_n_node_feat"] = n_rec_atom_features
+    # get rec encoder config
+    if args['diffusion']['architecture'] == 'gvp':
+        rec_encoder_config = args["rec_encoder_gvp"]
+        rec_encoder_config['in_scalar_size'] = n_rec_atom_features
+        args["rec_encoder_gvp"]["in_scalar_size"] = n_rec_atom_features
+    elif args['diffusion']['architecture'] == 'egnn':
+        rec_encoder_config = args["rec_encoder"]
+        rec_encoder_config["in_n_node_feat"] = n_rec_atom_features
+        args["rec_encoder"]["in_n_node_feat"] = n_rec_atom_features
 
     # determine if we're using fake atoms
     try:

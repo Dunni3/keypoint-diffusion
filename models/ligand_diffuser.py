@@ -14,13 +14,14 @@ from losses.rec_encoder_loss import ReceptorEncoderLoss
 from losses.dist_hinge_loss import DistanceHingeLoss
 from models.dynamics import LigRecDynamics
 from models.receptor_encoder import ReceptorEncoder
+from models.receptor_encoder_gvp import ReceptorEncoderGVP
 from models.n_nodes_dist import LigandSizeDistribution
 from utils import get_batch_info, get_nodes_per_batch, copy_graph
 from torch_scatter import segment_csr
 
 class LigandDiffuser(nn.Module):
 
-    def __init__(self, atom_nf, rec_nf, processed_dataset_dir: Path, n_timesteps: int = 1000, keypoint_centered=False, graph_config={},
+    def __init__(self, atom_nf, rec_nf, processed_dataset_dir: Path, n_timesteps: int = 1000, keypoint_centered=False, architecture: str = 'egnn', graph_config={},
     dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, precision=1e-4, lig_feat_norm_constant=1, rl_dist_threshold=0, use_fake_atoms=False):
         super().__init__()
 
@@ -31,6 +32,11 @@ class LigandDiffuser(nn.Module):
         self.n_timesteps = n_timesteps
         self.lig_feat_norm_constant = lig_feat_norm_constant
         self.use_fake_atoms = use_fake_atoms
+
+        # check architecture
+        if architecture not in ['egnn', 'gvp']:
+            raise ValueError(f'Unsupported architecture: {architecture}')
+        self.architecture = architecture
         
         # create the receptor -> ligand hinge loss if called for
         if rl_dist_threshold > 0:
@@ -50,8 +56,12 @@ class LigandDiffuser(nn.Module):
         else:
             self.dynamics = LigRecDynamics(atom_nf, rec_nf, **graph_config, **dynamics_config)
 
-        # create receptor encoder and its loss function
-        self.rec_encoder = ReceptorEncoder(**graph_config, **rec_encoder_config)
+        # create receptor encoder
+        if architecture == 'egnn':
+            self.rec_encoder = ReceptorEncoder(**graph_config, **rec_encoder_config)
+        else:
+            self.rec_encoder = ReceptorEncoderGVP(**graph_config, **rec_encoder_config)
+        # create receptor encoder loss function
         self.rec_encoder_loss_fn = ReceptorEncoderLoss(**rec_encoder_loss_config)
 
     def forward(self, complex_graphs: dgl.DGLHeteroGraph, interface_points: List[torch.Tensor]):

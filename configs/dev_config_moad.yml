@@ -50,11 +50,23 @@ rec_encoder:
   n_kk_heads: 4
   norm: True
 
+rec_encoder_gvp:
+  out_scalar_size: 128
+  vector_size: 16
+  n_rr_convs: 3
+  message_norm: 'mean'
+  use_sameres_feat: False 
+  kp_feat_scale: 1.0
+  kp_rad: 4.0
+  k_closest: 0
+  dropout: 0.0
+
 diffusion:
   n_timesteps: 1000
   precision: 1.0e-5
   lig_feat_norm_constant: 1
   rl_dist_threshold: 0
+  architecture: 'gvp' # which GNN architecture to use. can be gvp or egnn
 
 dynamics:
   n_layers: 6
