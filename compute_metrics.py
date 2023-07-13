@@ -36,9 +36,9 @@ if __name__ == "__main__":
         'qed': qed, 'sa':sa, 'logp':logp, 'diversity': per_pocket_diversity, 'pocket_dirs': pocket_dirs }
     
     # convert qed, sa, logp, and diversity to numpy arrays and print their mean values
-    for key in ['qed', 'sa', 'logp', 'diversity']:
-        vals = np.asarray(metrics_dict[key])
-        print(f'{key}: {vals.mean(): .3f} +/- {vals.std(): .3f}')
+    # for key in ['qed', 'sa', 'logp', 'diversity']:
+    #     vals = np.asarray(metrics_dict[key])
+    #     print(f'{key}: {vals.mean(): .3f} +/- {vals.std(): .3f}')
 
     with open(args.sampled_mols_dir.parent / 'metrics.pkl', 'wb') as f:
         pickle.dump(metrics_dict, f)
