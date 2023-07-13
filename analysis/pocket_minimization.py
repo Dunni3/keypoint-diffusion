@@ -103,7 +103,7 @@ def minimize_ligand(ref_lig, lig_idx, rec):
     # compute rmsd between original and minimized ligand
     rmsd = compute_rmsd(ref_lig, lig)
 
-    row = {'lig_idx': lig_idx, 'rmsd': rmsd}
+    row = {'lig_idx': lig_idx, 'rmsd': rmsd, 'energy_before': before_energy, 'energy_after': after_energy}
 
     # save the minimized ligand
     lig.SetProp('_Name', f'lig_idx_{lig_idx}')
