@@ -1,122 +1,137 @@
-import torch.nn as nn
-import torch
+from typing import Dict, Union
+
 import dgl
 import dgl.function as fn
-from typing import Union
+import torch
+import torch.nn as nn
+from einops import rearrange
+from torch_cluster import knn, radius
+from torch_scatter import segment_csr
 
-from .gvp import GVP, GVPDropout, GVPLayerNorm
+from utils import get_batch_info, get_edges_per_batch
 
-class ReceptorConv(nn.Module):
-    # this is adapted from the EGNN implementation in DGL
+from .gvp import GVPEdgeConv
 
-    def __init__(self, scalar_size: int = 128, vector_size: int = 16,
-                  edge_feat_size=0, use_tanh=True, coords_range=10, message_norm: Union[float, str] = 10, dropout: float = 0.0):
-        super(ReceptorConv, self).__init__()
+class KeypointInitializer(nn.Module):
+
+    """Assigns initial positions and features to keypoint nodes. Also draws receptor -> keypoint edges."""
+
+    def __init__(self, n_keypoints: int, scalar_size: int, vector_size: int, k_closest: int = 0, kp_rad: float = 0):
+        super().__init__()
 
         self.scalar_size = scalar_size
         self.vector_size = vector_size
-        self.edge_feat_size = edge_feat_size
-        act_fn = nn.SiLU()
-        self.use_tanh = use_tanh
-        self.coords_range = coords_range
-        self.message_norm = message_norm
-        self.dropout_rate = dropout
-        
-        self.edge_message = GVP(dim_vectors_in=vector_size+1, 
-                                dim_vectors_out=vector_size, 
-                                dim_feats_in=scalar_size, 
-                                dim_feats_out=scalar_size, 
-                                feats_activation=act_fn, 
-                                vectors_activation=act_fn, 
-                                vector_gating=True, 
-                                dropout_rate=dropout, 
-                                layer_norm=True)
-        
-        self.node_update = GVP(dim_vectors_in=vector_size, 
-                               dim_vectors_out=vector_size+1, 
-                               dim_feats_in=scalar_size, 
-                               dim_feats_out=scalar_size, 
-                               feats_activation=act_fn, 
-                               vectors_activation=act_fn, 
-                               vector_gating=True, 
-                               dropout_rate=dropout, 
-                               layer_norm=True)
-        
-        self.dropout = GVPDropout(self.dropout_rate)
-        self.layer_norm = GVPLayerNorm(self.scalar_size)
+        self.n_keypoints = n_keypoints
+        self.num_heads = 1
+        self.k_closest = k_closest
+        self.kp_rad = kp_rad
 
-        if self.message_norm == 'mean':
-            self.agg_func = fn.mean
-        else:
-            self.agg_func = fn.sum
+        self.src_net = nn.Linear(scalar_size, scalar_size, bias=False)
+        self.dst_net = nn.Linear(scalar_size, scalar_size, bias=False)
 
-    def forward(self, g: dgl.DGLHeteroGraph, scalar_feat: torch.Tensor, coord_feat: torch.Tensor, vec_feat: torch.Tensor, z: Union[float, torch.Tensor] = 1, edge_feat: torch.Tensor=None):
+        # embedding function for the mean node feature before keypoint position generation
+        self.keypoint_embedding = nn.Sequential(
+            nn.Linear(scalar_size, scalar_size*n_keypoints),
+            nn.SiLU(),
+            nn.LayerNorm(scalar_size*n_keypoints)
+        )
 
-        # vec_feat has shape (n_nodes, n_vectors, 3)
+        self.norm = nn.LayerNorm(scalar_size)
+
+        if self.k_closest > 0:
+            self.graph_type = 'knn'
+        elif self.kp_rad > 0:
+            self.graph_type = 'radius'
+
+
+    def forward(self, g: dgl.DGLHeteroGraph, rec_scalar_feats: torch.Tensor, batch_idxs: Dict[str, torch.Tensor]):
+
+        # get the device and batch size from the graph, g
+        device = g.device
+        batch_size = g.batch_size
 
         with g.local_scope():
-            g.nodes['rec'].data["h"] = scalar_feat
-            g.nodes['rec'].data["x"] = coord_feat
-            g.nodes['rec'].data["v"] = vec_feat
+            
+            g.nodes['rec'].data['h'] = rec_scalar_feats
 
-            # edge feature
-            if self.edge_feat_size > 0:
-                assert edge_feat is not None, "Edge features must be provided."
-                g.edges['rr'].data["a"] = edge_feat
+            # get mean node feature for each graph in the batch
+            mean_node_feats = dgl.readout_nodes(g, 'mean', ntype='rec', feat='h')
 
-            # get vectors between receptor nodes
-            g.apply_edges(fn.u_sub_v("x", "x", "x_diff"), etype='rr')
+            # transform mean node features into keypoint embeddings
+            keypoint_scalars = self.keypoint_embedding(mean_node_feats).view()
+            keypoint_scalars = rearrange(keypoint_scalars, 'b (k d) -> (b k) d', d=self.scalar_size, k=self.n_keypoints)
 
-            # normalize x_diff
-            # i don't think this is necessary but i'm leaving it here for now
-            # g.edges['rr'].data['x_diff'] = g.edges['rr'].data['x_diff'] / (torch.norm(g.edges['rr'].data['x_diff'], dim=-1, keepdim=True) + 1e-10 )
+            # set keypoint features in the graph
+            g.nodes['kp'].data['h'] = keypoint_scalars
 
-            # copy source node features to edges
-            g.apply_edges(fn.copy_u("h", "h"), etype='rr')
-            g.apply_edges(fn.copy_u("v", "v"), etype='rr')
+            # get queries/keys
+            ft_src = self.src_net(rec_scalar_feats).view(-1, self.num_heads, self.out_feats) 
+            ft_dst = self.fc_src(keypoint_scalars).view(-1, self.num_heads, self.out_feats)
 
-            # compute messages on every receptor-receptor edge
-            g.apply_edges(self.message, etype='rr')
+            # Assign features to nodes
+            g.srcdata['ft'] = {'rec': ft_src}
+            g.dstdata['ft'] = {'kp': ft_dst}
 
-            # aggregate messages from every receptor-receptor edge
-            g.update_all(fn.copy_e("scalar_msg", "m"), self.agg_func("m", "scalar_msg"), etype='rr')
-            g.update_all(fn.copy_e("vec_msg", "m"), self.agg_func("m", "vec_msg"), etype='rr')
+            # Step 1. dot product
+            g.apply_edges(fn.u_dot_v('ft', 'ft', 'a'), etype='rk')
 
-            # get scalar and vector messages
-            scalar_msg = g.nodes['rec'].data["scalar_msg"] / z
-            vec_msg = g.nodes['rec'].data["vec_msg"] / z
+            # Step 2. edge softmax to compute attention scores
+            a = g.edges['rk'].data['a'] / self.out_feats**0.5
+            a = torch.exp(a)
 
-            # dropout scalar and vector messages
-            scalar_msg, vec_msg = self.dropout((scalar_msg, vec_msg))
+            edges_per_kp = g.batch_num_nodes('rec')[batch_idxs['kp']] # (n_keypoints*batch_size) -> number of edges going to every keypoint
+            indptr = torch.zeros(edges_per_kp.shape[0]+1, dtype=int, device=g.device) # index pointer used for segmented sum
+            indptr[1:] = edges_per_kp
+            indptr = torch.cumsum(indptr, 0)
+            dst_node_denominators = segment_csr(src=a, indptr=indptr) # (n_kp_nodes, num_heads, 1), sum of incoming weights for each node
+            g.dstdata['denom'] = {'kp': 1/dst_node_denominators}
+            g.apply_edges(fn.v_mul_e('denom', 'a', 'sa'), etype='rk')
 
-            # update scalar and vector features, apply layernorm
-            scalar_feat = scalar_feat + scalar_msg
-            vec_feat = vec_feat + vec_msg
-            scalar_feat, vec_feat = self.layer_norm((scalar_feat, vec_feat))
+            # Step 3. Broadcast softmax value to each edge, and aggregate dst node
+            g.update_all(fn.u_mul_e('x_0', 'sa', 'attn'), fn.sum('attn', 'agg_u'), etype='rk')
 
-            # apply node update function, apply dropout to residuals, apply layernorm
-            scalar_residual, vec_residual = self.node_update((scalar_feat, vec_feat))
-            scalar_residual, vec_residual = self.dropout((scalar_residual, vec_residual))
-            scalar_feat = scalar_feat + scalar_residual
-            vec_feat = vec_feat + vec_residual
-            scalar_feat, vec_feat = self.layer_norm((scalar_feat, vec_feat))
+            # get keypoint positions
+            kp_pos = g.dstdata['agg_u']['kp'].mean(dim=1)
+            g.nodes['kp'].data['x_0'] = kp_pos
 
-        return scalar_feat, vec_feat
+            # connect keypoints to surrounding receptor atoms
+            g = self.update_rk_edges(g, batch_idxs)
 
-    def message(self, edges):
+        # for now intialize keypoint scalar and vector features to zero
+        kp_scalars = torch.zeros(g.num_nodes('kp'), self.scalar_size, device=device, dtype=torch.float32)
+        kp_vecs = torch.zeros(g.num_nodes('kp'), self.vector_size, device=device, dtype=torch.float32)
 
-        # concatenate x_diff and v on every edge to produce vector features
-        vec_feats = torch.cat([edges.data["x_diff"].unsqueeze(1), edges.data["v"]], dim=1)
+        return g, kp_pos, kp_scalars, kp_vecs
+        
+    def update_rk_edges(self, g: dgl.DGLHeteroGraph, batch_idxs: Dict[str, torch.Tensor]):
 
-        # create scalar features
-        if self.edge_feat_size > 0:
-            scalar_feats = torch.cat([edges.data["h"], edges.data['a'] ])
-        else:
-            scalar_feats = edges.data["h"]
+        kp_pos = g.nodes['kp'].data['x_0']
+        rec_pos = g.nodes['rec'].data['x_0']
 
-        scalar_message, vector_message = self.edge_message((scalar_feats, vec_feats))
+        if self.graph_type == 'knn':
+            # find edges of KNN graph where each keypoint node has incoming edges from the K closest receptor nodes
+            rk_idxs = knn(x=rec_pos, y=kp_pos, k=self.k_closest, batch_x=batch_idxs['rec'], batch_y=batch_idxs['kp'])
+        elif self.graph_type == 'radius':
+            rk_idxs = radius(x=rec_pos, y=kp_pos, r=self.kp_rad, batch_x=batch_idxs['rec'], batch_y=batch_idxs['kp'])
 
-        return {"scalar_msg": scalar_message, "vec_msg": vector_message}
+        # we are going to remove and then add edges which destroy batch information. 
+        # we have to record batch info before mutating graph topology and add it back afterwards
+        batch_num_nodes, batch_num_edges = get_batch_info(g)
+
+        # get number of receptor-keypoint edges for each graph in the batch
+        if self.graph_type == 'knn':
+            batch_num_edges[('rec', 'rk', 'kp')] = torch.ones(g.batch_size, device=g.device, dtype=int)*self.n_keypoints*self.k_closest
+        elif self.graph_type == 'radius':
+            batch_num_edges[('rec', 'rk', 'kp')] = get_edges_per_batch(rk_idxs[0], g.batch_size, batch_idxs['kp'])
+
+        g.remove_edges(g.edges(form='eid', etype='rk'), etype='rk') # remove all receptor-keypoint edges
+        g.add_edges(rk_idxs[1], rk_idxs[0], etype='rk') # add edges that we just computed
+    
+        # reset batch info
+        g.set_batch_num_nodes(batch_num_nodes)
+        g.set_batch_num_edges(batch_num_edges)
+
+        return g
     
 
 class ReceptorEncoderGVP(nn.Module):
@@ -124,15 +139,18 @@ class ReceptorEncoderGVP(nn.Module):
     def __init__(self, 
                  in_scalar_size: int, 
                  out_scalar_size: int = 128, 
+                 n_message_gvps: int = 1,
+                 n_update_gvps: int = 1,
                  vector_size: int = 16,
-                 n_keypoints: int = 20,
-                 n_rr_convs: int = 3, 
+                 n_rr_convs: int = 3,
+                 n_rk_convs: int = 2, 
                  message_norm: Union[float, str] = 10, 
                  use_sameres_feat: bool = False,
                  kp_feat_scale=1, 
                  kp_rad: float = 0, 
                  k_closest: int = 0,
                  dropout: float = 0.0,
+                 n_keypoints: int = 20,
                  graph_cutoffs: dict = {}):
         super().__init__()
 
@@ -142,6 +160,7 @@ class ReceptorEncoderGVP(nn.Module):
             raise ValueError('one of kp_rad and kp_closest must be non-zero')
 
         self.n_rr_convs = n_rr_convs
+        self.n_rk_convs = n_rk_convs
         self.in_scalar_size = in_scalar_size
         self.out_scalar_size = out_scalar_size
         self.n_keypoints = n_keypoints
@@ -181,59 +200,102 @@ class ReceptorEncoderGVP(nn.Module):
         # create rec-rec convolutional layers
         self.rr_conv_layers = nn.ModuleList()
         for _ in range(n_rr_convs):
-            self.rr_conv_layers.append(ReceptorConv(
+            self.rr_conv_layers.append(GVPEdgeConv(
+                edge_type=('rec', 'rr', 'rec'),
                 scalar_size=out_scalar_size,
                 vector_size=vector_size,
+                n_message_gvps=n_message_gvps,
+                n_update_gvps=n_update_gvps,
                 edge_feat_size=edge_feat_size,
                 dropout=dropout,
                 message_norm=message_norm
             ))
 
-    def forward(self, g: dgl.DGLHeteroGraph, kp_batch_idx: torch.Tensor):
+
+        # create the keypoint initializer which will assign initial positions to the keypoint nodes
+        self.keypoint_initializer = KeypointInitializer(n_keypoints=n_keypoints, scalar_size=out_scalar_size, vector_size=vector_size)
+
+
+        # create rec-keypoint convolutional layers
+        self.rk_conv_layers = nn.ModuleList()
+        for i in range(n_rk_convs):
+
+            if i != 0:
+                use_dst_feats = True
+            else:
+                use_dst_feats = False
+
+            self.rk_conv_layers.append(GVPEdgeConv(
+                edge_type=('rec', 'rk', 'kp'),
+                use_dst_feats=use_dst_feats,
+                scalar_size=out_scalar_size,
+                vector_size=vector_size,
+                n_message_gvps=n_message_gvps,
+                n_update_gvps=n_update_gvps,
+                edge_feat_size=edge_feat_size,
+                dropout=dropout,
+                message_norm=message_norm
+            ))
+
+    def forward(self, g: dgl.DGLHeteroGraph, batch_idxs: Dict[str, torch.Tensor]):
 
         device = g.device
         batch_size = g.batch_size
 
-        with g.local_scope():
 
-            # get scalar features
-            scalar_feat = g.nodes['rec'].data["h"]
+        # get scalar features
+        rec_scalar_feat = g.nodes['rec'].data["h_0"]
 
-            # embed scalar features
-            scalar_feat = self.scalar_embed(scalar_feat)
-            scalar_feat = self.scalar_norm(scalar_feat)
+        # embed scalar features
+        rec_scalar_feat = self.scalar_embed(rec_scalar_feat)
+        rec_scalar_feat = self.scalar_norm(rec_scalar_feat)
 
-            # initialize receptor vector features
-            vec_feat = torch.zeros((g.num_nodes('rec'), self.vector_size, 3), device=device)
+        # initialize receptor vector features
+        rec_vec_feat = torch.zeros((g.num_nodes('rec'), self.vector_size, 3), device=device)
 
-            # get edge features
-            if self.use_sameres_feat:
-                edge_feat = g.edges['rr'].data["a"]
-            else:
-                edge_feat = None
+        # get edge features
+        if self.use_sameres_feat:
+            edge_feat = g.edges['rr'].data["a"]
+        else:
+            edge_feat = None
 
-            # get coordinate features
-            coord_feat = g.nodes['rec'].data['x_0']
+        # get coordinate features
+        coord_feat = g.nodes['rec'].data['x_0']
 
-            # compute rec_batch_idx, the batch index of every receptor atom
-            rec_batch_idx = torch.arange(batch_size, device=device).repeat_interleave(g.batch_num_nodes('rec'))
+        # compute rec_batch_idx, the batch index of every receptor atom
+        rec_batch_idx = batch_idxs['rec']
 
-            # compute the normalization factor for the messages if necessary
-            if self.message_norm == 'mean':
-                # set z to 1. the receptor convolutional layer will use mean aggregation instead of sum
-                z = 1
-            elif self.message_norm == 0:
-                # if messsage_norm is 0, we normalize by the average in-degree of the graph
-                z = g.batch_num_edges(etype='rr') / g.batch_num_nodes('rec')
-                z = z[rec_batch_idx].view(-1, 1)
-            else:
-                # otherwise, message_norm is a non-zero constant which we use as the normalization factor
-                z = self.message_norm
+        # compute the normalization factor for the messages if necessary
+        if self.message_norm == 'mean':
+            # set z to 1. the receptor convolutional layer will use mean aggregation instead of sum
+            z = 1
+        elif self.message_norm == 0:
+            # if messsage_norm is 0, we normalize by the average in-degree of the graph
+            z = g.batch_num_edges(etype='rr') / g.batch_num_nodes('rec')
+            z = z[rec_batch_idx].view(-1, 1)
+        else:
+            # otherwise, message_norm is a non-zero constant which we use as the normalization factor
+            z = self.message_norm
 
-            # apply receptor-receptor convolutions
-            for i in range(self.n_rr_convs):
-                scalar_feat, vec_feat = self.rr_conv_layers[i](g, scalar_feat, coord_feat, vec_feat, z=z, edge_feat=edge_feat)
+        # apply receptor-receptor convolutions
+        for i in range(self.n_rr_convs):
+            src_feats = (rec_scalar_feat, coord_feat, rec_vec_feat)
+            rec_scalar_feat, rec_vec_feat = self.rr_conv_layers[i](g, src_feats=src_feats, edge_feat=edge_feat, z=z)
 
-        raise NotImplementedError('ReceptorEncoderGVP is not yet implemented')
+        # get initial keypoint positions
+        g, kp_pos, kp_scalars, kp_vecs = self.keypoint_initializer(g, rec_scalar_feat, batch_idxs)
+
+        # update scalar and vector features of the keypoint nodes
+        for i in range(self.n_rk_convs):
+            src_feats = (rec_scalar_feat, coord_feat, rec_vec_feat)
+            dst_feats = (kp_scalars, kp_pos, kp_vecs)
+            kp_scalars, kp_vecs = self.rk_conv_layers[i](g, src_feats=src_feats, dst_feats=dst_feats, z=z)
+
+        # set keypoint features in the graph
+        g.nodes['kp'].data['h_0'] = kp_scalars
+        g.nodes['kp'].data['x_0'] = kp_pos
+        g.nodes['kp'].data['v_0'] = kp_vecs
+
+        return g
 
 

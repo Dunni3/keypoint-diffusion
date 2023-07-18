@@ -480,19 +480,23 @@ class ReceptorEncoder(nn.Module):
             self.kk_convs = nn.ModuleList(kk_convs)
 
 
-    def forward(self, g: dgl.DGLGraph, kp_batch_idx: torch.Tensor):
+    def forward(self, g: dgl.DGLGraph, batch_idxs: Dict[str, torch.Tensor]):
 
         x = g.nodes['rec'].data['x_0']
         h = g.nodes['rec'].data['h_0']
         batch_size = g.batch_size
+        
 
         if self.use_sameres_feat:
             rec_edge_feat = g.edges['rr'].data['same_res']
         else:
             rec_edge_feat = None
 
-        # compute rec_batch_idx, the batch index of every receptor atom
-        rec_batch_idx = torch.arange(batch_size, device=g.device).repeat_interleave(g.batch_num_nodes('rec'))
+        # get the batch index of every receptor atom
+        rec_batch_idx = batch_idxs['rec']
+
+        # get the batch index of every keypoint
+        kp_batch_idx = batch_idxs['kp']
 
         # compute normalization factor, z, for receptor-receptor message passing
         if self.message_norm == 0:

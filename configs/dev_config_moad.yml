@@ -52,7 +52,7 @@ rec_encoder:
 
 rec_encoder_gvp:
   out_scalar_size: 128
-  vector_size: 16`
+  vector_size: 16
   n_rr_convs: 3
   message_norm: 'mean'
   use_sameres_feat: False 
@@ -60,6 +60,8 @@ rec_encoder_gvp:
   kp_rad: 4.0
   k_closest: 0
   dropout: 0.0
+  n_message_gvps: 2 # the number of GVPs to chain together for the message function
+  n_update_gvps: 2 # the number of GVPs to chain together for the update function
 
 diffusion:
   n_timesteps: 1000
@@ -97,7 +99,7 @@ training:
   save_interval: 100 # epoch
   sample_interval: 100 # number of epochs between sampling/testing molecules
   test_epochs: 1 # number of epochs to run when evaluating on the test set
-  num_workers: 8
+  num_workers: 1
   scheduler:
     warmup_length: 1
     rec_enc_weight_decay_midpoint: 0

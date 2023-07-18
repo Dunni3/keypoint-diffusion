@@ -91,11 +91,14 @@ class LigandDiffuser(nn.Module):
 
         # get batch indicies of every ligand and keypoint - useful later
         batch_idx = torch.arange(batch_size, device=device)
-        lig_batch_idx = batch_idx.repeat_interleave(complex_graphs.batch_num_nodes('lig'))
-        kp_batch_idx = batch_idx.repeat_interleave(complex_graphs.batch_num_nodes('kp'))
+
+        # iterate over node types in complex_graphs
+        batch_idxs = {}
+        for ntype in complex_graphs.ntypes:
+            batch_idxs[ntype] = batch_idx.repeat_interleave(complex_graphs.batch_num_nodes(ntype))
                 
         # encode the receptor
-        complex_graphs = self.rec_encoder(complex_graphs, kp_batch_idx)
+        complex_graphs = self.rec_encoder(complex_graphs, batch_idxs)
 
         # if we are applying the RL hinge loss, we will need to be able to put receptor atoms and the ligand into the same
         # referance frame. in order to do this, we need the initial COM of the keypoints
@@ -106,7 +109,7 @@ class LigandDiffuser(nn.Module):
         losses['rec_encoder'] = self.rec_encoder_loss_fn(complex_graphs, interface_points=interface_points)
 
         # remove ligand COM from receptor/ligand complex
-        complex_graphs = self.remove_com(complex_graphs, lig_batch_idx, kp_batch_idx, com='ligand')
+        complex_graphs = self.remove_com(complex_graphs, batch_idxs['lig'], batch_idxs['kp'], com='ligand')
 
         # sample timepoints for each item in the batch
         t = torch.randint(0, self.n_timesteps, size=(batch_size,), device=device).float() # timesteps
@@ -120,10 +123,10 @@ class LigandDiffuser(nn.Module):
         
         # construct noisy versions of the ligand
         gamma_t = self.gamma(t).to(device=device)
-        complex_graphs = self.noised_representation(complex_graphs, lig_batch_idx, kp_batch_idx, eps, gamma_t)
+        complex_graphs = self.noised_representation(complex_graphs, batch_idxs['lig'], batch_idxs['kp'], eps, gamma_t)
 
         # predict the noise that was added
-        eps_h_pred, eps_x_pred = self.dynamics(complex_graphs, t, lig_batch_idx, kp_batch_idx)
+        eps_h_pred, eps_x_pred = self.dynamics(complex_graphs, t, batch_idxs['lig'], batch_idxs['kp'])
 
         # compute hinge loss if necessary
         if self.apply_rl_hinge_loss:
@@ -131,11 +134,11 @@ class LigandDiffuser(nn.Module):
             with complex_graphs.local_scope():
 
                 # predict denoised ligand
-                g_denoised = self.denoised_representation(complex_graphs, lig_batch_idx, kp_batch_idx, eps_x_pred, eps_h_pred, gamma_t)
+                g_denoised = self.denoised_representation(complex_graphs, batch_idxs['lig'], batch_idxs['kp'], eps_x_pred, eps_h_pred, gamma_t)
 
                 # translate ligand back to intitial frame of reference
-                g_denoised = self.remove_com(g_denoised, lig_batch_idx, kp_batch_idx, com='receptor')
-                g_denoised.nodes['lig'].data['x_0'] = g_denoised.nodes['lig'].data['x_0'] + init_kp_com[lig_batch_idx]
+                g_denoised = self.remove_com(g_denoised, batch_idxs['lig'], batch_idxs['kp'], com='receptor')
+                g_denoised.nodes['lig'].data['x_0'] = g_denoised.nodes['lig'].data['x_0'] + init_kp_com[batch_idxs['lig']]
 
                 # compute hinge loss between ligand atom position and receptor atom positions
                 rl_hinge_loss = 0
