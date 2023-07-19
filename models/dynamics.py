@@ -339,9 +339,11 @@ class LigRecDynamics(nn.Module):
                                message_norm=message_norm, update_kp_feat=update_kp_feat, norm=norm)
 
 
-    def forward(self, g: dgl.DGLHeteroGraph, timestep, lig_batch_idx, kp_batch_idx):
+    def forward(self, g: dgl.DGLHeteroGraph, timestep: torch.Tensor, batch_idxs: Dict[str, torch.Tensor]):
         # inputs: ligand/keypoint positions/features, timestep
         # outputs: predicted noise
+        lig_batch_idx = batch_idxs['lig']
+        kp_batch_idx = batch_idxs['kp']
 
         with g.local_scope():
 

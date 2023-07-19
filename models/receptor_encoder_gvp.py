@@ -5,7 +5,7 @@ import dgl.function as fn
 import torch
 import torch.nn as nn
 from einops import rearrange
-from torch_cluster import knn, radius
+from torch_cluster import knn, radius, radius_graph
 from torch_scatter import segment_csr
 
 from utils import get_batch_info, get_edges_per_batch
@@ -112,7 +112,7 @@ class KeypointInitializer(nn.Module):
             # find edges of KNN graph where each keypoint node has incoming edges from the K closest receptor nodes
             rk_idxs = knn(x=rec_pos, y=kp_pos, k=self.k_closest, batch_x=batch_idxs['rec'], batch_y=batch_idxs['kp'])
         elif self.graph_type == 'radius':
-            rk_idxs = radius(x=rec_pos, y=kp_pos, r=self.kp_rad, batch_x=batch_idxs['rec'], batch_y=batch_idxs['kp'])
+            rk_idxs = radius(x=rec_pos, y=kp_pos, r=self.kp_rad, batch_x=batch_idxs['rec'], batch_y=batch_idxs['kp'], max_num_neighbors=10)
 
         # we are going to remove and then add edges which destroy batch information. 
         # we have to record batch info before mutating graph topology and add it back afterwards
@@ -146,13 +146,16 @@ class ReceptorEncoderGVP(nn.Module):
                  n_rk_convs: int = 2, 
                  message_norm: Union[float, str] = 10, 
                  use_sameres_feat: bool = False,
-                 kp_feat_scale=1, 
                  kp_rad: float = 0, 
                  k_closest: int = 0,
                  dropout: float = 0.0,
                  n_keypoints: int = 20,
+                 no_cg: bool = False,
                  graph_cutoffs: dict = {}):
         super().__init__()
+
+        if no_cg:
+            raise NotImplementedError('no_cg is not implemented yet')
 
         if kp_rad != 0 and k_closest != 0:
             raise ValueError('one of kp_rad and kp_closest can be zero but not both')
@@ -167,20 +170,18 @@ class ReceptorEncoderGVP(nn.Module):
         self.vector_size = vector_size
         self.dropout_rate = dropout
         self.use_sameres_feat = use_sameres_feat
-        self.kp_feat_scale = kp_feat_scale
         self.kp_rad = kp_rad
         self.k_closest = k_closest
         self.message_norm = message_norm
         self.graph_cutoffs = graph_cutoffs
 
         # check the message norm argument
-        if isinstance(message_norm, str):
-            if message_norm != 'mean':
-                raise ValueError('message norm must be either a float or "mean"')
+        if isinstance(message_norm, str) and message_norm != 'mean':
+            raise ValueError(f'message norm must be either a float, int, or "mean". Got {message_norm}')
         elif isinstance(message_norm, float) or isinstance(message_norm, int):
             pass
         else:
-            raise ValueError('message norm must be either a float, int, or "mean"')
+            raise ValueError(f'message norm must be either a float, int, or "mean". Got {message_norm}')
 
         # create functions to embed scalar features to the desired size
         self.scalar_embed = nn.Sequential(
@@ -242,7 +243,6 @@ class ReceptorEncoderGVP(nn.Module):
         device = g.device
         batch_size = g.batch_size
 
-
         # get scalar features
         rec_scalar_feat = g.nodes['rec'].data["h_0"]
 
@@ -260,7 +260,7 @@ class ReceptorEncoderGVP(nn.Module):
             edge_feat = None
 
         # get coordinate features
-        coord_feat = g.nodes['rec'].data['x_0']
+        rec_coord_feat = g.nodes['rec'].data['x_0']
 
         # compute rec_batch_idx, the batch index of every receptor atom
         rec_batch_idx = batch_idxs['rec']
@@ -279,7 +279,7 @@ class ReceptorEncoderGVP(nn.Module):
 
         # apply receptor-receptor convolutions
         for i in range(self.n_rr_convs):
-            src_feats = (rec_scalar_feat, coord_feat, rec_vec_feat)
+            src_feats = (rec_scalar_feat, rec_coord_feat, rec_vec_feat)
             rec_scalar_feat, rec_vec_feat = self.rr_conv_layers[i](g, src_feats=src_feats, edge_feat=edge_feat, z=z)
 
         # get initial keypoint positions
@@ -287,7 +287,7 @@ class ReceptorEncoderGVP(nn.Module):
 
         # update scalar and vector features of the keypoint nodes
         for i in range(self.n_rk_convs):
-            src_feats = (rec_scalar_feat, coord_feat, rec_vec_feat)
+            src_feats = (rec_scalar_feat, rec_coord_feat, rec_vec_feat)
             dst_feats = (kp_scalars, kp_pos, kp_vecs)
             kp_scalars, kp_vecs = self.rk_conv_layers[i](g, src_feats=src_feats, dst_feats=dst_feats, z=z)
 
@@ -295,6 +295,19 @@ class ReceptorEncoderGVP(nn.Module):
         g.nodes['kp'].data['h_0'] = kp_scalars
         g.nodes['kp'].data['x_0'] = kp_pos
         g.nodes['kp'].data['v_0'] = kp_vecs
+
+        # get batch info 
+        batch_num_nodes, batch_num_edges = get_batch_info(g)
+
+        # add keypoint-keypoint edges
+        kk_edges = radius_graph(x=kp_pos, r=self.graph_cutoffs['kk'], batch=batch_idxs['kp'], max_num_neighbors=100)
+        g.add_edges(kk_edges[0], kk_edges[1], etype='kk')
+
+        # get number of keypoint-keypoint edges in each batch
+        batch_num_edges[('kp', 'kk', 'kp')] = get_edges_per_batch(kk_edges[0], batch_size, batch_idxs['kp'])
+
+        g.set_batch_num_nodes(batch_num_nodes)
+        g.set_batch_num_edges(batch_num_edges)
 
         return g
 

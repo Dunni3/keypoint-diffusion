@@ -147,3 +147,17 @@ def copy_graph(g: dgl.DGLHeteroGraph, n_copies: int, lig_atoms_per_copy: torch.T
                 g_copies[idx].nodes[ntype].data[feat] = val
 
     return g_copies
+
+def get_batch_idxs(g: dgl.DGLHeteroGraph) -> Dict[str, torch.Tensor]:
+        
+        batch_size = g.batch_size
+        device = g.device
+
+        batch_idx = torch.arange(batch_size, device=device)
+
+        # iterate over node types in complex_graphs
+        batch_idxs = {}
+        for ntype in g.ntypes:
+            batch_idxs[ntype] = batch_idx.repeat_interleave(g.batch_num_nodes(ntype))
+
+        return batch_idxs
