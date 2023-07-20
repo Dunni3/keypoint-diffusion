@@ -180,7 +180,7 @@ class ReceptorEncoderGVP(nn.Module):
             raise ValueError(f'message norm must be either a float, int, or "mean". Got {message_norm}')
         elif isinstance(message_norm, float) or isinstance(message_norm, int):
             pass
-        else:
+        elif not isinstance(message_norm, (str, float, int)):
             raise ValueError(f'message norm must be either a float, int, or "mean". Got {message_norm}')
 
         # create functions to embed scalar features to the desired size
@@ -209,13 +209,12 @@ class ReceptorEncoderGVP(nn.Module):
                 n_update_gvps=n_update_gvps,
                 edge_feat_size=edge_feat_size,
                 dropout=dropout,
-                message_norm=message_norm
+                message_norm=message_norm,
+                rbf_dmax=graph_cutoffs['rr']
             ))
-
 
         # create the keypoint initializer which will assign initial positions to the keypoint nodes
         self.keypoint_initializer = KeypointInitializer(n_keypoints=n_keypoints, scalar_size=out_scalar_size, vector_size=vector_size)
-
 
         # create rec-keypoint convolutional layers
         self.rk_conv_layers = nn.ModuleList()
@@ -235,7 +234,8 @@ class ReceptorEncoderGVP(nn.Module):
                 n_update_gvps=n_update_gvps,
                 edge_feat_size=edge_feat_size,
                 dropout=dropout,
-                message_norm=message_norm
+                message_norm=message_norm,
+                rbf_dmax=graph_cutoffs['rk']
             ))
 
     def forward(self, g: dgl.DGLHeteroGraph, batch_idxs: Dict[str, torch.Tensor]):

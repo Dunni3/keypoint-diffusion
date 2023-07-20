@@ -372,15 +372,17 @@ def main():
     print(f'{n_rec_atom_features=}')
     print(f'{n_lig_feat=}', flush=True)
 
-    # get rec encoder config
+    # get rec encoder config and dynamics config
     if args['diffusion']['architecture'] == 'gvp':
         rec_encoder_config = args["rec_encoder_gvp"]
         rec_encoder_config['in_scalar_size'] = n_rec_atom_features
         args["rec_encoder_gvp"]["in_scalar_size"] = n_rec_atom_features
-    elif args['diffusion']['architecture'] == 'egnn':
+        dynamics_config = args['dynamics_gvp']
+    elif args['diffusion']['architecture'] == 'egnn' or 'architecture' not in args['diffusion']:
         rec_encoder_config = args["rec_encoder"]
         rec_encoder_config["in_n_node_feat"] = n_rec_atom_features
         args["rec_encoder"]["in_n_node_feat"] = n_rec_atom_features
+        dynamics_config = args['dynamics']
 
     # determine if we're using fake atoms
     try:
@@ -400,7 +402,7 @@ def main():
         n_kp_feat,
         processed_dataset_dir=Path(args['dataset']['location']), # TODO: on principle, i don't like that our model needs access to the processed data dir for which it was trained.. need to fix/reorganize to avoid this
         graph_config=args['graph'],
-        dynamics_config=args['dynamics'], 
+        dynamics_config=dynamics_config, 
         rec_encoder_config=rec_encoder_config, 
         rec_encoder_loss_config=args['rec_encoder_loss'],
         use_fake_atoms=use_fake_atoms,

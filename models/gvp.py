@@ -3,13 +3,42 @@ from torch import nn, einsum
 import dgl
 import dgl.function as fn
 from typing import List, Tuple, Union, Dict
+import math
 
 # helper functions
 def exists(val):
     return val is not None
 
+def _norm_no_nan(x, axis=-1, keepdims=False, eps=1e-8, sqrt=True):
+    '''
+    L2 norm of tensor clamped above a minimum value `eps`.
+    
+    :param sqrt: if `False`, returns the square of the L2 norm
+    '''
+    out = torch.clamp(torch.sum(torch.square(x), axis, keepdims), min=eps)
+    return torch.sqrt(out) if sqrt else out
+
 # the classes GVP, GVPDropout, and GVPLayerNorm are taken from lucidrains' geometric-vector-perceptron repository
 # https://github.com/lucidrains/geometric-vector-perceptron/tree/main
+# some adaptations have been made to these classes to make them more consistent with the original GVP paper/implementation
+# specifically, using _norm_no_nan instead of torch's built in norm function, and the weight intialiation scheme for Wh and Wu
+
+def _rbf(D, D_min=0., D_max=20., D_count=16):
+    '''
+    From https://github.com/jingraham/neurips19-graph-protein-design
+    
+    Returns an RBF embedding of `torch.Tensor` `D` along a new axis=-1.
+    That is, if `D` has shape [...dims], then the returned tensor will have
+    shape [...dims, D_count].
+    '''
+    device = D.device
+    D_mu = torch.linspace(D_min, D_max, D_count, device=device)
+    D_mu = D_mu.view([1, -1])
+    D_sigma = (D_max - D_min) / D_count
+    D_expand = torch.unsqueeze(D, -1)
+
+    RBF = torch.exp(-((D_expand - D_mu) / D_sigma) ** 2)
+    return RBF
 
 class GVP(nn.Module):
     def __init__(
@@ -19,9 +48,9 @@ class GVP(nn.Module):
         dim_feats_in,
         dim_feats_out,
         hidden_vectors = None,
-        feats_activation = nn.Sigmoid(),
+        feats_activation = nn.SiLU(),
         vectors_activation = nn.Sigmoid(),
-        vector_gating = False
+        vector_gating = True
     ):
         super().__init__()
         self.dim_vectors_in = dim_vectors_in
@@ -30,8 +59,13 @@ class GVP(nn.Module):
         self.dim_vectors_out = dim_vectors_out
         dim_h = max(dim_vectors_in, dim_vectors_out) if hidden_vectors is None else hidden_vectors
 
-        self.Wh = nn.Parameter(torch.randn(dim_vectors_in, dim_h))
-        self.Wu = nn.Parameter(torch.randn(dim_h, dim_vectors_out))
+        # create Wh and Wu matricies
+        wh_k = 1/math.sqrt(dim_vectors_in)
+        wu_k = 1/math.sqrt(dim_h)
+        self.Wh = torch.zeros(dim_vectors_in, dim_h, dtype=torch.float32).uniform_(-wh_k, wh_k)
+        self.Wu = torch.zeros(dim_h, dim_vectors_out, dtype=torch.float32).uniform_(-wu_k, wu_k)
+        self.Wh = nn.Parameter(self.Wh)
+        self.Wu = nn.Parameter(self.Wu)
 
         self.vectors_activation = vectors_activation
 
@@ -54,7 +88,7 @@ class GVP(nn.Module):
         Vh = einsum('b v c, v h -> b h c', vectors, self.Wh)
         Vu = einsum('b h c, h u -> b u c', Vh, self.Wu)
 
-        sh = torch.norm(Vh, p = 2, dim = -1)
+        sh = _norm_no_nan(Vh)
 
         s = torch.cat((feats, sh), dim = 1)
 
@@ -64,7 +98,7 @@ class GVP(nn.Module):
             gating = self.scalar_to_vector_gates(feats_out)
             gating = gating.unsqueeze(dim = -1)
         else:
-            gating = torch.norm(Vu, p = 2, dim = -1, keepdim = True)
+            gating = _norm_no_nan(Vu)
 
         vectors_out = self.vectors_activation(gating) * Vu
         return (feats_out, vectors_out)
@@ -101,8 +135,8 @@ class GVPEdgeConv(nn.Module):
     def __init__(self, edge_type: Tuple[str, str, str], scalar_size: int = 128, vector_size: int = 16,
                   scalar_activation=nn.SiLU, vector_activation=nn.Sigmoid,
                   n_message_gvps: int = 1, n_update_gvps: int = 1,
-                  use_dst_feats: bool = True,
-                  edge_feat_size=int, coords_range=10, message_norm: Union[float, str] = 10, dropout: float = 0.0):
+                  use_dst_feats: bool = True, rbf_dmax: float = 15, rbf_dim: int = 16,
+                  edge_feat_size: int = 0, coords_range=10, message_norm: Union[float, str] = 10, dropout: float = 0.0,):
         
         super().__init__()
 
@@ -117,6 +151,10 @@ class GVPEdgeConv(nn.Module):
         self.n_update_gvps = n_update_gvps
         self.edge_feat_size = edge_feat_size
         self.use_dst_feats = use_dst_feats
+        self.rbf_dmax = rbf_dmax
+        self.rbf_dim = rbf_dim
+        self.dropout_rate = dropout
+        self.message_norm = message_norm
 
         # create message passing function
         message_gvps = []
@@ -128,6 +166,7 @@ class GVPEdgeConv(nn.Module):
             # on the first layer, there is an extra edge vector for the displacement vector between the two node positions
             if i == 0:
                 dim_vectors_in += 1
+                dim_feats_in += rbf_dim
                 
             # if this is the first layer and we are using destination node features to compute messages, add them to the input dimensions
             if use_dst_feats and i == 0:
@@ -168,7 +207,6 @@ class GVPEdgeConv(nn.Module):
         else:
             self.agg_func = fn.sum
 
-
     def forward(self, g: dgl.DGLHeteroGraph, 
                 src_feats: Tuple[torch.Tensor, torch.Tensor, torch.Tensor], 
                 edge_feats: torch.Tensor = None, 
@@ -204,9 +242,10 @@ class GVPEdgeConv(nn.Module):
             # get vectors between node positions
             g.apply_edges(fn.u_sub_v("x", "x", "x_diff"), etype=self.edge_type)
 
-            # normalize x_diff
-            # i don't think this is necessary but i'm leaving it here for now
-            # g.edges['rr'].data['x_diff'] = g.edges['rr'].data['x_diff'] / (torch.norm(g.edges['rr'].data['x_diff'], dim=-1, keepdim=True) + 1e-10 )
+            # normalize x_diff and compute rbf embedding of edge distance
+            dij = torch.norm(g.edges[self.edge_type].data['x_diff'], dim=-1, keepdim=True)
+            g.edges[self.edge_type].data['x_diff'] = g.edges[self.edge_type].data['x_diff'] / dij
+            g.edges[self.edge_type].data['d'] = _rbf(dij.squeeze(1), D_max=self.rbf_dmax, D_count=self.rbf_dim)
 
             # compute messages on every edge
             g.apply_edges(self.message, etype=self.edge_type)
@@ -246,11 +285,11 @@ class GVPEdgeConv(nn.Module):
 
         # create scalar features
         if self.edge_feat_size > 0 and self.use_dst_feats:
-            scalar_feats = torch.cat([edges.src["h"], edges.dst["h"], edges.data['a']], dim=1)
+            scalar_feats = torch.cat([edges.src["h"], edges.dst["h"], edges.data['a'], edges.data['d']], dim=1)
         elif self.edge_feat_size > 0:
-            scalar_feats = torch.cat([edges.src["h"], edges.data['a'] ], dim=1)
+            scalar_feats = torch.cat([edges.src["h"], edges.data['a'], edges.data['d']], dim=1)
         else:
-            scalar_feats = edges.src["h"]
+            scalar_feats = torch.cat([edges.src["h"], edges.data['d']], dim=1)
 
         scalar_message, vector_message = self.edge_message((scalar_feats, vec_feats))
 
@@ -262,7 +301,8 @@ class GVPMultiEdgeConv(nn.Module):
 
     def __init__(self, etypes: List[Tuple[str, str, str]], scalar_size: int = 128, vector_size: int = 16,
                   scalar_activation=nn.SiLU, vector_activation=nn.Sigmoid,
-                  n_message_gvps: int = 1, n_update_gvps: int = 1, coords_range=10, 
+                  n_message_gvps: int = 1, n_update_gvps: int = 1,
+                  rbf_dmax: float = 15, rbf_dim: int = 16,
                   message_norm: Union[float, str, Dict] = 10, dropout: float = 0.0):
         
         super().__init__()
@@ -274,7 +314,9 @@ class GVPMultiEdgeConv(nn.Module):
         self.vector_activation = vector_activation
         self.n_message_gvps = n_message_gvps
         self.n_update_gvps = n_update_gvps
-        self.droupout_rate = dropout
+        self.dropout_rate = dropout
+        self.rbf_dmax = rbf_dim
+        self.rbf_dim = rbf_dim
 
         # get all node types that are the destination of an edge type
         self.dst_ntypes = set([edge_type[2] for edge_type in self.etypes])
@@ -309,20 +351,23 @@ class GVPMultiEdgeConv(nn.Module):
 
                 if i == 0:
                     dim_vectors_in = vector_size + 1
+                    dim_feats_in = scalar_size + rbf_dim
                 else:
                     dim_vectors_in = vector_size
+                    dim_feats_in = scalar_size
 
                 edge_message_gvps.append(
                     GVP(dim_vectors_in=dim_vectors_in, 
                         dim_vectors_out=vector_size, 
-                        dim_feats_in=scalar_size, 
+                        dim_feats_in=dim_feats_in, 
                         dim_feats_out=scalar_size, 
                         feats_activation=scalar_activation(), 
                         vectors_activation=vector_activation(), 
                         vector_gating=True)
                 )
 
-            self.edge_message_fns[etype] = nn.Sequential(*edge_message_gvps)
+            key = '_'.join(etype)
+            self.edge_message_fns[key] = nn.Sequential(*edge_message_gvps)
 
         # create node update functions for each node type
         self.node_update_fns = nn.ModuleDict()
@@ -366,7 +411,6 @@ class GVPMultiEdgeConv(nn.Module):
         if invalid_message_norm:
             raise ValueError(f"message_norm values must be 'mean' or a positive number, got {message_norm}")
 
-
     def forward(self, g: dgl.DGLHeteroGraph, node_feats: Dict[str, Tuple]):
         
 
@@ -378,6 +422,17 @@ class GVPMultiEdgeConv(nn.Module):
                 g.nodes[ntype].data['h'] = scalar_feats
                 g.nodes[ntype].data['v'] = vec_feats
                 g.nodes[ntype].data['x'] = pos_feats
+
+            # get vectors between node positions and compute rbf embedding of edge distance
+            for etype in self.etypes:
+                # get vectors between node positions
+                g.apply_edges(fn.u_sub_v("x", "x", "x_diff"), etype=etype)
+
+                # normalize x_diff and compute rbf embedding of edge distance
+                dij = torch.norm(g.edges[etype].data['x_diff'], dim=-1, keepdim=True)
+                g.edges[etype].data['x_diff'] = g.edges[etype].data['x_diff'] / dij
+                g.edges[etype].data['d'] = _rbf(dij.squeeze(1), D_max=self.rbf_dmax, D_count=self.rbf_dim)
+
 
             # compute edge messages
             for etype in self.etypes:
@@ -422,11 +477,12 @@ class GVPMultiEdgeConv(nn.Module):
     def message(self, edges):
 
         edge_type = edges.canonical_etype
+        key = '_'.join(edge_type)
 
         vec_feats = torch.cat([edges.data["x_diff"].unsqueeze(1), edges.src["v"]], dim=1)
 
-        scalar_feats = edges.src["h"]
+        scalar_feats = torch.cat([edges.src["h"], edges.data['d']], dim=1)
 
-        scalar_message, vector_message = self.edge_message_fns[edge_type]((scalar_feats, vec_feats))
+        scalar_message, vector_message = self.edge_message_fns[key]((scalar_feats, vec_feats))
 
         return {"scalar_msg": scalar_message, "vec_msg": vector_message}

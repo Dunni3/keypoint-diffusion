@@ -5,12 +5,42 @@ from typing import Dict, List, Tuple, Union
 
 from utils import get_batch_info, get_edges_per_batch
 from torch_cluster import radius_graph, knn_graph, knn, radius
-from .gvp import GVPMultiEdgeConv
+from .gvp import GVPMultiEdgeConv, GVP
 
 class NoisePredictionBlock(nn.Module):
 
-    def __init__(self, in_scalar_dim: int, out_scalar_dim: int, vector_size: int):
-        pass
+    def __init__(self, in_scalar_dim: int, out_scalar_dim: int, vector_size: int, n_gvps: int = 3, intermediate_scalar_dim: int = 64):
+        super().__init__()
+
+        self.gvps = []
+        for i in range(n_gvps):
+
+            if i == n_gvps - 1:
+                dim_vectors_out = 1
+                dim_feats_out = intermediate_scalar_dim
+                vectors_activation = nn.Identity()
+            else:
+                dim_vectors_out = vector_size
+                dim_feats_out = in_scalar_dim
+                vectors_activation = nn.Sigmoid()
+
+            self.gvps.append(GVP(
+                dim_vectors_in=vector_size,
+                dim_vectors_out=dim_vectors_out,
+                dim_feats_in=in_scalar_dim,
+                dim_feats_out=dim_feats_out,
+                vectors_activation=vectors_activation
+            ))
+        self.gvps = nn.Sequential(*self.gvps)
+
+        self.to_scalar_output = nn.Linear(intermediate_scalar_dim, out_scalar_dim)
+
+    def forward(self, lig_data: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]):
+
+        scalars, _, vectors = lig_data
+        scalars, vectors = self.gvps((scalars, vectors))
+        scalars = self.to_scalar_output(scalars)
+        return scalars, vectors
 
 class LigRecGVP(nn.Module):
 
@@ -25,7 +55,7 @@ class LigRecGVP(nn.Module):
         ]
 
     def __init__(self, in_scalar_dim: int, in_vector_dim: int, out_scalar_dim: int, update_kp: bool = False, n_convs: int = 4,
-                 n_message_gvps: int = 3, n_update_gvps: int = 2, message_norm: Union[float, str, Dict] = 10):
+                 n_message_gvps: int = 3, n_update_gvps: int = 2, message_norm: Union[float, str, Dict] = 10, n_noise_gvps: int = 3, dropout: float = 0.0):
         super().__init__()
 
         self.update_kp = update_kp
@@ -48,8 +78,16 @@ class LigRecGVP(nn.Module):
                 vector_size=in_vector_dim,
                 n_message_gvps=n_message_gvps,
                 n_update_gvps=n_update_gvps,
-                message_norm=message_norm
+                message_norm=message_norm,
+                dropout=dropout
             ))
+
+        self.noise_predictor = NoisePredictionBlock(
+            in_scalar_dim=in_scalar_dim,
+            out_scalar_dim=out_scalar_dim,
+            vector_size=in_vector_dim,
+            n_gvps=n_noise_gvps
+        )
 
     def forward(self, g: dgl.DGLHeteroGraph, node_data: Dict[str, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]):
 
@@ -57,15 +95,16 @@ class LigRecGVP(nn.Module):
         for conv_layer in self.conv_layers:
             node_data = conv_layer(g, node_data)
 
-        # predict noise
-
+        # predict noise on ligand atoms
+        scalar_noise, vector_noise = self.noise_predictor(node_data['lig'])
+        return scalar_noise, vector_noise
 
 
 class LigRecDynamicsGVP(nn.Module):
 
     def __init__(self, n_lig_scalars, n_kp_scalars, vector_dim: int = 16, n_convs=4, n_hidden_scalars=128, act_fn=nn.SiLU,
                  message_norm=1, no_cg: bool = False, n_keypoints: int = 20, graph_cutoffs: dict = {}, update_kp: bool = False, 
-                 ll_k: int = 0, kl_k: int = 0, n_messsage_gvps: int = 3, n_update_gvps: int = 2):
+                 ll_k: int = 0, kl_k: int = 0, n_message_gvps: int = 3, n_update_gvps: int = 2, n_noise_gvps: int = 3, dropout: float = 0.0):
         super().__init__()
 
         if no_cg:
@@ -99,8 +138,11 @@ class LigRecDynamicsGVP(nn.Module):
             out_scalar_dim=n_lig_scalars,
             update_kp=update_kp,
             n_convs=n_convs,
-            n_message_gvps=n_messsage_gvps,
-            n_update_gvps=n_update_gvps
+            n_message_gvps=n_message_gvps,
+            n_update_gvps=n_update_gvps,
+            n_noise_gvps=n_noise_gvps,
+            message_norm=message_norm,
+            dropout=dropout
         )
 
     def forward(self, g: dgl.DGLHeteroGraph, timestep: torch.Tensor, batch_idxs: Dict[str, torch.Tensor]):
@@ -152,6 +194,8 @@ class LigRecDynamicsGVP(nn.Module):
             eps_h, eps_x = self.noise_predictor(g, node_data)
 
             self.remove_lig_edges(g)
+
+        return eps_h, eps_x
 
     def add_lig_edges(self, g: dgl.DGLHeteroGraph, lig_batch_idx, kp_batch_idx) -> dgl.DGLHeteroGraph:
 
