@@ -270,6 +270,10 @@ def test_model(model, test_dataloader, args, device):
     for _ in range(args['training']['test_epochs']):
         for complex_graphs, interface_points in test_dataloader:
 
+            # set data type of atom features
+            for ntype in ['lig', 'rec']:
+                complex_graphs.nodes[ntype].data['h_0'] = complex_graphs.nodes[ntype].data['h_0'].float()
+
             complex_graphs = complex_graphs.to(device)
             if args['rec_encoder_loss']['use_interface_points']:
                 interface_points = [ arr.to(device) for arr in interface_points ]
@@ -348,6 +352,12 @@ def main():
     # get batch size
     batch_size = args['training']['batch_size']
 
+    # get the model architecture
+    try:
+        architecture = args['diffusion']['architecture']
+    except KeyError:
+        architecture = 'egnn'
+
     # create datasets
     dataset_path = Path(args['dataset']['location']) 
     train_dataset_path = str(dataset_path / 'train.pkl') 
@@ -367,18 +377,22 @@ def main():
     test_complex_graph, _ = train_dataset[0]
     n_rec_atom_features = test_complex_graph.nodes['rec'].data['h_0'].shape[1]
     n_lig_feat = test_complex_graph.nodes['lig'].data['h_0'].shape[1]
-    n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
+
+    if architecture == 'egnn':
+        n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
+    elif architecture == 'gvp':
+        n_kp_feat = args["rec_encoder_gvp"]["out_scalar_size"]
 
     print(f'{n_rec_atom_features=}')
     print(f'{n_lig_feat=}', flush=True)
 
     # get rec encoder config and dynamics config
-    if args['diffusion']['architecture'] == 'gvp':
+    if architecture == 'gvp':
         rec_encoder_config = args["rec_encoder_gvp"]
         rec_encoder_config['in_scalar_size'] = n_rec_atom_features
         args["rec_encoder_gvp"]["in_scalar_size"] = n_rec_atom_features
         dynamics_config = args['dynamics_gvp']
-    elif args['diffusion']['architecture'] == 'egnn' or 'architecture' not in args['diffusion']:
+    elif architecture == 'egnn':
         rec_encoder_config = args["rec_encoder"]
         rec_encoder_config["in_n_node_feat"] = n_rec_atom_features
         args["rec_encoder"]["in_n_node_feat"] = n_rec_atom_features

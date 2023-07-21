@@ -40,6 +40,7 @@ class NoisePredictionBlock(nn.Module):
         scalars, _, vectors = lig_data
         scalars, vectors = self.gvps((scalars, vectors))
         scalars = self.to_scalar_output(scalars)
+        vectors = vectors.squeeze(1)
         return scalars, vectors
 
 class LigRecGVP(nn.Module):

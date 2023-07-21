@@ -107,7 +107,7 @@ class GVPDropout(nn.Module):
     """ Separate dropout for scalars and vectors. """
     def __init__(self, rate):
         super().__init__()
-        self.vector_dropout = nn.Dropout2d(rate)
+        self.vector_dropout = nn.Dropout1d(rate)
         self.feat_dropout = nn.Dropout(rate)
 
     def forward(self, feats, vectors):
@@ -135,7 +135,7 @@ class GVPEdgeConv(nn.Module):
     def __init__(self, edge_type: Tuple[str, str, str], scalar_size: int = 128, vector_size: int = 16,
                   scalar_activation=nn.SiLU, vector_activation=nn.Sigmoid,
                   n_message_gvps: int = 1, n_update_gvps: int = 1,
-                  use_dst_feats: bool = True, rbf_dmax: float = 15, rbf_dim: int = 16,
+                  use_dst_feats: bool = False, rbf_dmax: float = 15, rbf_dim: int = 16,
                   edge_feat_size: int = 0, coords_range=10, message_norm: Union[float, str] = 10, dropout: float = 0.0,):
         
         super().__init__()
@@ -284,12 +284,15 @@ class GVPEdgeConv(nn.Module):
             vec_feats = torch.cat([edges.data["x_diff"].unsqueeze(1), edges.src["v"]], dim=1)
 
         # create scalar features
-        if self.edge_feat_size > 0 and self.use_dst_feats:
-            scalar_feats = torch.cat([edges.src["h"], edges.dst["h"], edges.data['a'], edges.data['d']], dim=1)
-        elif self.edge_feat_size > 0:
-            scalar_feats = torch.cat([edges.src["h"], edges.data['a'], edges.data['d']], dim=1)
-        else:
-            scalar_feats = torch.cat([edges.src["h"], edges.data['d']], dim=1)
+        scalar_feats = [ edges.src['h'], edges.data['d'] ]
+
+        if self.edge_feat_size > 0:
+            scalar_feats.append(edges.data['a'])
+
+        if self.use_dst_feats:
+            scalar_feats.append(edges.dst['h'])
+
+        scalar_feats = torch.cat(scalar_feats, dim=1)
 
         scalar_message, vector_message = self.edge_message((scalar_feats, vec_feats))
 
@@ -447,7 +450,7 @@ class GVPMultiEdgeConv(nn.Module):
             # aggregate vector messages
             update_dict = {}
             for etype in self.etypes:
-                update_dict[etype] = (fn.copy_e("vector_msg", "m"), self.agg_func("m", "vector_msg"),)
+                update_dict[etype] = (fn.copy_e("vec_msg", "m"), self.agg_func("m", "vec_msg"),)
             g.multi_update_all(update_dict, cross_reducer="sum")
 
             # apply dropout, layernorm, and add to original features
@@ -455,7 +458,7 @@ class GVPMultiEdgeConv(nn.Module):
             for ntype in self.dst_ntypes:
                 scalar_feats, vec_feats = g.nodes[ntype].data["h"], g.nodes[ntype].data["v"]
                 scalar_msg = g.nodes[ntype].data["scalar_msg"] / self.norm_values[ntype]
-                vec_msg = g.nodes[ntype].data["vector_msg"] / self.norm_values[ntype]
+                vec_msg = g.nodes[ntype].data["vec_msg"] / self.norm_values[ntype]
                 scalar_msg, vec_msg = self.dropout(scalar_msg, vec_msg)
                 scalar_feats += scalar_msg
                 vec_feats += vec_msg

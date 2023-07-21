@@ -16,18 +16,16 @@ class KeypointInitializer(nn.Module):
 
     """Assigns initial positions and features to keypoint nodes. Also draws receptor -> keypoint edges."""
 
-    def __init__(self, n_keypoints: int, scalar_size: int, vector_size: int, k_closest: int = 0, kp_rad: float = 0):
+    def __init__(self, n_keypoints: int, scalar_size: int, vector_size: int):
         super().__init__()
 
         self.scalar_size = scalar_size
         self.vector_size = vector_size
         self.n_keypoints = n_keypoints
         self.num_heads = 1
-        self.k_closest = k_closest
-        self.kp_rad = kp_rad
 
-        self.src_net = nn.Linear(scalar_size, scalar_size, bias=False)
-        self.dst_net = nn.Linear(scalar_size, scalar_size, bias=False)
+        self.src_net = nn.Linear(scalar_size, scalar_size*self.num_heads, bias=False)
+        self.dst_net = nn.Linear(scalar_size, scalar_size*self.num_heads, bias=False)
 
         # embedding function for the mean node feature before keypoint position generation
         self.keypoint_embedding = nn.Sequential(
@@ -37,11 +35,6 @@ class KeypointInitializer(nn.Module):
         )
 
         self.norm = nn.LayerNorm(scalar_size)
-
-        if self.k_closest > 0:
-            self.graph_type = 'knn'
-        elif self.kp_rad > 0:
-            self.graph_type = 'radius'
 
 
     def forward(self, g: dgl.DGLHeteroGraph, rec_scalar_feats: torch.Tensor, batch_idxs: Dict[str, torch.Tensor]):
@@ -55,18 +48,18 @@ class KeypointInitializer(nn.Module):
             g.nodes['rec'].data['h'] = rec_scalar_feats
 
             # get mean node feature for each graph in the batch
-            mean_node_feats = dgl.readout_nodes(g, 'mean', ntype='rec', feat='h')
+            mean_node_feats = dgl.readout_nodes(g, op='mean', ntype='rec', feat='h')
 
             # transform mean node features into keypoint embeddings
-            keypoint_scalars = self.keypoint_embedding(mean_node_feats).view()
+            keypoint_scalars = self.keypoint_embedding(mean_node_feats)
             keypoint_scalars = rearrange(keypoint_scalars, 'b (k d) -> (b k) d', d=self.scalar_size, k=self.n_keypoints)
 
             # set keypoint features in the graph
             g.nodes['kp'].data['h'] = keypoint_scalars
 
             # get queries/keys
-            ft_src = self.src_net(rec_scalar_feats).view(-1, self.num_heads, self.out_feats) 
-            ft_dst = self.fc_src(keypoint_scalars).view(-1, self.num_heads, self.out_feats)
+            ft_src = self.src_net(rec_scalar_feats).view(-1, self.num_heads, self.scalar_size) 
+            ft_dst = self.dst_net(keypoint_scalars).view(-1, self.num_heads, self.scalar_size)
 
             # Assign features to nodes
             g.srcdata['ft'] = {'rec': ft_src}
@@ -76,7 +69,7 @@ class KeypointInitializer(nn.Module):
             g.apply_edges(fn.u_dot_v('ft', 'ft', 'a'), etype='rk')
 
             # Step 2. edge softmax to compute attention scores
-            a = g.edges['rk'].data['a'] / self.out_feats**0.5
+            a = g.edges['rk'].data['a'] / self.scalar_size**0.5
             a = torch.exp(a)
 
             edges_per_kp = g.batch_num_nodes('rec')[batch_idxs['kp']] # (n_keypoints*batch_size) -> number of edges going to every keypoint
@@ -92,46 +85,13 @@ class KeypointInitializer(nn.Module):
 
             # get keypoint positions
             kp_pos = g.dstdata['agg_u']['kp'].mean(dim=1)
-            g.nodes['kp'].data['x_0'] = kp_pos
-
-            # connect keypoints to surrounding receptor atoms
-            g = self.update_rk_edges(g, batch_idxs)
 
         # for now intialize keypoint scalar and vector features to zero
         kp_scalars = torch.zeros(g.num_nodes('kp'), self.scalar_size, device=device, dtype=torch.float32)
-        kp_vecs = torch.zeros(g.num_nodes('kp'), self.vector_size, device=device, dtype=torch.float32)
+        kp_vecs = torch.zeros(g.num_nodes('kp'), self.vector_size, 3, device=device, dtype=torch.float32)
 
-        return g, kp_pos, kp_scalars, kp_vecs
+        return kp_pos, kp_scalars, kp_vecs
         
-    def update_rk_edges(self, g: dgl.DGLHeteroGraph, batch_idxs: Dict[str, torch.Tensor]):
-
-        kp_pos = g.nodes['kp'].data['x_0']
-        rec_pos = g.nodes['rec'].data['x_0']
-
-        if self.graph_type == 'knn':
-            # find edges of KNN graph where each keypoint node has incoming edges from the K closest receptor nodes
-            rk_idxs = knn(x=rec_pos, y=kp_pos, k=self.k_closest, batch_x=batch_idxs['rec'], batch_y=batch_idxs['kp'])
-        elif self.graph_type == 'radius':
-            rk_idxs = radius(x=rec_pos, y=kp_pos, r=self.kp_rad, batch_x=batch_idxs['rec'], batch_y=batch_idxs['kp'], max_num_neighbors=10)
-
-        # we are going to remove and then add edges which destroy batch information. 
-        # we have to record batch info before mutating graph topology and add it back afterwards
-        batch_num_nodes, batch_num_edges = get_batch_info(g)
-
-        # get number of receptor-keypoint edges for each graph in the batch
-        if self.graph_type == 'knn':
-            batch_num_edges[('rec', 'rk', 'kp')] = torch.ones(g.batch_size, device=g.device, dtype=int)*self.n_keypoints*self.k_closest
-        elif self.graph_type == 'radius':
-            batch_num_edges[('rec', 'rk', 'kp')] = get_edges_per_batch(rk_idxs[0], g.batch_size, batch_idxs['kp'])
-
-        g.remove_edges(g.edges(form='eid', etype='rk'), etype='rk') # remove all receptor-keypoint edges
-        g.add_edges(rk_idxs[1], rk_idxs[0], etype='rk') # add edges that we just computed
-    
-        # reset batch info
-        g.set_batch_num_nodes(batch_num_nodes)
-        g.set_batch_num_edges(batch_num_edges)
-
-        return g
     
 
 class ReceptorEncoderGVP(nn.Module):
@@ -182,6 +142,17 @@ class ReceptorEncoderGVP(nn.Module):
             pass
         elif not isinstance(message_norm, (str, float, int)):
             raise ValueError(f'message norm must be either a float, int, or "mean". Got {message_norm}')
+        
+        # check that either k_closest or kp_rad is non-zero
+        if self.k_closest > 0 and self.kp_rad > 0:
+            raise ValueError('k_closest and kp_rad cannot both be non-zero')
+        elif self.k_closest == 0 and self.kp_rad == 0:
+            raise ValueError('k_closest and kp_rad cannot both be zero')
+
+        if self.k_closest > 0:
+            self.rk_graph_type = 'knn'
+        elif self.kp_rad > 0:
+            self.rk_graph_type = 'radius'
 
         # create functions to embed scalar features to the desired size
         self.scalar_embed = nn.Sequential(
@@ -280,10 +251,16 @@ class ReceptorEncoderGVP(nn.Module):
         # apply receptor-receptor convolutions
         for i in range(self.n_rr_convs):
             src_feats = (rec_scalar_feat, rec_coord_feat, rec_vec_feat)
-            rec_scalar_feat, rec_vec_feat = self.rr_conv_layers[i](g, src_feats=src_feats, edge_feat=edge_feat, z=z)
+            rec_scalar_feat, rec_vec_feat = self.rr_conv_layers[i](g, src_feats=src_feats, edge_feats=edge_feat, z=z)
 
         # get initial keypoint positions
-        g, kp_pos, kp_scalars, kp_vecs = self.keypoint_initializer(g, rec_scalar_feat, batch_idxs)
+        kp_pos, kp_scalars, kp_vecs = self.keypoint_initializer(g, rec_scalar_feat, batch_idxs)
+
+        # set keypoint positions in the graph
+        g.nodes['kp'].data['x_0'] = kp_pos
+
+        # update receptor-keypoint edges
+        g = self.update_rk_edges(g, batch_idxs)
 
         # update scalar and vector features of the keypoint nodes
         for i in range(self.n_rk_convs):
@@ -291,9 +268,8 @@ class ReceptorEncoderGVP(nn.Module):
             dst_feats = (kp_scalars, kp_pos, kp_vecs)
             kp_scalars, kp_vecs = self.rk_conv_layers[i](g, src_feats=src_feats, dst_feats=dst_feats, z=z)
 
-        # set keypoint features in the graph
+        # set keypoint scalars and vectors in the graph
         g.nodes['kp'].data['h_0'] = kp_scalars
-        g.nodes['kp'].data['x_0'] = kp_pos
         g.nodes['kp'].data['v_0'] = kp_vecs
 
         # get batch info 
@@ -312,3 +288,32 @@ class ReceptorEncoderGVP(nn.Module):
         return g
 
 
+    def update_rk_edges(self, g: dgl.DGLHeteroGraph, batch_idxs: Dict[str, torch.Tensor]):
+
+        kp_pos = g.nodes['kp'].data['x_0']
+        rec_pos = g.nodes['rec'].data['x_0']
+
+        if self.rk_graph_type == 'knn':
+            # find edges of KNN graph where each keypoint node has incoming edges from the K closest receptor nodes
+            rk_idxs = knn(x=rec_pos, y=kp_pos, k=self.k_closest, batch_x=batch_idxs['rec'], batch_y=batch_idxs['kp'])
+        elif self.rk_graph_type == 'radius':
+            rk_idxs = radius(x=rec_pos, y=kp_pos, r=self.kp_rad, batch_x=batch_idxs['rec'], batch_y=batch_idxs['kp'], max_num_neighbors=10)
+
+        # we are going to remove and then add edges which destroy batch information. 
+        # we have to record batch info before mutating graph topology and add it back afterwards
+        batch_num_nodes, batch_num_edges = get_batch_info(g)
+
+        # get number of receptor-keypoint edges for each graph in the batch
+        if self.rk_graph_type == 'knn':
+            batch_num_edges[('rec', 'rk', 'kp')] = torch.ones(g.batch_size, device=g.device, dtype=int)*self.n_keypoints*self.k_closest
+        elif self.rk_graph_type == 'radius':
+            batch_num_edges[('rec', 'rk', 'kp')] = get_edges_per_batch(rk_idxs[0], g.batch_size, batch_idxs['kp'])
+
+        g.remove_edges(g.edges(form='eid', etype='rk'), etype='rk') # remove all receptor-keypoint edges
+        g.add_edges(rk_idxs[1], rk_idxs[0], etype='rk') # add edges that we just computed
+    
+        # reset batch info
+        g.set_batch_num_nodes(batch_num_nodes)
+        g.set_batch_num_edges(batch_num_edges)
+
+        return g

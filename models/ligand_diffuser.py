@@ -75,20 +75,6 @@ class LigandDiffuser(nn.Module):
         
         losses = {}
 
-        # compute index pointers for segmented operations
-        # batch_size = complex_graphs.batch_size
-        # node_segidxs = {}
-        # for ntype in complex_graphs.ntypes:
-        #     segidx = torch.zeros(batch_size +1 , dtype=torch.int32, device=complex_graphs.device)
-        #     segidx[1:] = complex_graphs.batch_num_nodes(ntype=ntype)
-        #     node_segidxs[ntype] = torch.cumsum(segidx, 0)
-
-        # edge_segidxs = {}
-        # for etype in complex_graphs.etypes:
-        #     segidx = torch.zeros(batch_size +1 , dtype=torch.int64, device=complex_graphs.device)
-        #     segidx[1:] = complex_graphs.batch_num_edges(etype=etype)
-        #     edge_segidxs[etype] = torch.cumsum(segidx, 0)
-
         # normalize values
         complex_graphs = self.normalize(complex_graphs)
 
@@ -103,7 +89,7 @@ class LigandDiffuser(nn.Module):
         # if we are applying the RL hinge loss, we will need to be able to put receptor atoms and the ligand into the same
         # referance frame. in order to do this, we need the initial COM of the keypoints
         if self.apply_rl_hinge_loss:
-            init_kp_com = dgl.readout_nodes(complex_graphs, feat='x', ntype='kp', op='mean')
+            init_kp_com = dgl.readout_nodes(complex_graphs, feat='x_0', ntype='kp', op='mean')
 
         # compute receptor encoding loss
         losses['rec_encoder'] = self.rec_encoder_loss_fn(complex_graphs, interface_points=interface_points)
