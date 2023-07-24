@@ -256,6 +256,8 @@ class GVPEdgeConv(nn.Module):
 
             # get aggregated scalar and vector messages
             scalar_msg = g.nodes[self.dst_ntype].data["scalar_msg"] / z
+            if isinstance(z, torch.Tensor):
+                z = z.unsqueeze(-1)
             vec_msg = g.nodes[self.dst_ntype].data["vec_msg"] / z
 
             # dropout scalar and vector messages
@@ -401,12 +403,12 @@ class GVPMultiEdgeConv(nn.Module):
         if isinstance(message_norm, str) and message_norm != 'mean':
             invalid_message_norm = True
         elif isinstance(message_norm, (float, int)):
-            if message_norm <= 0:
+            if message_norm < 0:
                 invalid_message_norm = True
         elif isinstance(message_norm, dict):
             if not all( isinstance(val, (float, int)) for val in message_norm.values() ):
                 invalid_message_norm = True
-            if not all( val > 0 for val in message_norm.values() ):
+            if not all( val >= 0 for val in message_norm.values() ):
                 invalid_message_norm = True
             if not all( key in message_norm for key in self.dst_ntypes.keys() ):
                 raise ValueError(f"message_norm dictionary must contain keys for all destination node types. got keys for {message_norm.keys()} but needed keys for {self.dst_ntypes.keys()}")
@@ -414,7 +416,7 @@ class GVPMultiEdgeConv(nn.Module):
         if invalid_message_norm:
             raise ValueError(f"message_norm values must be 'mean' or a positive number, got {message_norm}")
 
-    def forward(self, g: dgl.DGLHeteroGraph, node_feats: Dict[str, Tuple]):
+    def forward(self, g: dgl.DGLHeteroGraph, node_feats: Dict[str, Tuple], batch_idxs: Dict[str, torch.Tensor]):
         
 
         with g.local_scope():
@@ -456,9 +458,22 @@ class GVPMultiEdgeConv(nn.Module):
             # apply dropout, layernorm, and add to original features
             output_feats = {}
             for ntype in self.dst_ntypes:
+
+                # get the normalization value for this node type
+                if self.norm_values[ntype] == 0:
+                    # the norm_value needs to be the average number of edges per node - this means a separate normalization value for every graph in the batch
+                    norm_value = torch.stack([g.batch_num_edges(etype) for etype in self.etypes if etype[-1] == ntype ], dim=0).sum(dim=0) / g.batch_num_nodes(ntype) + 1
+                    norm_value = norm_value[ batch_idxs[ntype] ].unsqueeze(1)
+                else:
+                    norm_value = self.norm_values[ntype]
+
                 scalar_feats, vec_feats = g.nodes[ntype].data["h"], g.nodes[ntype].data["v"]
-                scalar_msg = g.nodes[ntype].data["scalar_msg"] / self.norm_values[ntype]
-                vec_msg = g.nodes[ntype].data["vec_msg"] / self.norm_values[ntype]
+                scalar_msg = g.nodes[ntype].data["scalar_msg"] / norm_value
+
+                if isinstance(norm_value, torch.Tensor):
+                    norm_value = norm_value.unsqueeze(-1)
+                    
+                vec_msg = g.nodes[ntype].data["vec_msg"] / norm_value
                 scalar_msg, vec_msg = self.dropout(scalar_msg, vec_msg)
                 scalar_feats += scalar_msg
                 vec_feats += vec_msg

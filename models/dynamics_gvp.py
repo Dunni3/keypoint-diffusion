@@ -90,11 +90,11 @@ class LigRecGVP(nn.Module):
             n_gvps=n_noise_gvps
         )
 
-    def forward(self, g: dgl.DGLHeteroGraph, node_data: Dict[str, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]):
+    def forward(self, g: dgl.DGLHeteroGraph, node_data: Dict[str, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]], batch_idxs: Dict[str, torch.Tensor]):
 
         # do message passing between ligand atoms and keypoints
         for conv_layer in self.conv_layers:
-            node_data = conv_layer(g, node_data)
+            node_data = conv_layer(g, node_data, batch_idxs)
 
         # predict noise on ligand atoms
         scalar_noise, vector_noise = self.noise_predictor(node_data['lig'])
@@ -192,7 +192,7 @@ class LigRecDynamicsGVP(nn.Module):
             g = self.add_lig_edges(g, lig_batch_idx, kp_batch_idx)
 
             # predict noise
-            eps_h, eps_x = self.noise_predictor(g, node_data)
+            eps_h, eps_x = self.noise_predictor(g, node_data, batch_idxs)
 
             self.remove_lig_edges(g)
 

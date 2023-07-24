@@ -262,6 +262,12 @@ class ReceptorEncoderGVP(nn.Module):
         # update receptor-keypoint edges
         g = self.update_rk_edges(g, batch_idxs)
 
+        # compute the normalization factor for the messages if necessary
+        if self.message_norm == 0:
+            # if messsage_norm is 0, we normalize by the average in-degree of the graph
+            z = g.batch_num_edges(etype='rk') / g.batch_num_nodes('kp')
+            z = z[batch_idxs['kp']].view(-1, 1)
+
         # update scalar and vector features of the keypoint nodes
         for i in range(self.n_rk_convs):
             src_feats = (rec_scalar_feat, rec_coord_feat, rec_vec_feat)
