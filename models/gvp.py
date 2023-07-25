@@ -101,6 +101,10 @@ class GVP(nn.Module):
             gating = _norm_no_nan(Vu)
 
         vectors_out = self.vectors_activation(gating) * Vu
+
+        # if torch.isnan(feats_out).any() or torch.isnan(vectors_out).any():
+        #     raise ValueError("NaNs in GVP forward pass")
+
         return (feats_out, vectors_out)
     
 class GVPDropout(nn.Module):
@@ -121,9 +125,12 @@ class GVPLayerNorm(nn.Module):
         self.feat_norm = nn.LayerNorm(feats_h_size)
 
     def forward(self, feats, vectors):
-        vector_norm = vectors.norm(dim=(-1,-2), keepdim=True)
+
         normed_feats = self.feat_norm(feats)
-        normed_vectors = vectors / (vector_norm + self.eps)
+
+        vn = _norm_no_nan(vectors, axis=-1, keepdims=True, sqrt=False)
+        vn = torch.sqrt(torch.mean(vn, dim=-2, keepdim=True))
+        normed_vectors = vectors / vn
         return normed_feats, normed_vectors
     
 
@@ -243,7 +250,8 @@ class GVPEdgeConv(nn.Module):
             g.apply_edges(fn.u_sub_v("x", "x", "x_diff"), etype=self.edge_type)
 
             # normalize x_diff and compute rbf embedding of edge distance
-            dij = torch.norm(g.edges[self.edge_type].data['x_diff'], dim=-1, keepdim=True)
+            # dij = torch.norm(g.edges[self.edge_type].data['x_diff'], dim=-1, keepdim=True)
+            dij = _norm_no_nan(g.edges[self.edge_type].data['x_diff'], keepdims=True) + 1e-8
             g.edges[self.edge_type].data['x_diff'] = g.edges[self.edge_type].data['x_diff'] / dij
             g.edges[self.edge_type].data['d'] = _rbf(dij.squeeze(1), D_max=self.rbf_dmax, D_count=self.rbf_dim)
 
@@ -320,7 +328,7 @@ class GVPMultiEdgeConv(nn.Module):
         self.n_message_gvps = n_message_gvps
         self.n_update_gvps = n_update_gvps
         self.dropout_rate = dropout
-        self.rbf_dmax = rbf_dim
+        self.rbf_dmax = rbf_dmax
         self.rbf_dim = rbf_dim
 
         # get all node types that are the destination of an edge type
@@ -434,7 +442,8 @@ class GVPMultiEdgeConv(nn.Module):
                 g.apply_edges(fn.u_sub_v("x", "x", "x_diff"), etype=etype)
 
                 # normalize x_diff and compute rbf embedding of edge distance
-                dij = torch.norm(g.edges[etype].data['x_diff'], dim=-1, keepdim=True)
+                # dij = torch.norm(g.edges[etype].data['x_diff'], dim=-1, keepdim=True)
+                dij = _norm_no_nan(g.edges[etype].data['x_diff'], keepdims=True) + 1e-8
                 g.edges[etype].data['x_diff'] = g.edges[etype].data['x_diff'] / dij
                 g.edges[etype].data['d'] = _rbf(dij.squeeze(1), D_max=self.rbf_dmax, D_count=self.rbf_dim)
 
@@ -481,6 +490,10 @@ class GVPMultiEdgeConv(nn.Module):
 
                 # apply node update function
                 scalar_res, vec_res = self.node_update_fns[ntype]((scalar_feats, vec_feats))
+
+                # if torch.isnan(scalar_res).any() or torch.isnan(vec_res).any():
+                #     raise ValueError("NaNs in node update function")
+
                 scalar_res, vec_res = self.dropout(scalar_res, vec_res)
                 scalar_feats += scalar_res
                 vec_feats += vec_res

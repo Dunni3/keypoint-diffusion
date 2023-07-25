@@ -1,29 +1,31 @@
 import argparse
-import sys
-import yaml
+import math
 import pickle
-from collections import defaultdict
-from pathlib import Path
-from datetime import datetime
-import time
 import shutil
-import wandb
+import sys
+import time
 import uuid
 from collections import defaultdict
+from datetime import datetime
 from distutils.util import strtobool
-
-from data_processing.crossdocked.dataset import CrossDockedDataset, get_dataloader
-from models.dynamics import LigRecDynamics
-from models.receptor_encoder import ReceptorEncoder
-from models.ligand_diffuser import LigandDiffuser
-from models.scheduler import Scheduler
-from analysis.metrics import ModelAnalyzer
-from utils import save_model
-import torch
-import numpy as np
+from pathlib import Path
 
 import dgl
+import numpy as np
+import torch
+import yaml
 from dgl.dataloading import GraphDataLoader
+
+import wandb
+from analysis.metrics import ModelAnalyzer
+from data_processing.crossdocked.dataset import (CrossDockedDataset,
+                                                 get_dataloader)
+from models.dynamics import LigRecDynamics
+from models.ligand_diffuser import LigandDiffuser
+from models.receptor_encoder import ReceptorEncoder
+from models.scheduler import Scheduler
+from utils import save_model
+
 
 def parse_arguments():
     p = argparse.ArgumentParser()
@@ -310,8 +312,10 @@ def test_model(model, test_dataloader, args, device):
     return output_losses
 
 def main():
-    script_args, args = parse_arguments()
+
     # torch.autograd.set_detect_anomaly(True)
+
+    script_args, args = parse_arguments()
 
     # determine if we are resuming from a previous run
     resume = script_args.resume is not None
@@ -369,8 +373,8 @@ def main():
     iterations_per_epoch = len(train_dataset) / batch_size
 
     # create dataloaders
-    train_dataloader = get_dataloader(train_dataset, batch_size=batch_size, num_workers=args['training']['num_workers'], shuffle=True)
-    test_dataloader = get_dataloader(test_dataset, batch_size=batch_size, num_workers=args['training']['num_workers'])
+    train_dataloader = get_dataloader(train_dataset, batch_size=batch_size, num_workers=args['training']['num_workers'], shuffle=True, pin_memory=True)
+    test_dataloader = get_dataloader(test_dataset, batch_size=batch_size, num_workers=args['training']['num_workers'], pin_memory=True)
 
     # get number of ligand and receptor atom features
     # test_rec_graph, test_lig_pos, test_lig_feat, test_interface_points = train_dataset[0]
@@ -491,12 +495,19 @@ def main():
     training_start = time.time()
 
     model.train()
-    for epoch_idx in range(args['training']['epochs']):
+    n_epochs = args['training']['epochs']
+    n_epochs_ceil = math.ceil(n_epochs)
+    for epoch_idx in range(n_epochs_ceil):
 
         for iter_idx, iter_data in enumerate(train_dataloader):
             complex_graphs, interface_points = iter_data
 
             current_epoch = epoch_idx + iter_idx/iterations_per_epoch
+            if current_epoch > 6.56943:
+                print(f'current epoch: {current_epoch:.5f}', flush=True)
+
+            if current_epoch > n_epochs:
+                break
 
             # update learning rate
             scheduler.step_lr(current_epoch)
@@ -513,7 +524,18 @@ def main():
             # move data to the gpu
             complex_graphs = complex_graphs.to(device)
             if use_interface_points:
-                interface_points = [ arr.to(device) for arr in interface_points ]
+
+                # get the number of interface points in every sample
+                n_interface_points = [ arr.shape[0] for arr in interface_points ]
+
+                # concatenate interface points into a single array
+                interface_points = torch.cat(interface_points, dim=0)
+
+                # move interface points to the gpu
+                interface_points = interface_points.to(device)
+
+                # split interface points back out into a list of arrays
+                interface_points = torch.split(interface_points, n_interface_points)
 
             optimizer.zero_grad()
             # TODO: add random translations to the complex positions??
