@@ -503,8 +503,8 @@ def main():
             complex_graphs, interface_points = iter_data
 
             current_epoch = epoch_idx + iter_idx/iterations_per_epoch
-            if current_epoch > 6.56943:
-                print(f'current epoch: {current_epoch:.5f}', flush=True)
+            # if current_epoch > 6.56943:
+            #     print(f'current epoch: {current_epoch:.5f}', flush=True)
 
             if current_epoch > n_epochs:
                 break
@@ -512,10 +512,6 @@ def main():
             # update learning rate
             scheduler.step_lr(current_epoch)
             rec_encoder_loss_weight = scheduler.get_rec_enc_weight(current_epoch)
-
-            # TODO: remove this, its just for debugging purposes
-            # if iter_idx < 10:
-            #     print(f'{iter_idx=}, {time.time() - training_start:.2f} seconds since start', flush=True)
 
             # set data type of atom features
             for ntype in ['lig', 'rec']:
@@ -559,6 +555,24 @@ def main():
 
 
             total_loss.backward()
+
+            # if current_epoch > 6.56943:
+            #     nan_grads_found = False
+            #     nan_params = []
+            #     for param_name, param in model.named_parameters():
+            #         if param.grad is None:
+            #              continue
+            #         if param.grad.isnan().any():
+            #             print(f'{param_name} has nan gradient', flush=True)
+            #             nan_grads_found = True
+            #             nan_params.append(param_name)
+            #     if nan_grads_found:
+            #         with open('nan_params.txt', 'w') as f:
+            #             f.write('\n'.join(nan_params))
+            #         raise ValueError('nan grads found')
+            #     sys.exit()
+
+
             if args['training']['clip_grad']:
                 torch.nn.utils.clip_grad_value_(model.parameters(), clip_value=args['training']['clip_value'])
             optimizer.step()

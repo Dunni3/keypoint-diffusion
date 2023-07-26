@@ -107,19 +107,43 @@ class GVP(nn.Module):
 
         return (feats_out, vectors_out)
     
+class _VDropout(nn.Module):
+    '''
+    Vector channel dropout where the elements of each
+    vector channel are dropped together.
+    '''
+    def __init__(self, drop_rate):
+        super(_VDropout, self).__init__()
+        self.drop_rate = drop_rate
+        self.dummy_param = nn.Parameter(torch.empty(0))
+
+    def forward(self, x):
+        '''
+        :param x: `torch.Tensor` corresponding to vector channels
+        '''
+        device = self.dummy_param.device
+        if not self.training:
+            return x
+        mask = torch.bernoulli(
+            (1 - self.drop_rate) * torch.ones(x.shape[:-1], device=device)
+        ).unsqueeze(-1)
+        x = mask * x / (1 - self.drop_rate)
+        return x
+    
 class GVPDropout(nn.Module):
     """ Separate dropout for scalars and vectors. """
     def __init__(self, rate):
         super().__init__()
-        self.vector_dropout = nn.Dropout1d(rate)
+        self.vector_dropout = _VDropout(rate)
         self.feat_dropout = nn.Dropout(rate)
 
     def forward(self, feats, vectors):
         return self.feat_dropout(feats), self.vector_dropout(vectors)
 
+
 class GVPLayerNorm(nn.Module):
     """ Normal layer norm for scalars, nontrainable norm for vectors. """
-    def __init__(self, feats_h_size, eps = 1e-8):
+    def __init__(self, feats_h_size, eps = 1e-5):
         super().__init__()
         self.eps = eps
         self.feat_norm = nn.LayerNorm(feats_h_size)
@@ -129,7 +153,7 @@ class GVPLayerNorm(nn.Module):
         normed_feats = self.feat_norm(feats)
 
         vn = _norm_no_nan(vectors, axis=-1, keepdims=True, sqrt=False)
-        vn = torch.sqrt(torch.mean(vn, dim=-2, keepdim=True))
+        vn = torch.sqrt(torch.mean(vn, dim=-2, keepdim=True) + self.eps ) + self.eps
         normed_vectors = vectors / vn
         return normed_feats, normed_vectors
     
@@ -484,8 +508,8 @@ class GVPMultiEdgeConv(nn.Module):
                     
                 vec_msg = g.nodes[ntype].data["vec_msg"] / norm_value
                 scalar_msg, vec_msg = self.dropout(scalar_msg, vec_msg)
-                scalar_feats += scalar_msg
-                vec_feats += vec_msg
+                scalar_feats = scalar_feats + scalar_msg
+                vec_feats = vec_feats + vec_msg
                 scalar_feats, vec_feats = self.message_layer_norms[ntype](scalar_feats, vec_feats)
 
                 # apply node update function
@@ -495,8 +519,8 @@ class GVPMultiEdgeConv(nn.Module):
                 #     raise ValueError("NaNs in node update function")
 
                 scalar_res, vec_res = self.dropout(scalar_res, vec_res)
-                scalar_feats += scalar_res
-                vec_feats += vec_res
+                scalar_feats = scalar_feats + scalar_res
+                vec_feats = vec_feats + vec_res
                 scalar_feats, vec_feats = self.update_layer_norms[ntype](scalar_feats, vec_feats)
 
                 pos_feats = g.nodes[ntype].data["x"]
