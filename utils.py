@@ -135,6 +135,8 @@ def copy_graph(g: dgl.DGLHeteroGraph, n_copies: int, lig_atoms_per_copy: torch.T
     # transfer over ligand, receptor, and keypoint features
     # TODO: we don't copy edge features. at the time of writing this function, we don't need to bc this function operates only on graphs with encoded recepotrs
     # however, in theory, to fully copy a graph of our complex, we should copy the same-residue edge features on rr edges.
+    # TODO: should we clone the tensors when putting them in the new graph? right now we only use this function
+    # when doing sampling, so maintaining the computational graph is not important, so cloning has no effect
     for idx in range(n_copies):
         for ntype in ['lig', 'rec', 'kp']:
             for feat in g.nodes[ntype].data.keys():

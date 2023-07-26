@@ -81,7 +81,7 @@ dynamics:
   kl_k: 5
 
 dynamics_gvp:
-  vector_dim: 16
+  vector_size: 16
   n_convs: 2
   n_hidden_scalars: 128
   update_kp: True

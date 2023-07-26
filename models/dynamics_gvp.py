@@ -103,7 +103,7 @@ class LigRecGVP(nn.Module):
 
 class LigRecDynamicsGVP(nn.Module):
 
-    def __init__(self, n_lig_scalars, n_kp_scalars, vector_dim: int = 16, n_convs=4, n_hidden_scalars=128, act_fn=nn.SiLU,
+    def __init__(self, n_lig_scalars, n_kp_scalars, vector_size: int = 16, n_convs=4, n_hidden_scalars=128, act_fn=nn.SiLU,
                  message_norm=1, no_cg: bool = False, n_keypoints: int = 20, graph_cutoffs: dict = {}, update_kp: bool = False, 
                  ll_k: int = 0, kl_k: int = 0, n_message_gvps: int = 3, n_update_gvps: int = 2, n_noise_gvps: int = 3, dropout: float = 0.0):
         super().__init__()
@@ -116,7 +116,7 @@ class LigRecDynamicsGVP(nn.Module):
         self.graph_cutoffs = graph_cutoffs
         self.update_kp = update_kp
         self.n_lig_scalars = n_lig_scalars
-        self.vector_dim = vector_dim
+        self.vector_size = vector_size
 
         self.ll_k = ll_k
         self.kl_k = kl_k
@@ -135,7 +135,7 @@ class LigRecDynamicsGVP(nn.Module):
 
         self.noise_predictor = LigRecGVP(
             in_scalar_dim=n_hidden_scalars,
-            in_vector_dim=vector_dim,
+            in_vector_dim=vector_size,
             out_scalar_dim=n_lig_scalars,
             update_kp=update_kp,
             n_convs=n_convs,
@@ -171,7 +171,7 @@ class LigRecDynamicsGVP(nn.Module):
             # set lig/kp features in graph
             g.nodes['lig'].data['h_0'] = lig_scalars
             g.nodes['kp'].data['h_0'] = kp_scalars
-            g.nodes['lig'].data['v_0'] = torch.zeros((lig_scalars.shape[0], self.vector_dim, 3),
+            g.nodes['lig'].data['v_0'] = torch.zeros((lig_scalars.shape[0], self.vector_size, 3),
                                                      device=g.device, dtype=lig_scalars.dtype)
             
             # construct node data for noise predictor
@@ -179,7 +179,7 @@ class LigRecDynamicsGVP(nn.Module):
             node_data['lig'] = (
                 lig_scalars,
                 g.nodes['lig'].data['x_0'],
-                torch.zeros((lig_scalars.shape[0], self.vector_dim, 3),
+                torch.zeros((lig_scalars.shape[0], self.vector_size, 3),
                             device=g.device, dtype=lig_scalars.dtype)
             )
             node_data['kp'] = (

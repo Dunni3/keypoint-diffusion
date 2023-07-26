@@ -59,7 +59,7 @@ rec_encoder_gvp:
   use_sameres_feat: False 
   kp_rad: 0 
   k_closest: 5
-  dropout: 0.2
+  dropout: 0.1
   n_message_gvps: 3 # the number of GVPs to chain together for the message function
   n_update_gvps: 2 # the number of GVPs to chain together for the update function
 

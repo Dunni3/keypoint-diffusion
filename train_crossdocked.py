@@ -95,13 +95,13 @@ def parse_arguments():
 
 
     # args for gvp
-    
-
+    p.add_argument('--dropout', type=float, default=None)
+    p.add_argument('--n_vector_channels', type=int, default=None)
 
     p.add_argument('--max_fake_atom_frac', type=float, default=None)
 
     p.add_argument('--use_tanh', type=str, default=None)
-    p.add_argument('--message_norm', type=float, default=None)
+    p.add_argument('--message_norm', type=str, default=None)
 
     p.add_argument('--config', type=str, default=None)
     p.add_argument('--resume', default=None)
@@ -134,10 +134,14 @@ def parse_arguments():
 
     # override config file args with command line args
     args_dict = vars(args)
+
+    if args.dropout is not None:
+        config_dict[rec_encoder_key]['dropout'] = args.dropout
+        config_dict[dynamics_key]['dropout'] = args.dropout
     
     if args.use_sameres_feat is not None:
         check_bool_int(args.use_sameres_feat)
-        config_dict['rec_encoder']['use_sameres_feat'] = bool(args.use_sameres_feat)
+        config_dict[rec_encoder_key]['use_sameres_feat'] = bool(args.use_sameres_feat)
 
     for arg_name in ['n_kk_convs', 'n_kk_heads']:
         if args_dict[arg_name] is not None:
@@ -214,11 +218,19 @@ def parse_arguments():
         config_dict['graph']['n_keypoints'] = args.n_keypoints
 
     if args.n_convs_encoder is not None:
-        config_dict['rec_encoder']['n_convs'] = args.n_convs_encoder
+        if architecture == 'egnn':
+            key = 'n_convs'
+        elif architecture == 'gvp':
+            key = 'n_rr_convs'
+        config_dict[rec_encoder_key][key] = args.n_convs_encoder
 
     if args.message_norm is not None:
-        config_dict['rec_encoder']['message_norm'] = args.message_norm
-        config_dict['dynamics']['message_norm'] = args.message_norm
+
+        if args.message_norm.isdecimal():
+            args.message_norm = float(args.message_norm)
+
+        config_dict[rec_encoder_key]['message_norm'] = args.message_norm
+        config_dict[dynamics_key]['message_norm'] = args.message_norm
 
     # NOTE: this is a design choice: we are only exploring rec_encoder architectures where n_hidden_feats == n_output_feats
     if args.keypoint_feats is not None:
