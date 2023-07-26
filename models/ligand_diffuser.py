@@ -242,10 +242,11 @@ class LigandDiffuser(nn.Module):
         # get batch indicies of every ligand and keypoint - useful later
         batch_idx = torch.arange(g.batch_size, device=device)
         kp_batch_idx = batch_idx.repeat_interleave(g.batch_num_nodes('kp'))
+        batch_idxs = get_batch_idxs(g)
         # lig_batch_idx = batch_idx.repeat_interleave(g.batch_num_nodes('lig'))
 
         # get keypoints positions/features
-        g = self.rec_encoder(g, kp_batch_idx)
+        g = self.rec_encoder(g, batch_idxs)
 
         # get initial keypoint center of mass
         # init_kp_com = dgl.readout_nodes(g, feat='x_0', op='mean', ntype='kp')

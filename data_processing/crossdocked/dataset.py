@@ -115,6 +115,9 @@ class CrossDockedDataset(dgl.data.DGLDataset):
             else:
                 complex_graph.nodes['lig'].data['h_0'] = lig_feat
         
+        for ntype in ['lig', 'rec']:
+            complex_graph.nodes[ntype].data['h_0'] = complex_graph.nodes[ntype].data['h_0'].float()
+
         return complex_graph, interface_points
 
     def __len__(self):

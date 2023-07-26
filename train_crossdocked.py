@@ -93,6 +93,11 @@ def parse_arguments():
     p.add_argument('--ll_k', type=int, default=None)
     p.add_argument('--kl_k', type=int, default=None)
 
+
+    # args for gvp
+    
+
+
     p.add_argument('--max_fake_atom_frac', type=float, default=None)
 
     p.add_argument('--use_tanh', type=str, default=None)
@@ -113,6 +118,17 @@ def parse_arguments():
     with open(config_file, 'r') as f:
         config_dict = yaml.load(f, Loader=yaml.FullLoader)
 
+
+    architecture = config_dict['diffusion']['architecture'] if 'architecture' in config_dict['diffusion'] else 'egnn'
+    if architecture == 'egnn':
+        dynamics_key = 'dynamics'
+        rec_encoder_key = 'rec_encoder'
+    elif architecture == 'gvp':
+        dynamics_key = 'dynamics_gvp'
+        rec_encoder_key = 'rec_encoder_gvp'
+    else:
+        raise ValueError(f'invalid architecture: {architecture}')
+
     if args.resume is not None:
         config_dict['experiment']['name'] = f"{config_dict['experiment']['name']}_resumed"
 
@@ -123,13 +139,16 @@ def parse_arguments():
         check_bool_int(args.use_sameres_feat)
         config_dict['rec_encoder']['use_sameres_feat'] = bool(args.use_sameres_feat)
 
-    for arg_name in ['n_kk_convs', 'n_kk_heads', 'kp_rad']:
+    for arg_name in ['n_kk_convs', 'n_kk_heads']:
         if args_dict[arg_name] is not None:
             config_dict['rec_encoder'][arg_name] = args_dict[arg_name]
 
+    if args.kp_rad is not None:
+        config_dict[rec_encoder_key]['kp_rad'] = args.kp_rad
+
     for arg_name in ['ll_k', 'kl_k']:
         if args_dict[arg_name] is not None:
-            config_dict['dynamics'][arg_name] = args_dict[arg_name]
+            config_dict[dynamics_key][arg_name] = args_dict[arg_name]
 
     for etype in ['ll', 'rr', 'kk', 'kl']:
         if args_dict[f'{etype}_cutoff'] is not None:
@@ -203,11 +222,14 @@ def parse_arguments():
 
     # NOTE: this is a design choice: we are only exploring rec_encoder architectures where n_hidden_feats == n_output_feats
     if args.keypoint_feats is not None:
-        config_dict['rec_encoder']['out_n_node_feat'] = args.keypoint_feats
-        config_dict['rec_encoder']['hidden_n_node_feat'] = args.keypoint_feats
+        if architecture == 'egnn':
+            config_dict[rec_encoder_key]['out_n_node_feat'] = args.keypoint_feats
+            config_dict[rec_encoder_key]['hidden_n_node_feat'] = args.keypoint_feats
+        elif architecture == 'gvp':
+            config_dict[rec_encoder_key]['out_scalar_size'] = args.keypoint_feats
 
     if args.k_closest is not None:
-        config_dict['rec_encoder']['k_closest'] = args.k_closest
+        config_dict[rec_encoder_key]['k_closest'] = args.k_closest
 
     if args.apply_kp_wise_mlp is not None:
         config_dict['rec_encoder']['apply_kp_wise_mlp'] = args.apply_kp_wise_mlp
@@ -240,7 +262,11 @@ def parse_arguments():
         config_dict['dynamics']['rec_enc_multiplier'] = args.dynamics_rec_enc_multiplier
 
     if args.dynamics_feats is not None:
-        config_dict['dynamics']['hidden_nf'] = args.dynamics_feats
+        if architecture == 'egnn':
+            key = 'hidden_nf'
+        elif architecture == 'gvp':
+            key = 'n_hidden_scalars'
+        config_dict[dynamics_key][key] = args.dynamics_feats
 
     if args.rl_hinge_loss_weight is not None:
         config_dict['training']['rl_hinge_loss_weight'] = args.rl_hinge_loss_weight
@@ -512,10 +538,6 @@ def main():
             # update learning rate
             scheduler.step_lr(current_epoch)
             rec_encoder_loss_weight = scheduler.get_rec_enc_weight(current_epoch)
-
-            # set data type of atom features
-            for ntype in ['lig', 'rec']:
-                complex_graphs.nodes[ntype].data['h_0'] = complex_graphs.nodes[ntype].data['h_0'].float()
 
             # move data to the gpu
             complex_graphs = complex_graphs.to(device)

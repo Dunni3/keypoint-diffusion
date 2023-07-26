@@ -53,14 +53,14 @@ rec_encoder:
 rec_encoder_gvp:
   out_scalar_size: 128
   vector_size: 16
-  n_rr_convs: 3
+  n_rr_convs: 4
   n_rk_convs: 2
   message_norm: 'mean'
   use_sameres_feat: False 
-  kp_rad: 4.0
-  k_closest: 0
+  kp_rad: 0 
+  k_closest: 5
   dropout: 0.2
-  n_message_gvps: 2 # the number of GVPs to chain together for the message function
+  n_message_gvps: 3 # the number of GVPs to chain together for the message function
   n_update_gvps: 2 # the number of GVPs to chain together for the update function
 
 diffusion:
@@ -82,16 +82,16 @@ dynamics:
 
 dynamics_gvp:
   vector_dim: 16
-  n_convs: 3
+  n_convs: 2
   n_hidden_scalars: 128
   update_kp: True
   message_norm: 'mean'
   dropout: 0.2
   ll_k: 0
-  kl_k: 0
-  n_message_gvps: 2 # the number of GVPs to chain together for the message function
+  kl_k: 5
+  n_message_gvps: 3 # the number of GVPs to chain together for the message function
   n_update_gvps: 2 # the number of GVPs to chain together for the update function
-  n_noise_gvps: 3 # the number of GVPs to chain together for the noise prediction block
+  n_noise_gvps: 4 # the number of GVPs to chain together for the noise prediction block
 
 rec_encoder_loss:
   loss_type: 'optimal_transport' # can be optimal_transport, gaussian_repulsion, hinge, or none
@@ -105,11 +105,11 @@ training:
   clip_grad: True
   clip_value: 1.5
   epochs: 3
-  batch_size: 4
+  batch_size: 64
   test_interval: 100 # measured in epochs
   train_metrics_interval: 0.5 # epochs
   save_interval: 100 # epoch
-  sample_interval: 100 # number of epochs between sampling/testing molecules
+  sample_interval: 1 # number of epochs between sampling/testing molecules
   test_epochs: 1 # number of epochs to run when evaluating on the test set
   num_workers: 1
   scheduler:
@@ -122,6 +122,6 @@ training:
 
 sampling_config:
   n_receptors: 1
-  n_replicates: 128
+  n_replicates: 10
   rec_enc_batch_size: 128
   diff_batch_size: 128

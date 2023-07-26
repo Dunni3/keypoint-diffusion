@@ -50,7 +50,8 @@ class GVP(nn.Module):
         hidden_vectors = None,
         feats_activation = nn.SiLU(),
         vectors_activation = nn.Sigmoid(),
-        vector_gating = True
+        vector_gating = True,
+        xavier_init = False
     ):
         super().__init__()
         self.dim_vectors_in = dim_vectors_in
@@ -75,8 +76,15 @@ class GVP(nn.Module):
         )
 
         # branching logic to use old GVP, or GVP with vector gating
+        if vector_gating:
+            self.scalar_to_vector_gates = nn.Linear(dim_feats_out, dim_vectors_out)
+            if xavier_init:
+                nn.init.xavier_uniform_(self.scalar_to_vector_gates.weight, gain=1)
+                nn.init.constant_(self.scalar_to_vector_gates.bias, 0)
+        else:
+            self.scalar_to_vector_gates = None
 
-        self.scalar_to_vector_gates = nn.Linear(dim_feats_out, dim_vectors_out) if vector_gating else None
+        # self.scalar_to_vector_gates = nn.Linear(dim_feats_out, dim_vectors_out) if vector_gating else None
 
     def forward(self, data):
         feats, vectors = data

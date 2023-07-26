@@ -137,10 +137,11 @@ def copy_graph(g: dgl.DGLHeteroGraph, n_copies: int, lig_atoms_per_copy: torch.T
     # however, in theory, to fully copy a graph of our complex, we should copy the same-residue edge features on rr edges.
     for idx in range(n_copies):
         for ntype in ['lig', 'rec', 'kp']:
-            for feat in ['x_0', 'h_0']:
+            for feat in g.nodes[ntype].data.keys():
 
                 if ntype == 'lig' and lig_atoms_per_copy is not None:
-                    val = torch.zeros(lig_atoms_per_copy[idx], g.nodes[ntype].data[feat].shape[1], device=g.device)
+                    dims = g.nodes[ntype].data[feat].shape[1:]
+                    val = torch.zeros(lig_atoms_per_copy[idx], *dims, device=g.device)
                 else:
                     val = g.nodes[ntype].data[feat]
 
