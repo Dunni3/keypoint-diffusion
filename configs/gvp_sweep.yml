@@ -1,12 +1,12 @@
 experiment:
-  name: gvp_test
-  results_dir: sweep_runs/single_runs
+  name: 
+  results_dir: sweep_runs/gvp_sweep
 
 wandb:
   init_kwargs:
     mode: online # options: online, offline, disabled
     project: ligdiff_cluster
-    group: 
+    group: gvp_sweep
   watch_model: False
   watch_kwargs:
     log: # (str) One of "gradients", "parameters", "all", or None
@@ -31,7 +31,7 @@ dataset:
   
 graph:
   n_keypoints: 20
-  graph_cutoffs: {'rr': 3.5, 'rk': 100, 'kk': 8, 'kl': 8, 'll': 6} # i suppose rk isn'y really necessary because we know all r's are connected to all k's...unless...they are not
+  graph_cutoffs: {'rr': 3.5, 'rk': 100, 'kk': 8, 'kl': 8, 'll': 5} # i suppose rk isn'y really necessary because we know all r's are connected to all k's...unless...they are not
 
 rec_encoder:
   n_convs: 4
@@ -77,7 +77,7 @@ dynamics:
   message_norm: 0
   update_kp_feat: False
   norm: True
-  ll_k: 0
+  ll_k: 5
   kl_k: 5
 
 dynamics_gvp:
@@ -86,7 +86,7 @@ dynamics_gvp:
   n_hidden_scalars: 128
   update_kp: True
   message_norm: 'mean'
-  dropout: 0.1
+  dropout: 0.2
   ll_k: 0
   kl_k: 5
   n_message_gvps: 3 # the number of GVPs to chain together for the message function
@@ -104,12 +104,12 @@ training:
   weight_decay: 1.0e-12
   clip_grad: True
   clip_value: 1.5
-  epochs: 20
+  epochs: 1000
   batch_size: 64
   test_interval: 1 # measured in epochs
-  train_metrics_interval: 0.5 # epochs
-  save_interval: 50 # epoch
-  sample_interval: 20 # number of epochs between sampling/testing molecules
+  train_metrics_interval: 0.1 # epochs
+  save_interval: 40 # epoch
+  sample_interval: 30 # number of epochs between sampling/testing molecules
   test_epochs: 1 # number of epochs to run when evaluating on the test set
   num_workers: 4
   scheduler:
@@ -121,7 +121,7 @@ training:
 
 
 sampling_config:
-  n_receptors: 12
-  n_replicates: 10
+  n_receptors: 10
+  n_replicates: 12
   rec_enc_batch_size: 128
   diff_batch_size: 128
