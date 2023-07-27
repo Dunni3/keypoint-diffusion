@@ -4,7 +4,7 @@ experiment:
 
 wandb:
   init_kwargs:
-    mode: online # options: online, offline, disabled
+    mode: disabled # options: online, offline, disabled
     project: ligdiff_cluster
     group: 
   watch_model: False
@@ -59,7 +59,7 @@ rec_encoder_gvp:
   use_sameres_feat: False 
   kp_rad: 0 
   k_closest: 5
-  dropout: 0.1
+  dropout: 0.2
   n_message_gvps: 3 # the number of GVPs to chain together for the message function
   n_update_gvps: 2 # the number of GVPs to chain together for the update function
 
@@ -86,7 +86,7 @@ dynamics_gvp:
   n_hidden_scalars: 128
   update_kp: True
   message_norm: 'mean'
-  dropout: 0.1
+  dropout: 0.2
   ll_k: 0
   kl_k: 5
   n_message_gvps: 3 # the number of GVPs to chain together for the message function
@@ -104,12 +104,12 @@ training:
   weight_decay: 1.0e-12
   clip_grad: True
   clip_value: 1.5
-  epochs: 20
+  epochs: 800
   batch_size: 64
   test_interval: 1 # measured in epochs
   train_metrics_interval: 0.5 # epochs
   save_interval: 50 # epoch
-  sample_interval: 20 # number of epochs between sampling/testing molecules
+  sample_interval: 30 # number of epochs between sampling/testing molecules
   test_epochs: 1 # number of epochs to run when evaluating on the test set
   num_workers: 4
   scheduler:

@@ -310,10 +310,7 @@ class ReceptorEncoderGVP(nn.Module):
         batch_num_nodes, batch_num_edges = get_batch_info(g)
 
         # get number of receptor-keypoint edges for each graph in the batch
-        if self.rk_graph_type == 'knn':
-            batch_num_edges[('rec', 'rk', 'kp')] = torch.ones(g.batch_size, device=g.device, dtype=int)*self.n_keypoints*self.k_closest
-        elif self.rk_graph_type == 'radius':
-            batch_num_edges[('rec', 'rk', 'kp')] = get_edges_per_batch(rk_idxs[0], g.batch_size, batch_idxs['kp'])
+        batch_num_edges[('rec', 'rk', 'kp')] = get_edges_per_batch(rk_idxs[0], g.batch_size, batch_idxs['kp'])
 
         g.remove_edges(g.edges(form='eid', etype='rk'), etype='rk') # remove all receptor-keypoint edges
         g.add_edges(rk_idxs[1], rk_idxs[0], etype='rk') # add edges that we just computed
