@@ -163,7 +163,11 @@ def main():
 
     # get number of ligand and receptor atom features
     n_lig_feat = args['reconstruction']['n_lig_feat']
-    n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
+
+    if architecture == 'egnn':
+        n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
+    elif architecture == 'gvp':
+        n_kp_feat = args["rec_encoder_gvp"]["out_scalar_size"]
 
     # determine if we're using fake atoms
     try:
