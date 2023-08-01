@@ -147,11 +147,23 @@ def main():
     test_dataset_path = str(dataset_path / f'{cmd_args.split}.pkl')
     test_dataset = CrossDockedDataset(name=cmd_args.split, processed_data_file=test_dataset_path, **args['graph'], **args['dataset'])
 
+    # get the model architecture
+    try:
+        architecture = args['diffusion']['architecture']
+    except KeyError:
+        architecture = 'egnn'
+
+    # get rec encoder config and dynamics config
+    if architecture == 'gvp':
+        rec_encoder_config = args["rec_encoder_gvp"]
+        dynamics_config = args['dynamics_gvp']
+    elif architecture == 'egnn':
+        rec_encoder_config = args["rec_encoder"]
+        dynamics_config = args['dynamics']
+
     # get number of ligand and receptor atom features
     n_lig_feat = args['reconstruction']['n_lig_feat']
     n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
-
-    rec_encoder_config = args["rec_encoder"]
 
     # determine if we're using fake atoms
     try:
@@ -165,7 +177,7 @@ def main():
         n_kp_feat,
         processed_dataset_dir=Path(args['dataset']['location']),
         graph_config=args['graph'],
-        dynamics_config=args['dynamics'], 
+        dynamics_config=dynamics_config, 
         rec_encoder_config=rec_encoder_config, 
         rec_encoder_loss_config=args['rec_encoder_loss'],
         use_fake_atoms=use_fake_atoms,
