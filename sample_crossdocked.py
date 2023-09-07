@@ -9,13 +9,13 @@ import shutil
 
 from data_processing.crossdocked.dataset import CrossDockedDataset
 from models.ligand_diffuser import LigandDiffuser
-from utils import write_xyz_file
+from utils import write_xyz_file, copy_graph, get_batch_idxs
 from analysis.molecule_builder import make_mol_openbabel
 from data_processing.make_bindingmoad_pocketfile import write_pocket_file
 
 def parse_arguments():
     p = argparse.ArgumentParser()
-    p.add_argument('--model_dir', type=str, required=True, help='directory of training result for the model')
+    p.add_argument('--model_dir', type=str, default=None, help='directory of training result for the model')
     p.add_argument('--model_file', type=str, default=None, help='Path to file containing model weights. If not specified, the most recently saved weights file in model_dir will be used')
     p.add_argument('--n_replicates', type=int, default=1)
     p.add_argument('--n_complexes', type=int, default=1)
@@ -48,8 +48,6 @@ def make_reference_files(dataset_idx: int, dataset: CrossDockedDataset, output_d
     ref_rec_file, ref_lig_file = dataset.get_files(dataset_idx)
     ref_rec_file = Path(ref_rec_file)
     ref_lig_file = Path(ref_lig_file)
-
-
 
     # get filepath of new ligand and receptor files
     centered_lig_file = output_dir / ref_lig_file.name
@@ -126,14 +124,30 @@ def main():
 
     # create test dataset
     dataset_path = Path(args['dataset']['location']) 
-    test_dataset_path = str(dataset_path / 'test.pkl')
-    test_dataset = CrossDockedDataset(name='test', processed_data_file=test_dataset_path, **args['dataset'])
+    test_dataset_path = str(dataset_path / 'val.pkl')
+    test_dataset = CrossDockedDataset(name='val', processed_data_file=test_dataset_path, **args['graph'], **args['dataset'])
+
+
+    # get the model architecture
+    try:
+        architecture = args['diffusion']['architecture']
+    except KeyError:
+        architecture = 'egnn'
+
+    # get rec encoder config and dynamics config
+    if architecture == 'gvp':
+        rec_encoder_config = args["rec_encoder_gvp"]
+        dynamics_config = args['dynamics_gvp']
+    elif architecture == 'egnn':
+        rec_encoder_config = args["rec_encoder"]
+        dynamics_config = args['dynamics']
 
     # get number of ligand and receptor atom features
     n_lig_feat = args['reconstruction']['n_lig_feat']
-    n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
-
-    rec_encoder_config = args["rec_encoder"]
+    if architecture == 'egnn':
+        n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
+    elif architecture == 'gvp':
+        n_kp_feat = args["rec_encoder_gvp"]["out_scalar_size"]
 
     # determine if we're using fake atoms
     try:
@@ -146,9 +160,11 @@ def main():
         n_lig_feat, 
         n_kp_feat,
         processed_dataset_dir=Path(args['dataset']['location']),
-        dynamics_config=args['dynamics'], 
+        graph_config=args['graph'],
+        dynamics_config=dynamics_config, 
         rec_encoder_config=rec_encoder_config, 
         rec_encoder_loss_config=args['rec_encoder_loss'],
+        use_fake_atoms=use_fake_atoms,
         **args['diffusion']).to(device=device)
 
     # load model weights
@@ -179,6 +195,9 @@ def main():
         # move data to correct device
         ref_graph = ref_graph.to(device)
 
+        # get batch_idxs
+        batch_idxs = get_batch_idxs(ref_graph)
+
         if use_fake_atoms:
             ref_lig_batch_idx = torch.zeros(ref_graph.num_nodes('lig'), device=ref_graph.device)
             ref_graph = model.remove_fake_atoms(ref_graph, ref_lig_batch_idx)
@@ -189,10 +208,10 @@ def main():
         # get receptor keypoints
         # note the diffusion model does receptor encoding internally,
         # so for sampling this is not strictly necessary, but i would like to visualize the position of the keypoints
-        with ref_graph.local_scope():
-            encoded_ref_graph = model.rec_encoder(ref_graph)
+        ref_graph_copy = copy_graph(ref_graph, n_copies=1)[0]
+        with ref_graph_copy.local_scope():
+            encoded_ref_graph = model.rec_encoder(ref_graph_copy, batch_idxs)
             kp_pos = encoded_ref_graph.nodes['kp'].data['x_0']
-            kp_feat = encoded_ref_graph.nodes['kp'].data['h_0']
 
         # sample ligands
         lig_pos, lig_feat = model.sample_given_pocket(ref_graph, n_nodes, visualize=cmd_args.visualize)

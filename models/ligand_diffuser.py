@@ -476,7 +476,7 @@ class LigandDiffuser(nn.Module):
         Returns:
             _type_: _description_
         """        
-        samples = self._sample([rec_graph], n_lig_atoms=[n_lig_atoms], rec_enc_batch_size=rec_enc_batch_size, diff_batch_size=diff_batch_size, visualize=visualize)
+        samples = self._sample([rec_graph], n_lig_atoms=[n_lig_atoms.tolist()], rec_enc_batch_size=rec_enc_batch_size, diff_batch_size=diff_batch_size, visualize=visualize)
         lig_pos = samples[0]['positions']
         lig_feat = samples[0]['features'] 
 
