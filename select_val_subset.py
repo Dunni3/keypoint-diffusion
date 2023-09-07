@@ -2,6 +2,8 @@ from pathlib import Path
 import argparse
 import random
 import pickle
+from typing import List
+from rdkit import Chem
 
 from Bio.PDB import PDBParser
 
@@ -30,6 +32,28 @@ def diffsbdd_can_read(data_dir: Path, ligand_file: Path):
     
     return True
 
+def filter_ligand_sizes(ligand_files: List[Path], min_lig_size: int, max_lig_size: int):
+
+    if min_lig_size is None and max_lig_size is None:
+        return ligand_files
+    elif min_lig_size is None and max_lig_size is not None:
+        min_lig_size = 0
+    elif min_lig_size is not None and max_lig_size is None:
+        max_lig_size = 1000
+    
+    filtered_ligand_files = []
+    for ligand_file in ligand_files:
+
+        # read ligand file into rdkit molecule
+        mol = Chem.MolFromMolFile(str(ligand_file), sanitize=False)
+
+        # get number of heavy atoms
+        n_atoms = mol.GetNumAtoms()
+
+        if n_atoms >= min_lig_size and n_atoms <= max_lig_size:
+            filtered_ligand_files.append(ligand_file)
+    return filtered_ligand_files
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument('ligdiff_data_dir', type=Path)
@@ -37,10 +61,10 @@ if __name__ == "__main__":
     p.add_argument('diffsbdd_ca_data', type=Path)
     p.add_argument('--n_pockets', type=int, default=50)
     p.add_argument('--seed', type=int, default=42)
+    p.add_argument('--min_lig_size', type=int, default=None)
+    p.add_argument('--max_lig_size', type=int, default=None)
     p.add_argument('--ligdiff_file', type=Path, default=Path('val_subset/val_idxs.pkl'))
     p.add_argument('--diffsbdd_file', type=Path, default=Path('val_subset/val_files.txt'))
-
-    
 
     args = p.parse_args()
 
@@ -49,9 +73,9 @@ if __name__ == "__main__":
     structures_dir = args.ligdiff_data_dir / 'val_structures'
     ligand_files = list(structures_dir.glob('[!.]*.sdf'))
     ligand_files = [ Path(x) for x in ligand_files ]
+    ligand_files = filter_ligand_sizes(ligand_files, args.min_lig_size, args.max_lig_size)
 
     selected_ligand_files = random.sample(ligand_files, args.n_pockets+10)
-    # selected_ligand_files = [ x.name for x in selected_ligand_files ]
 
     # confirm all selected ligand files can be read
     selected_ligand_files = [ x for x in selected_ligand_files if diffsbdd_can_read(args.diffsbdd_fullatom_data, x) and diffsbdd_can_read(args.diffsbdd_ca_data, x) ]
