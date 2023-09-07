@@ -120,7 +120,7 @@ def copy_graph(g: dgl.DGLHeteroGraph, n_copies: int, lig_atoms_per_copy: torch.T
         for copy_idx in range(n_copies):
 
             num_nodes_clone = { k:v for k,v in num_nodes_dict.items() }
-            num_nodes_clone['lig'] = lig_atoms_per_copy[copy_idx]
+            num_nodes_clone['lig'] = int(lig_atoms_per_copy[copy_idx])
 
             g_copies.append( dgl.heterograph(e_data_dict, num_nodes_dict=num_nodes_clone, device=g.device) )
 
@@ -133,8 +133,6 @@ def copy_graph(g: dgl.DGLHeteroGraph, n_copies: int, lig_atoms_per_copy: torch.T
 
 
     # transfer over ligand, receptor, and keypoint features
-    # TODO: we don't copy edge features. at the time of writing this function, we don't need to bc this function operates only on graphs with encoded recepotrs
-    # however, in theory, to fully copy a graph of our complex, we should copy the same-residue edge features on rr edges.
     # TODO: should we clone the tensors when putting them in the new graph? right now we only use this function
     # when doing sampling, so maintaining the computational graph is not important, so cloning has no effect
     for idx in range(n_copies):
@@ -145,9 +143,15 @@ def copy_graph(g: dgl.DGLHeteroGraph, n_copies: int, lig_atoms_per_copy: torch.T
                     dims = g.nodes[ntype].data[feat].shape[1:]
                     val = torch.zeros(lig_atoms_per_copy[idx], *dims, device=g.device)
                 else:
-                    val = g.nodes[ntype].data[feat]
+                    val = g.nodes[ntype].data[feat].detach().clone()
 
                 g_copies[idx].nodes[ntype].data[feat] = val
+
+    # transfer over edge features
+    for etype in g.canonical_etypes:
+        for feat in g.edges[etype].data.keys():
+            for idx in range(n_copies):
+                g_copies[idx].edges[etype].data[feat] = g.edges[etype].data[feat].detach().clone()
 
     return g_copies
 
