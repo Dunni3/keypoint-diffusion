@@ -10,6 +10,8 @@ data/bindingmoad_ip_8acut
 data/crossdocked_processed
 data/crossdocked_processed_ip
 icml_samples/
+pub_samples/
+pub_samples_2/
 diffsbdd_test_samples/
 visualize_rich_generation/
 *.slurm

@@ -1,29 +1,31 @@
 import argparse
-import sys
-import yaml
+import math
 import pickle
-from collections import defaultdict
-from pathlib import Path
-from datetime import datetime
-import time
 import shutil
-import wandb
+import sys
+import time
 import uuid
 from collections import defaultdict
+from datetime import datetime
 from distutils.util import strtobool
-
-from data_processing.crossdocked.dataset import CrossDockedDataset, get_dataloader
-from models.dynamics import LigRecDynamics
-from models.receptor_encoder import ReceptorEncoder
-from models.ligand_diffuser import LigandDiffuser
-from models.scheduler import Scheduler
-from analysis.metrics import ModelAnalyzer
-from utils import save_model
-import torch
-import numpy as np
+from pathlib import Path
 
 import dgl
+import numpy as np
+import torch
+import yaml
 from dgl.dataloading import GraphDataLoader
+
+import wandb
+from analysis.metrics import ModelAnalyzer
+from data_processing.crossdocked.dataset import (CrossDockedDataset,
+                                                 get_dataloader)
+from models.dynamics import LigRecDynamics
+from models.ligand_diffuser import LigandDiffuser
+from models.receptor_encoder import ReceptorEncoder
+from models.scheduler import Scheduler
+from utils import save_model
+
 
 def parse_arguments():
     p = argparse.ArgumentParser()
@@ -91,10 +93,15 @@ def parse_arguments():
     p.add_argument('--ll_k', type=int, default=None)
     p.add_argument('--kl_k', type=int, default=None)
 
+
+    # args for gvp
+    p.add_argument('--dropout', type=float, default=None)
+    p.add_argument('--n_vector_channels', type=int, default=None)
+
     p.add_argument('--max_fake_atom_frac', type=float, default=None)
 
     p.add_argument('--use_tanh', type=str, default=None)
-    p.add_argument('--message_norm', type=float, default=None)
+    p.add_argument('--message_norm', type=str, default=None)
 
     p.add_argument('--config', type=str, default=None)
     p.add_argument('--resume', default=None)
@@ -111,23 +118,41 @@ def parse_arguments():
     with open(config_file, 'r') as f:
         config_dict = yaml.load(f, Loader=yaml.FullLoader)
 
+
+    architecture = config_dict['diffusion']['architecture'] if 'architecture' in config_dict['diffusion'] else 'egnn'
+    if architecture == 'egnn':
+        dynamics_key = 'dynamics'
+        rec_encoder_key = 'rec_encoder'
+    elif architecture == 'gvp':
+        dynamics_key = 'dynamics_gvp'
+        rec_encoder_key = 'rec_encoder_gvp'
+    else:
+        raise ValueError(f'invalid architecture: {architecture}')
+
     if args.resume is not None:
         config_dict['experiment']['name'] = f"{config_dict['experiment']['name']}_resumed"
 
     # override config file args with command line args
     args_dict = vars(args)
+
+    if args.dropout is not None:
+        config_dict[rec_encoder_key]['dropout'] = args.dropout
+        config_dict[dynamics_key]['dropout'] = args.dropout
     
     if args.use_sameres_feat is not None:
         check_bool_int(args.use_sameres_feat)
-        config_dict['rec_encoder']['use_sameres_feat'] = bool(args.use_sameres_feat)
+        config_dict[rec_encoder_key]['use_sameres_feat'] = bool(args.use_sameres_feat)
 
-    for arg_name in ['n_kk_convs', 'n_kk_heads', 'kp_rad']:
+    for arg_name in ['n_kk_convs', 'n_kk_heads']:
         if args_dict[arg_name] is not None:
             config_dict['rec_encoder'][arg_name] = args_dict[arg_name]
 
+    if args.kp_rad is not None:
+        config_dict[rec_encoder_key]['kp_rad'] = args.kp_rad
+
     for arg_name in ['ll_k', 'kl_k']:
         if args_dict[arg_name] is not None:
-            config_dict['dynamics'][arg_name] = args_dict[arg_name]
+            config_dict[dynamics_key][arg_name] = args_dict[arg_name]
 
     for etype in ['ll', 'rr', 'kk', 'kl']:
         if args_dict[f'{etype}_cutoff'] is not None:
@@ -193,19 +218,30 @@ def parse_arguments():
         config_dict['graph']['n_keypoints'] = args.n_keypoints
 
     if args.n_convs_encoder is not None:
-        config_dict['rec_encoder']['n_convs'] = args.n_convs_encoder
+        if architecture == 'egnn':
+            key = 'n_convs'
+        elif architecture == 'gvp':
+            key = 'n_rr_convs'
+        config_dict[rec_encoder_key][key] = args.n_convs_encoder
 
     if args.message_norm is not None:
-        config_dict['rec_encoder']['message_norm'] = args.message_norm
-        config_dict['dynamics']['message_norm'] = args.message_norm
+
+        if args.message_norm.isdecimal():
+            args.message_norm = float(args.message_norm)
+
+        config_dict[rec_encoder_key]['message_norm'] = args.message_norm
+        config_dict[dynamics_key]['message_norm'] = args.message_norm
 
     # NOTE: this is a design choice: we are only exploring rec_encoder architectures where n_hidden_feats == n_output_feats
     if args.keypoint_feats is not None:
-        config_dict['rec_encoder']['out_n_node_feat'] = args.keypoint_feats
-        config_dict['rec_encoder']['hidden_n_node_feat'] = args.keypoint_feats
+        if architecture == 'egnn':
+            config_dict[rec_encoder_key]['out_n_node_feat'] = args.keypoint_feats
+            config_dict[rec_encoder_key]['hidden_n_node_feat'] = args.keypoint_feats
+        elif architecture == 'gvp':
+            config_dict[rec_encoder_key]['out_scalar_size'] = args.keypoint_feats
 
     if args.k_closest is not None:
-        config_dict['rec_encoder']['k_closest'] = args.k_closest
+        config_dict[rec_encoder_key]['k_closest'] = args.k_closest
 
     if args.apply_kp_wise_mlp is not None:
         config_dict['rec_encoder']['apply_kp_wise_mlp'] = args.apply_kp_wise_mlp
@@ -238,7 +274,11 @@ def parse_arguments():
         config_dict['dynamics']['rec_enc_multiplier'] = args.dynamics_rec_enc_multiplier
 
     if args.dynamics_feats is not None:
-        config_dict['dynamics']['hidden_nf'] = args.dynamics_feats
+        if architecture == 'egnn':
+            key = 'hidden_nf'
+        elif architecture == 'gvp':
+            key = 'n_hidden_scalars'
+        config_dict[dynamics_key][key] = args.dynamics_feats
 
     if args.rl_hinge_loss_weight is not None:
         config_dict['training']['rl_hinge_loss_weight'] = args.rl_hinge_loss_weight
@@ -269,6 +309,10 @@ def test_model(model, test_dataloader, args, device):
 
     for _ in range(args['training']['test_epochs']):
         for complex_graphs, interface_points in test_dataloader:
+
+            # set data type of atom features
+            for ntype in ['lig', 'rec']:
+                complex_graphs.nodes[ntype].data['h_0'] = complex_graphs.nodes[ntype].data['h_0'].float()
 
             complex_graphs = complex_graphs.to(device)
             if args['rec_encoder_loss']['use_interface_points']:
@@ -306,8 +350,10 @@ def test_model(model, test_dataloader, args, device):
     return output_losses
 
 def main():
-    script_args, args = parse_arguments()
+
     # torch.autograd.set_detect_anomaly(True)
+
+    script_args, args = parse_arguments()
 
     # determine if we are resuming from a previous run
     resume = script_args.resume is not None
@@ -348,6 +394,12 @@ def main():
     # get batch size
     batch_size = args['training']['batch_size']
 
+    # get the model architecture
+    try:
+        architecture = args['diffusion']['architecture']
+    except KeyError:
+        architecture = 'egnn'
+
     # create datasets
     dataset_path = Path(args['dataset']['location']) 
     train_dataset_path = str(dataset_path / 'train.pkl') 
@@ -359,22 +411,34 @@ def main():
     iterations_per_epoch = len(train_dataset) / batch_size
 
     # create dataloaders
-    train_dataloader = get_dataloader(train_dataset, batch_size=batch_size, num_workers=args['training']['num_workers'], shuffle=True)
-    test_dataloader = get_dataloader(test_dataset, batch_size=batch_size, num_workers=args['training']['num_workers'])
+    train_dataloader = get_dataloader(train_dataset, batch_size=batch_size, num_workers=args['training']['num_workers'], shuffle=True, pin_memory=True)
+    test_dataloader = get_dataloader(test_dataset, batch_size=batch_size, num_workers=args['training']['num_workers'], pin_memory=True)
 
     # get number of ligand and receptor atom features
     # test_rec_graph, test_lig_pos, test_lig_feat, test_interface_points = train_dataset[0]
     test_complex_graph, _ = train_dataset[0]
     n_rec_atom_features = test_complex_graph.nodes['rec'].data['h_0'].shape[1]
     n_lig_feat = test_complex_graph.nodes['lig'].data['h_0'].shape[1]
-    n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
+
+    if architecture == 'egnn':
+        n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
+    elif architecture == 'gvp':
+        n_kp_feat = args["rec_encoder_gvp"]["out_scalar_size"]
 
     print(f'{n_rec_atom_features=}')
     print(f'{n_lig_feat=}', flush=True)
 
-    rec_encoder_config = args["rec_encoder"]
-    rec_encoder_config["in_n_node_feat"] = n_rec_atom_features
-    args["rec_encoder"]["in_n_node_feat"] = n_rec_atom_features
+    # get rec encoder config and dynamics config
+    if architecture == 'gvp':
+        rec_encoder_config = args["rec_encoder_gvp"]
+        rec_encoder_config['in_scalar_size'] = n_rec_atom_features
+        args["rec_encoder_gvp"]["in_scalar_size"] = n_rec_atom_features
+        dynamics_config = args['dynamics_gvp']
+    elif architecture == 'egnn':
+        rec_encoder_config = args["rec_encoder"]
+        rec_encoder_config["in_n_node_feat"] = n_rec_atom_features
+        args["rec_encoder"]["in_n_node_feat"] = n_rec_atom_features
+        dynamics_config = args['dynamics']
 
     # determine if we're using fake atoms
     try:
@@ -394,7 +458,7 @@ def main():
         n_kp_feat,
         processed_dataset_dir=Path(args['dataset']['location']), # TODO: on principle, i don't like that our model needs access to the processed data dir for which it was trained.. need to fix/reorganize to avoid this
         graph_config=args['graph'],
-        dynamics_config=args['dynamics'], 
+        dynamics_config=dynamics_config, 
         rec_encoder_config=rec_encoder_config, 
         rec_encoder_loss_config=args['rec_encoder_loss'],
         use_fake_atoms=use_fake_atoms,
@@ -469,29 +533,39 @@ def main():
     training_start = time.time()
 
     model.train()
-    for epoch_idx in range(args['training']['epochs']):
+    n_epochs = args['training']['epochs']
+    n_epochs_ceil = math.ceil(n_epochs)
+    for epoch_idx in range(n_epochs_ceil):
 
         for iter_idx, iter_data in enumerate(train_dataloader):
             complex_graphs, interface_points = iter_data
 
             current_epoch = epoch_idx + iter_idx/iterations_per_epoch
+            # if current_epoch > 6.56943:
+            #     print(f'current epoch: {current_epoch:.5f}', flush=True)
+
+            if current_epoch > n_epochs:
+                break
 
             # update learning rate
             scheduler.step_lr(current_epoch)
             rec_encoder_loss_weight = scheduler.get_rec_enc_weight(current_epoch)
 
-            # TODO: remove this, its just for debugging purposes
-            # if iter_idx < 10:
-            #     print(f'{iter_idx=}, {time.time() - training_start:.2f} seconds since start', flush=True)
-
-            # set data type of atom features
-            for ntype in ['lig', 'rec']:
-                complex_graphs.nodes[ntype].data['h_0'] = complex_graphs.nodes[ntype].data['h_0'].float()
-
             # move data to the gpu
             complex_graphs = complex_graphs.to(device)
             if use_interface_points:
-                interface_points = [ arr.to(device) for arr in interface_points ]
+
+                # get the number of interface points in every sample
+                n_interface_points = [ arr.shape[0] for arr in interface_points ]
+
+                # concatenate interface points into a single array
+                interface_points = torch.cat(interface_points, dim=0)
+
+                # move interface points to the gpu
+                interface_points = interface_points.to(device)
+
+                # split interface points back out into a list of arrays
+                interface_points = torch.split(interface_points, n_interface_points)
 
             optimizer.zero_grad()
             # TODO: add random translations to the complex positions??
@@ -515,6 +589,24 @@ def main():
 
 
             total_loss.backward()
+
+            # if current_epoch > 6.56943:
+            #     nan_grads_found = False
+            #     nan_params = []
+            #     for param_name, param in model.named_parameters():
+            #         if param.grad is None:
+            #              continue
+            #         if param.grad.isnan().any():
+            #             print(f'{param_name} has nan gradient', flush=True)
+            #             nan_grads_found = True
+            #             nan_params.append(param_name)
+            #     if nan_grads_found:
+            #         with open('nan_params.txt', 'w') as f:
+            #             f.write('\n'.join(nan_params))
+            #         raise ValueError('nan grads found')
+            #     sys.exit()
+
+
             if args['training']['clip_grad']:
                 torch.nn.utils.clip_grad_value_(model.parameters(), clip_value=args['training']['clip_value'])
             optimizer.step()

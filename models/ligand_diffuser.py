@@ -13,14 +13,16 @@ from torch_scatter import segment_coo, segment_csr
 from losses.rec_encoder_loss import ReceptorEncoderLoss
 from losses.dist_hinge_loss import DistanceHingeLoss
 from models.dynamics import LigRecDynamics
+from models.dynamics_gvp import LigRecDynamicsGVP
 from models.receptor_encoder import ReceptorEncoder
+from models.receptor_encoder_gvp import ReceptorEncoderGVP
 from models.n_nodes_dist import LigandSizeDistribution
-from utils import get_batch_info, get_nodes_per_batch, copy_graph
+from utils import get_batch_info, get_nodes_per_batch, copy_graph, get_batch_idxs
 from torch_scatter import segment_csr
 
 class LigandDiffuser(nn.Module):
 
-    def __init__(self, atom_nf, rec_nf, processed_dataset_dir: Path, n_timesteps: int = 1000, keypoint_centered=False, graph_config={},
+    def __init__(self, atom_nf, rec_nf, processed_dataset_dir: Path, n_timesteps: int = 1000, keypoint_centered=False, architecture: str = 'egnn', graph_config={},
     dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, precision=1e-4, lig_feat_norm_constant=1, rl_dist_threshold=0, use_fake_atoms=False):
         super().__init__()
 
@@ -31,6 +33,11 @@ class LigandDiffuser(nn.Module):
         self.n_timesteps = n_timesteps
         self.lig_feat_norm_constant = lig_feat_norm_constant
         self.use_fake_atoms = use_fake_atoms
+
+        # check architecture
+        if architecture not in ['egnn', 'gvp']:
+            raise ValueError(f'Unsupported architecture: {architecture}')
+        self.architecture = architecture
         
         # create the receptor -> ligand hinge loss if called for
         if rl_dist_threshold > 0:
@@ -45,13 +52,22 @@ class LigandDiffuser(nn.Module):
         # create noise schedule and dynamics model
         self.gamma = PredefinedNoiseSchedule(noise_schedule='polynomial_2', timesteps=n_timesteps, precision=precision)
 
-        if 'no_cg' in rec_encoder_config:        
-            self.dynamics = LigRecDynamics(atom_nf, rec_nf, no_cg=rec_encoder_config['no_cg'], **graph_config, **dynamics_config)
-        else:
-            self.dynamics = LigRecDynamics(atom_nf, rec_nf, **graph_config, **dynamics_config)
+        if 'no_cg' in rec_encoder_config:
+            dynamics_config['no_cg'] = rec_encoder_config['no_cg']
 
-        # create receptor encoder and its loss function
-        self.rec_encoder = ReceptorEncoder(**graph_config, **rec_encoder_config)
+        if architecture == 'egnn':
+            dynamics_class = LigRecDynamics
+        else:
+            dynamics_class = LigRecDynamicsGVP
+
+        self.dynamics = dynamics_class(atom_nf, rec_nf, **graph_config, **dynamics_config)
+
+        # create receptor encoder
+        if architecture == 'egnn':
+            self.rec_encoder = ReceptorEncoder(**graph_config, **rec_encoder_config)
+        else:
+            self.rec_encoder = ReceptorEncoderGVP(**graph_config, **rec_encoder_config)
+        # create receptor encoder loss function
         self.rec_encoder_loss_fn = ReceptorEncoderLoss(**rec_encoder_loss_config)
 
     def forward(self, complex_graphs: dgl.DGLHeteroGraph, interface_points: List[torch.Tensor]):
@@ -59,44 +75,27 @@ class LigandDiffuser(nn.Module):
         
         losses = {}
 
-        # compute index pointers for segmented operations
-        # batch_size = complex_graphs.batch_size
-        # node_segidxs = {}
-        # for ntype in complex_graphs.ntypes:
-        #     segidx = torch.zeros(batch_size +1 , dtype=torch.int32, device=complex_graphs.device)
-        #     segidx[1:] = complex_graphs.batch_num_nodes(ntype=ntype)
-        #     node_segidxs[ntype] = torch.cumsum(segidx, 0)
-
-        # edge_segidxs = {}
-        # for etype in complex_graphs.etypes:
-        #     segidx = torch.zeros(batch_size +1 , dtype=torch.int64, device=complex_graphs.device)
-        #     segidx[1:] = complex_graphs.batch_num_edges(etype=etype)
-        #     edge_segidxs[etype] = torch.cumsum(segidx, 0)
-
         # normalize values
         complex_graphs = self.normalize(complex_graphs)
 
         batch_size = complex_graphs.batch_size
         device = complex_graphs.device
 
-        # get batch indicies of every ligand and keypoint - useful later
-        batch_idx = torch.arange(batch_size, device=device)
-        lig_batch_idx = batch_idx.repeat_interleave(complex_graphs.batch_num_nodes('lig'))
-        kp_batch_idx = batch_idx.repeat_interleave(complex_graphs.batch_num_nodes('kp'))
+        batch_idxs = get_batch_idxs(complex_graphs)
                 
         # encode the receptor
-        complex_graphs = self.rec_encoder(complex_graphs, kp_batch_idx)
+        complex_graphs = self.rec_encoder(complex_graphs, batch_idxs)
 
         # if we are applying the RL hinge loss, we will need to be able to put receptor atoms and the ligand into the same
         # referance frame. in order to do this, we need the initial COM of the keypoints
         if self.apply_rl_hinge_loss:
-            init_kp_com = dgl.readout_nodes(complex_graphs, feat='x', ntype='kp', op='mean')
+            init_kp_com = dgl.readout_nodes(complex_graphs, feat='x_0', ntype='kp', op='mean')
 
         # compute receptor encoding loss
         losses['rec_encoder'] = self.rec_encoder_loss_fn(complex_graphs, interface_points=interface_points)
 
         # remove ligand COM from receptor/ligand complex
-        complex_graphs = self.remove_com(complex_graphs, lig_batch_idx, kp_batch_idx, com='ligand')
+        complex_graphs = self.remove_com(complex_graphs, batch_idxs['lig'], batch_idxs['kp'], com='ligand')
 
         # sample timepoints for each item in the batch
         t = torch.randint(0, self.n_timesteps, size=(batch_size,), device=device).float() # timesteps
@@ -110,10 +109,10 @@ class LigandDiffuser(nn.Module):
         
         # construct noisy versions of the ligand
         gamma_t = self.gamma(t).to(device=device)
-        complex_graphs = self.noised_representation(complex_graphs, lig_batch_idx, kp_batch_idx, eps, gamma_t)
+        complex_graphs = self.noised_representation(complex_graphs, batch_idxs['lig'], batch_idxs['kp'], eps, gamma_t)
 
         # predict the noise that was added
-        eps_h_pred, eps_x_pred = self.dynamics(complex_graphs, t, lig_batch_idx, kp_batch_idx)
+        eps_h_pred, eps_x_pred = self.dynamics(complex_graphs, t, batch_idxs)
 
         # compute hinge loss if necessary
         if self.apply_rl_hinge_loss:
@@ -121,11 +120,11 @@ class LigandDiffuser(nn.Module):
             with complex_graphs.local_scope():
 
                 # predict denoised ligand
-                g_denoised = self.denoised_representation(complex_graphs, lig_batch_idx, kp_batch_idx, eps_x_pred, eps_h_pred, gamma_t)
+                g_denoised = self.denoised_representation(complex_graphs, batch_idxs['lig'], batch_idxs['kp'], eps_x_pred, eps_h_pred, gamma_t)
 
                 # translate ligand back to intitial frame of reference
-                g_denoised = self.remove_com(g_denoised, lig_batch_idx, kp_batch_idx, com='receptor')
-                g_denoised.nodes['lig'].data['x_0'] = g_denoised.nodes['lig'].data['x_0'] + init_kp_com[lig_batch_idx]
+                g_denoised = self.remove_com(g_denoised, batch_idxs['lig'], batch_idxs['kp'], com='receptor')
+                g_denoised.nodes['lig'].data['x_0'] = g_denoised.nodes['lig'].data['x_0'] + init_kp_com[batch_idxs['lig']]
 
                 # compute hinge loss between ligand atom position and receptor atom positions
                 rl_hinge_loss = 0
@@ -243,10 +242,11 @@ class LigandDiffuser(nn.Module):
         # get batch indicies of every ligand and keypoint - useful later
         batch_idx = torch.arange(g.batch_size, device=device)
         kp_batch_idx = batch_idx.repeat_interleave(g.batch_num_nodes('kp'))
+        batch_idxs = get_batch_idxs(g)
         # lig_batch_idx = batch_idx.repeat_interleave(g.batch_num_nodes('lig'))
 
         # get keypoints positions/features
-        g = self.rec_encoder(g, kp_batch_idx)
+        g = self.rec_encoder(g, batch_idxs)
 
         # get initial keypoint center of mass
         # init_kp_com = dgl.readout_nodes(g, feat='x_0', op='mean', ntype='kp')
@@ -341,14 +341,10 @@ class LigandDiffuser(nn.Module):
         # get initial keypoint center of mass
         init_kp_com = dgl.readout_nodes(g, feat='x_0', op='mean', ntype='kp')
         
-        # get batch indicies of every ligand and keypoint - useful later
-        batch_idx = torch.arange(g.batch_size, device=device)
-        lig_batch_idx = batch_idx.repeat_interleave(g.batch_num_nodes('lig'))
-        kp_batch_idx = batch_idx.repeat_interleave(g.batch_num_nodes('kp'))
-        node_batch_idx_dict = {
-            'lig': lig_batch_idx,
-            'kp': kp_batch_idx
-        }
+        # get batch indicies of every node
+        batch_idxs = get_batch_idxs(g)
+        lig_batch_idx = batch_idxs['lig']
+        kp_batch_idx = batch_idxs['kp']
 
         # Determine the initial coordinate frame for sampling. If an initial ligand position is not specified, we will use the center of mass of the receptor atoms.
         if init_lig_pos is not None:
@@ -405,7 +401,7 @@ class LigandDiffuser(nn.Module):
             s_arr = s_arr / self.n_timesteps
             t_arr = t_arr / self.n_timesteps
 
-            g = self.sample_p_zs_given_zt(s_arr, t_arr, g, lig_batch_idx, kp_batch_idx)
+            g = self.sample_p_zs_given_zt(s_arr, t_arr, g, batch_idxs)
             # if g.batch_num_edges('ll').shape[0] != g.batch_size:
             #     print('problem!')
             if visualize:
@@ -441,7 +437,7 @@ class LigandDiffuser(nn.Module):
 
         # add initial keypoint COM to system, bringing us back into the input frame of reference
         for ntype in ['lig', 'kp']:
-            g.nodes[ntype].data['x_0'] = g.nodes[ntype].data['x_0'] + init_kp_com[ node_batch_idx_dict[ntype] ]
+            g.nodes[ntype].data['x_0'] = g.nodes[ntype].data['x_0'] + init_kp_com[ batch_idxs[ntype] ]
             
         # unnormalize features
         g = self.unnormalize(g)
@@ -480,7 +476,7 @@ class LigandDiffuser(nn.Module):
         Returns:
             _type_: _description_
         """        
-        samples = self._sample([rec_graph], n_lig_atoms=[n_lig_atoms], rec_enc_batch_size=rec_enc_batch_size, diff_batch_size=diff_batch_size, visualize=visualize)
+        samples = self._sample([rec_graph], n_lig_atoms=[n_lig_atoms.tolist()], rec_enc_batch_size=rec_enc_batch_size, diff_batch_size=diff_batch_size, visualize=visualize)
         lig_pos = samples[0]['positions']
         lig_feat = samples[0]['features'] 
 
@@ -495,10 +491,12 @@ class LigandDiffuser(nn.Module):
         samples = self._sample(ref_graphs=ref_graphs, n_lig_atoms=n_lig_atoms, rec_enc_batch_size=rec_enc_batch_size, diff_batch_size=diff_batch_size)
         return samples
 
-    def sample_p_zs_given_zt(self, s: torch.Tensor, t: torch.Tensor, g: dgl.heterograph, lig_batch_idx: torch.Tensor, kp_batch_idx: torch.Tensor):
+    def sample_p_zs_given_zt(self, s: torch.Tensor, t: torch.Tensor, g: dgl.heterograph, batch_idxs: Dict[str, torch.Tensor]):
 
         n_samples = g.batch_size
         device = g.device
+        lig_batch_idx = batch_idxs['lig']
+        kp_batch_idx = batch_idxs['kp']
 
         # compute the alpha and sigma terms that define p(z_s | z_t)
         gamma_s = self.gamma(s)
@@ -509,7 +507,7 @@ class LigandDiffuser(nn.Module):
         sigma_t = self.sigma(gamma_t)
 
         # predict the noise that we should remove from this example, epsilon
-        eps_h, eps_x = self.dynamics(g, t, lig_batch_idx, kp_batch_idx)
+        eps_h, eps_x = self.dynamics(g, t, batch_idxs)
 
         var_terms = sigma2_t_given_s / alpha_t_given_s / sigma_t
 
