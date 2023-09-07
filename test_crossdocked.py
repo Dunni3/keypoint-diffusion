@@ -153,6 +153,11 @@ def main():
     except KeyError:
         architecture = 'egnn'
 
+    try:
+        rec_encoder_type = args['diffusion']['rec_encoder_type']
+    except KeyError:
+        rec_encoder_type = 'learned'
+
     # get rec encoder config and dynamics config
     if architecture == 'gvp':
         rec_encoder_config = args["rec_encoder_gvp"]
@@ -164,10 +169,13 @@ def main():
     # get number of ligand and receptor atom features
     n_lig_feat = args['reconstruction']['n_lig_feat']
 
-    if architecture == 'egnn':
-        n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
-    elif architecture == 'gvp':
-        n_kp_feat = args["rec_encoder_gvp"]["out_scalar_size"]
+    if rec_encoder_type == 'learned':
+        if architecture == 'egnn':
+            n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
+        elif architecture == 'gvp':
+            n_kp_feat = args["rec_encoder_gvp"]["out_scalar_size"]
+    else:
+        n_kp_feat = args['reconstruction']['n_rec_atom_feat']
 
     # determine if we're using fake atoms
     try:

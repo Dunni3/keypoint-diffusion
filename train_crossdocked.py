@@ -420,10 +420,18 @@ def main():
     n_rec_atom_features = test_complex_graph.nodes['rec'].data['h_0'].shape[1]
     n_lig_feat = test_complex_graph.nodes['lig'].data['h_0'].shape[1]
 
-    if architecture == 'egnn':
-        n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
-    elif architecture == 'gvp':
-        n_kp_feat = args["rec_encoder_gvp"]["out_scalar_size"]
+    try:
+        rec_encoder_type = args['diffusion']['rec_encoder_type']
+    except KeyError:
+        rec_encoder_type = 'learned'
+
+    if rec_encoder_type == 'learned':
+        if architecture == 'egnn':
+            n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
+        elif architecture == 'gvp':
+            n_kp_feat = args["rec_encoder_gvp"]["out_scalar_size"]
+    else:
+        n_kp_feat = n_rec_atom_features
 
     print(f'{n_rec_atom_features=}')
     print(f'{n_lig_feat=}', flush=True)

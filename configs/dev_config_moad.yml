@@ -69,6 +69,7 @@ diffusion:
   lig_feat_norm_constant: 1
   rl_dist_threshold: 0
   architecture: 'gvp' # which GNN architecture to use. can be gvp or egnn
+  rec_encoder_type: 'fixed' # can be learned or fixed
 
 dynamics:
   n_layers: 6
@@ -105,7 +106,7 @@ training:
   clip_grad: True
   clip_value: 1.5
   epochs: 3
-  batch_size: 64
+  batch_size: 32
   test_interval: 100 # measured in epochs
   train_metrics_interval: 0.1 # epochs
   save_interval: 100 # epoch

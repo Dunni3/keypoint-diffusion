@@ -16,14 +16,15 @@ from models.dynamics import LigRecDynamics
 from models.dynamics_gvp import LigRecDynamicsGVP
 from models.receptor_encoder import ReceptorEncoder
 from models.receptor_encoder_gvp import ReceptorEncoderGVP
+from models.receptor_encoder_fixed import FixedReceptorEncoder
 from models.n_nodes_dist import LigandSizeDistribution
 from utils import get_batch_info, get_nodes_per_batch, copy_graph, get_batch_idxs
 from torch_scatter import segment_csr
 
 class LigandDiffuser(nn.Module):
 
-    def __init__(self, atom_nf, rec_nf, processed_dataset_dir: Path, n_timesteps: int = 1000, keypoint_centered=False, architecture: str = 'egnn', graph_config={},
-    dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, precision=1e-4, lig_feat_norm_constant=1, rl_dist_threshold=0, use_fake_atoms=False):
+    def __init__(self, atom_nf, rec_nf, processed_dataset_dir: Path, n_timesteps: int = 1000, keypoint_centered=False, architecture: str = 'egnn', rec_encoder_type: str = 'learned',
+                 graph_config={}, dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, precision=1e-4, lig_feat_norm_constant=1, rl_dist_threshold=0, use_fake_atoms=False):
         super().__init__()
 
         # NOTE: keypoint_centered is deprecated. This flag no longer has any effect. It is kept as an argument for backwards compatibility with previously trained models.
@@ -33,6 +34,7 @@ class LigandDiffuser(nn.Module):
         self.n_timesteps = n_timesteps
         self.lig_feat_norm_constant = lig_feat_norm_constant
         self.use_fake_atoms = use_fake_atoms
+        self.rec_encoder_type = rec_encoder_type
 
         # check architecture
         if architecture not in ['egnn', 'gvp']:
@@ -63,11 +65,25 @@ class LigandDiffuser(nn.Module):
         self.dynamics = dynamics_class(atom_nf, rec_nf, **graph_config, **dynamics_config)
 
         # create receptor encoder
-        if architecture == 'egnn':
-            self.rec_encoder = ReceptorEncoder(**graph_config, **rec_encoder_config)
-        else:
-            self.rec_encoder = ReceptorEncoderGVP(**graph_config, **rec_encoder_config)
+        if rec_encoder_type not in ['learned', 'fixed']:
+            raise ValueError(f'Receptor encoder type must be either "learned" or "fixed". Got {rec_encoder_type=} instead.')
+        
+        if rec_encoder_type == 'learned':
+            if architecture == 'egnn':
+                self.rec_encoder = ReceptorEncoder(**graph_config, **rec_encoder_config)
+            else:
+                self.rec_encoder = ReceptorEncoderGVP(**graph_config, **rec_encoder_config)
+        elif rec_encoder_type == 'fixed':
+            # in this case, we do not learn a compressed representation of the receptor. instead, we use the raw receptor atom features as the receptor representation
+            if architecture == 'gvp':
+                n_vec_feats = rec_encoder_config['vector_size']
+            else:
+                n_vec_feats = None
+            self.rec_encoder = FixedReceptorEncoder(n_vec_feats=n_vec_feats, graph_cutoffs=graph_config['graph_cutoffs'])
+
         # create receptor encoder loss function
+        if rec_encoder_type == 'fixed':
+            rec_encoder_loss_config['loss_type'] = 'none'
         self.rec_encoder_loss_fn = ReceptorEncoderLoss(**rec_encoder_loss_config)
 
     def forward(self, complex_graphs: dgl.DGLHeteroGraph, interface_points: List[torch.Tensor]):
@@ -85,6 +101,10 @@ class LigandDiffuser(nn.Module):
                 
         # encode the receptor
         complex_graphs = self.rec_encoder(complex_graphs, batch_idxs)
+
+        # if we are using a fixed receptor encoding we have to recompute the batch indicies after passing through the receptor encoder
+        if self.rec_encoder_type == 'fixed':
+            batch_idxs = get_batch_idxs(complex_graphs)
 
         # if we are applying the RL hinge loss, we will need to be able to put receptor atoms and the ligand into the same
         # referance frame. in order to do this, we need the initial COM of the keypoints
