@@ -68,7 +68,7 @@ diffusion:
   precision: 1.0e-5
   lig_feat_norm_constant: 1
   rl_dist_threshold: 0
-  architecture: 'gvp' # which GNN architecture to use. can be gvp or egnn
+  architecture: 'egnn' # which GNN architecture to use. can be gvp or egnn
   rec_encoder_type: 'fixed' # can be learned or fixed
 
 dynamics:

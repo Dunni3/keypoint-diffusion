@@ -79,7 +79,7 @@ class LigandDiffuser(nn.Module):
                 n_vec_feats = rec_encoder_config['vector_size']
             else:
                 n_vec_feats = None
-            self.rec_encoder = FixedReceptorEncoder(n_vec_feats=n_vec_feats, graph_cutoffs=graph_config['graph_cutoffs'])
+            self.rec_encoder = FixedReceptorEncoder(n_vec_feats=n_vec_feats)
 
         # create receptor encoder loss function
         if rec_encoder_type == 'fixed':

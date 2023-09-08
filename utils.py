@@ -136,7 +136,7 @@ def copy_graph(g: dgl.DGLHeteroGraph, n_copies: int, lig_atoms_per_copy: torch.T
     # TODO: should we clone the tensors when putting them in the new graph? right now we only use this function
     # when doing sampling, so maintaining the computational graph is not important, so cloning has no effect
     for idx in range(n_copies):
-        for ntype in ['lig', 'rec', 'kp']:
+        for ntype in g.ntypes:
             for feat in g.nodes[ntype].data.keys():
 
                 if ntype == 'lig' and lig_atoms_per_copy is not None:
