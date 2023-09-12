@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from torch.nn.functional import one_hot
 from Bio.PDB import PDBParser
-from Bio.PDB.Polypeptide import three_to_one, is_aa
+from Bio.PDB.Polypeptide import protein_letters_3to1, is_aa
 from Bio.PDB import PDBIO
 from openbabel import openbabel
 from rdkit import Chem
@@ -168,7 +168,7 @@ def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi
 
         try:
             # get single-letter amino acid code for each residue
-            res_chars = [ three_to_one(res.get_resname()) for res in pocket_residues ]
+            res_chars = [ protein_letters_3to1[res.get_resname()] for res in pocket_residues ]
 
             # convert residue characters to indices
             res_idx = [ aa_to_idx[res] for res in res_chars ]
@@ -359,6 +359,7 @@ if __name__ == '__main__':
                             print(e.original_exception)
                             continue
                         except Exception as e:
+                            raise e
                             print(e)
                             continue
 
