@@ -111,7 +111,7 @@ training:
   save_interval: 40 # epoch
   sample_interval: 30 # number of epochs between sampling/testing molecules
   test_epochs: 1 # number of epochs to run when evaluating on the test set
-  num_workers: 8
+  num_workers: 4
   scheduler:
     warmup_length: 1
     rec_enc_weight_decay_midpoint: 0
