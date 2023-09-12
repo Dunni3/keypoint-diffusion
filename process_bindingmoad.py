@@ -9,8 +9,9 @@ import yaml
 from tqdm import tqdm
 import numpy as np
 import torch
+from torch.nn.functional import one_hot
 from Bio.PDB import PDBParser
-from Bio.PDB.Polypeptide import three_to_one, is_aa
+from Bio.PDB.Polypeptide import protein_letters_3to1, is_aa
 from Bio.PDB import PDBIO
 from openbabel import openbabel
 from rdkit import Chem
@@ -19,7 +20,7 @@ from scipy.ndimage import gaussian_filter
 from scipy.spatial.distance import cdist
 
 from analysis.molecule_builder import build_molecule
-import constants
+from constants import aa_to_idx
 import utils
 import pickle
 
@@ -81,7 +82,7 @@ def ligand_list_to_dict(ligand_list):
 def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi,
                                   rec_element_map, lig_element_map,
                                   ip_dist_threshold: float, ip_exclusion_threshold: float, 
-                                  pocket_cutoff: float, remove_hydrogen: bool = True):
+                                  pocket_cutoff: float, remove_hydrogen: bool = True, ca_only: bool = False):
     
     try:
         residues = {obj.id[1]: obj for obj in
@@ -125,6 +126,7 @@ def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi
     pocket_residues = []
     for residue in pdb_struct[0].get_residues():
 
+
         # get atomic coordinates of residue
         res_coords = np.array([a.get_coord() for a in residue.get_atoms()])
 
@@ -144,7 +146,16 @@ def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi
     else:
         atom_filter = lambda a: True
 
-    pocket_atomres = [(a, res) for res in pocket_residues for a in res.get_atoms() if atom_filter(a) ]
+    pocket_atomres = []
+    for res in pocket_residues:
+
+        if ca_only:
+            atom_list = [ res['CA'] ]
+        else:
+            atom_list = res.get_atoms()
+
+        pocket_atomres.extend([(a, res) for a in atom_list if atom_filter(a) ])
+
     pocket_atoms, atom_residues = list(map(list, zip(*pocket_atomres)))
     res_to_idx = { res:i for i, res in enumerate(pocket_residues) }
     pocket_res_idx = list(map(lambda res: res_to_idx[res], atom_residues)) #  list containing the residue of every atom using integers to index pocket residues
@@ -152,21 +163,44 @@ def process_ligand_and_pocket(pdb_struct, ligand_name, ligand_chain, ligand_resi
 
     pocket_coords = torch.tensor(np.array([a.get_coord() for a in pocket_atoms]))
     pocket_elements = np.array([ element_fixer(a.element) for a in pocket_atoms ])
-    pocket_atom_features, other_atoms_mask = rec_atom_featurizer(rec_element_map, protein_atom_elements=pocket_elements)
-    pocket_atom_features = torch.tensor(pocket_atom_features).bool()
+
+    if ca_only:
+
+        try:
+            # get single-letter amino acid code for each residue
+            res_chars = [ protein_letters_3to1[res.get_resname()] for res in pocket_residues ]
+
+            # convert residue characters to indices
+            res_idx = [ aa_to_idx[res] for res in res_chars ]
+            res_idx = torch.tensor(res_idx)
+        except KeyError as e:
+            raise Unparsable(f'unsupported residue type found: {[ res.get_resname() for res in pocket_residues ]}')
+
+        # one-hot encode residue types
+        pocket_atom_features = one_hot(res_idx, num_classes=len(aa_to_idx)).bool()
+
+        # create an empty other_atoms_mask
+        other_atoms_mask = torch.zeros(pocket_atom_features.shape[0], dtype=torch.bool)
+
+    else:
+        pocket_atom_features, other_atoms_mask = rec_atom_featurizer(rec_element_map, protein_atom_elements=pocket_elements)
+        pocket_atom_features = torch.tensor(pocket_atom_features).bool()
 
     # remove other atoms from pocket
     pocket_coords = pocket_coords[~other_atoms_mask]
     pocket_atom_features = pocket_atom_features[~other_atoms_mask]
 
-    # rec_graph = build_receptor_graph(pocket_coords, pocket_atom_features, k=receptor_k, edge_algorithm=pocket_edge_algorithm)
-    # complex_graph = build_initial_complex_graph(pocket_coords, pocket_atom_features, lig_coords, lig_atom_features, pocket_res_idx, n_keypoints=n_keypoints, cutoffs=graph_cutoffs)
-
     # compute interface points
-    try:
-        interface_points = get_interface_points(lig_coords, pocket_coords, distance_threshold=ip_dist_threshold, exclusion_threshold=ip_exclusion_threshold)
-    except Exception as e:
-        raise InterfacePointException(e)
+    if ca_only:
+        # the ca_only dataset is strictly for a baseline where we are not learning a keypoint representation, and instead 
+        # just using the CA atoms as the receptor reperesentation for diffusion
+        # therefore, we don't need interface points because we are not learning a keypoint representation
+        interface_points = torch.zeros(0,3)
+    else:
+        try:
+            interface_points = get_interface_points(lig_coords, pocket_coords, distance_threshold=ip_dist_threshold, exclusion_threshold=ip_exclusion_threshold)
+        except Exception as e:
+            raise InterfacePointException(e)
 
     return pocket_coords, pocket_atom_features, lig_coords, lig_atom_features, pocket_res_idx, interface_points
 
@@ -213,6 +247,12 @@ if __name__ == '__main__':
 
     processed_dir = Path(dataset_config['location'])
     processed_dir.mkdir(exist_ok=True, parents=True)
+
+    # determine if we are using a Ca-only representation of the receptor
+    try:
+        ca_only: bool = dataset_config['ca_only']
+    except KeyError:
+        ca_only = False
 
     # code for making dataset splits from DiffSBDD's data processing script .... we just use their splits for now
     # if args.make_split:
@@ -308,7 +348,8 @@ if __name__ == '__main__':
                                                         ip_dist_threshold=dataset_config['interface_distance_threshold'],
                                                         ip_exclusion_threshold=dataset_config['interface_exclusion_threshold'], 
                                                         pocket_cutoff=dataset_config['pocket_cutoff'], 
-                                                        remove_hydrogen=dataset_config['remove_hydrogen'])
+                                                        remove_hydrogen=dataset_config['remove_hydrogen'],
+                                                        ca_only=ca_only)
                         except Unparsable as e:
                             print(e)
                             continue
@@ -318,6 +359,7 @@ if __name__ == '__main__':
                             print(e.original_exception)
                             continue
                         except Exception as e:
+                            raise e
                             print(e)
                             continue
 
