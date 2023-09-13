@@ -103,6 +103,8 @@ def parse_arguments():
     p.add_argument('--use_tanh', type=str, default=None)
     p.add_argument('--message_norm', type=str, default=None)
 
+    p.add_argument('--exp_name', type=str, default=None)
+    p.add_argument('--architecture', type=str, default=None)
     p.add_argument('--config', type=str, default=None)
     p.add_argument('--resume', default=None)
     args = p.parse_args()
@@ -118,6 +120,8 @@ def parse_arguments():
     with open(config_file, 'r') as f:
         config_dict = yaml.load(f, Loader=yaml.FullLoader)
 
+    if args.architecture is not None:
+        config_dict['diffusion']['architecture'] = args.architecture
 
     architecture = config_dict['diffusion']['architecture'] if 'architecture' in config_dict['diffusion'] else 'egnn'
     if architecture == 'egnn':
@@ -134,6 +138,9 @@ def parse_arguments():
 
     # override config file args with command line args
     args_dict = vars(args)
+
+    if args.exp_name is not None:
+        config_dict['experiment']['name'] = args['exp_name']
 
     if args.dropout is not None:
         config_dict[rec_encoder_key]['dropout'] = args.dropout

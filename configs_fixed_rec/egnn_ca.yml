@@ -79,7 +79,7 @@ dynamics:
   update_kp_feat: True
   norm: True
   ll_k: 0
-  kl_k: 0
+  kl_k: 5
 
 dynamics_gvp:
   vector_size: 16
@@ -106,7 +106,7 @@ training:
   clip_grad: True
   clip_value: 1.5
   epochs: 800
-  batch_size: 64
+  batch_size: 128
   test_interval: 1 # measured in epochs
   train_metrics_interval: 0.1 # epochs
   save_interval: 40 # epoch
