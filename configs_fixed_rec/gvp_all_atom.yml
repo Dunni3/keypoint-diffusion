@@ -84,12 +84,12 @@ dynamics:
 dynamics_gvp:
   vector_size: 16
   n_convs: 6
-  n_hidden_scalars: 128
+  n_hidden_scalars: 256
   update_kp: True
   message_norm: 'mean'
-  dropout: 0.2
+  dropout: 0.1
   ll_k: 0
-  kl_k: 0
+  kl_k: 7
   n_message_gvps: 3 # the number of GVPs to chain together for the message function
   n_update_gvps: 2 # the number of GVPs to chain together for the update function
   n_noise_gvps: 4 # the number of GVPs to chain together for the noise prediction block
