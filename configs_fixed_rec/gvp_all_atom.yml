@@ -1,5 +1,5 @@
 experiment:
-  name: gvp_all_atom
+  name: gvp_all_atom_bestkp
   results_dir: fixed_rec_results/
 
 wandb:
@@ -106,7 +106,7 @@ training:
   clip_grad: True
   clip_value: 1.5
   epochs: 800
-  batch_size: 64
+  batch_size: 32
   test_interval: 1 # measured in epochs
   train_metrics_interval: 0.1 # epochs
   save_interval: 40 # epoch
