@@ -1,5 +1,5 @@
 experiment:
-  name: gvp_all_atom
+  name: gvp_all_atom_bestkp
   results_dir: fixed_rec_results/
 
 wandb:
@@ -84,12 +84,12 @@ dynamics:
 dynamics_gvp:
   vector_size: 16
   n_convs: 6
-  n_hidden_scalars: 128
+  n_hidden_scalars: 256
   update_kp: True
   message_norm: 'mean'
-  dropout: 0.2
+  dropout: 0.1
   ll_k: 0
-  kl_k: 0
+  kl_k: 7
   n_message_gvps: 3 # the number of GVPs to chain together for the message function
   n_update_gvps: 2 # the number of GVPs to chain together for the update function
   n_noise_gvps: 4 # the number of GVPs to chain together for the noise prediction block
@@ -106,7 +106,7 @@ training:
   clip_grad: True
   clip_value: 1.5
   epochs: 800
-  batch_size: 64
+  batch_size: 32
   test_interval: 1 # measured in epochs
   train_metrics_interval: 0.1 # epochs
   save_interval: 40 # epoch
