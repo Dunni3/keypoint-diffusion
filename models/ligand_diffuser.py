@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as fn
 from torch_scatter import segment_coo, segment_csr
 
+from geomloss import SamplesLoss
 from losses.rec_encoder_loss import ReceptorEncoderLoss
 from losses.dist_hinge_loss import DistanceHingeLoss
 from models.dynamics import LigRecDynamics
@@ -23,7 +24,7 @@ from torch_scatter import segment_csr
 class LigandDiffuser(nn.Module):
 
     def __init__(self, atom_nf, rec_nf, processed_dataset_dir: Path, n_timesteps: int = 1000, keypoint_centered=False, architecture: str = 'egnn', graph_config={},
-    dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, precision=1e-4, lig_feat_norm_constant=1, rl_dist_threshold=0, use_fake_atoms=False):
+    dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, precision=1e-4, lig_feat_norm_constant=1, rl_dist_threshold=0, use_fake_atoms=False, apply_geomloss=False):
         super().__init__()
 
         # NOTE: keypoint_centered is deprecated. This flag no longer has any effect. It is kept as an argument for backwards compatibility with previously trained models.
@@ -33,6 +34,7 @@ class LigandDiffuser(nn.Module):
         self.n_timesteps = n_timesteps
         self.lig_feat_norm_constant = lig_feat_norm_constant
         self.use_fake_atoms = use_fake_atoms
+        self.apply_geomloss = apply_geomloss
 
         # check architecture
         if architecture not in ['egnn', 'gvp']:
@@ -134,6 +136,11 @@ class LigandDiffuser(nn.Module):
                     rl_hinge_loss += self.rl_hinge_loss_fn(denoised_lig_pos, rec_atom_pos)
 
                 losses['rl_hinge'] = rl_hinge_loss
+
+        # compute loss with geomloss
+        if self.apply_geomloss:
+            # compute sinkhorn loss using default p and blur values
+            losses['geomloss'] = SamplesLoss(loss="sinkhorn", p=2, blur=.05)
 
         # compute l2 loss on noise
         if self.use_fake_atoms:

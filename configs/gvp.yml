@@ -4,7 +4,7 @@ experiment:
 
 wandb:
   init_kwargs:
-    mode: disabled # options: online, offline, disabled
+    mode: online # options: online, offline, disabled
     project: ligdiff_cluster
     group: 
   watch_model: False

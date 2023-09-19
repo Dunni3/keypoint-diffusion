@@ -462,6 +462,7 @@ def main():
         rec_encoder_config=rec_encoder_config, 
         rec_encoder_loss_config=args['rec_encoder_loss'],
         use_fake_atoms=use_fake_atoms,
+        apply_geomloss=True
         **args['diffusion']).to(device=device)
     
     if resume:
