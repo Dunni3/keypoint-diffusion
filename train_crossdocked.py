@@ -140,7 +140,7 @@ def parse_arguments():
     args_dict = vars(args)
 
     if args.exp_name is not None:
-        config_dict['experiment']['name'] = args['exp_name']
+        config_dict['experiment']['name'] = args.exp_name
 
     if args.dropout is not None:
         config_dict[rec_encoder_key]['dropout'] = args.dropout
