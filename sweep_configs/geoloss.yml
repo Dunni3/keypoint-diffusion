@@ -1,0 +1,18 @@
+method: grid
+metric:
+  goal: minimize
+  name: test_l2_loss
+parameters:
+  geomloss_type: 
+    values:
+      - 'sinkhorn'
+      - 'hausdorff'
+      - 'energy'
+      - 'gaussian'
+      - 'laplacian'
+program: train_crossdocked.py
+command:
+  - /home/elf152/mambaforge/envs/ligdiff_env_2/bin/python
+  - ${program}
+  - "--config=configs/geoloss_sweep.yml"
+  - ${args}
