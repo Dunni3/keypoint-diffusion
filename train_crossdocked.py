@@ -26,6 +26,8 @@ from models.receptor_encoder import ReceptorEncoder
 from models.scheduler import Scheduler
 from utils import save_model
 
+import time
+
 
 def parse_arguments():
     p = argparse.ArgumentParser()
@@ -43,6 +45,7 @@ def parse_arguments():
     rec_encoder_group.add_argument('--use_keypoint_feat_mha', type=bool, default=None)
     rec_encoder_group.add_argument('--feat_mha_heads', type=int, default=None)
     rec_encoder_group.add_argument('--rec_enc_loss_type', type=str, default=None)
+    rec_encoder_group.add_argument('--geomloss_type', type=str, default=None)
     rec_encoder_group.add_argument('--apply_kp_wise_mlp', type=bool, default=None)
     rec_encoder_group.add_argument('--rec_enc_hinge_threshold', type=float, default=None)
     rec_encoder_group.add_argument('--k_closest', type=int, default=None)
@@ -92,9 +95,6 @@ def parse_arguments():
     p.add_argument('--update_kp_feat', type=int, default=None)
     p.add_argument('--ll_k', type=int, default=None)
     p.add_argument('--kl_k', type=int, default=None)
-
-    geomloss_group = p.add_argument_group('geomloss')
-    geomloss_group.add_argument('--geomloss_type', type=str, default=None)
 
 
     # args for gvp
@@ -260,6 +260,10 @@ def parse_arguments():
 
     if args.rec_enc_loss_type is not None:
         config_dict['rec_encoder_loss']['loss_type'] = args.rec_enc_loss_type
+    
+    ## Change later to accept geomloss kwargs for other params
+    if args.geomloss_type is not None:
+        config_dict['rec_encoder_loss']['geomloss_kwargs']['geomloss_type'] = args.geomloss_type
 
     if args.rec_enc_hinge_threshold is not None:
         config_dict['rec_encoder_loss']['hinge_threshold'] = args.rec_enc_hinge_threshold
@@ -322,15 +326,17 @@ def test_model(model, test_dataloader, args, device):
                 interface_points = [ arr.to(device) for arr in interface_points ]
 
             # do forward pass / get losses for this batch
+            start = time.time()
             loss_dict = model(complex_graphs, interface_points)
+            end = time.time()
+            print("Forward Pass time: ", end - start)
 
             # append losses for this batch into lists of all per-batch losses computed so far
             for k,v in loss_dict.items():
                 losses[k].append(v.detach().cpu())
 
             # combine losses into total loss
-            # swapping rec_encoder loss for geomloss REVERT LATER
-            total_loss = loss_dict['l2'] + loss_dict['geomloss']*args['training']['rec_encoder_loss_weight']
+            total_loss = loss_dict['l2'] + loss_dict['rec_encoder']*args['training']['rec_encoder_loss_weight']
 
             # add receptor-ligand hinge loss if it is being computed
             if 'rl_hinge' in loss_dict:
@@ -342,9 +348,9 @@ def test_model(model, test_dataloader, args, device):
 
     # swapping rec_encoder loss for geomloss REVERT LATER
     if args['rec_encoder_loss']['loss_type'] == 'optimal_transport':
-        rec_encoder_loss_name = 'geomloss'
-    # elif args['rec_encoder_loss']['loss_type'] == 'geomloss':
-    #     rec_encoder_loss_name = 'geomloss'
+        rec_encoder_loss_name = 'ot_loss'
+    elif args['rec_encoder_loss']['loss_type'] == 'geom':
+        rec_encoder_loss_name = 'geom_loss'
     elif args['rec_encoder_loss']['loss_type'] == 'gaussian_repulsion':
         rec_encoder_loss_name = 'repulsion_loss'
     elif args['rec_encoder_loss']['loss_type'] == 'hinge':
@@ -353,7 +359,7 @@ def test_model(model, test_dataloader, args, device):
         rec_encoder_loss_name = 'no_rec_enc_loss'
 
     # swapping rec_encoder loss for geomloss REVERT LATER
-    output_losses[rec_encoder_loss_name] = np.mean(losses['geomloss'])
+    output_losses[rec_encoder_loss_name] = np.mean(losses['rec_encoder'])
 
     return output_losses
 
@@ -461,6 +467,7 @@ def main():
     n_keypoints = args['graph']['n_keypoints']
 
     # create diffusion model
+    print("Rec Encoder Loss Config: ", args['rec_encoder_loss'])
     model = LigandDiffuser(
         n_lig_feat, 
         n_kp_feat,
@@ -470,7 +477,6 @@ def main():
         rec_encoder_config=rec_encoder_config, 
         rec_encoder_loss_config=args['rec_encoder_loss'],
         use_fake_atoms=use_fake_atoms,
-        geomloss_type=args['geomloss']['geomloss_type'],
         **args['diffusion']).to(device=device)
     
     if resume:
@@ -525,7 +531,8 @@ def main():
 
     if args['rec_encoder_loss']['loss_type'] == 'optimal_transport':
         rec_encoder_loss_name = 'ot_loss'
-        # rec_encoder_loss_name = 'geomloss'
+    if args['rec_encoder_loss']['loss_type'] == 'geom':
+        rec_encoder_loss_name = 'geom_loss' 
     elif args['rec_encoder_loss']['loss_type'] == 'gaussian_repulsion':
         rec_encoder_loss_name = 'repulsion_loss'
     elif args['rec_encoder_loss']['loss_type'] == 'hinge':

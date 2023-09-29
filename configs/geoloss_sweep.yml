@@ -52,8 +52,8 @@ rec_encoder:
 
 rec_encoder_gvp:
   out_scalar_size: 128
-  vector_size: 12
-  n_rr_convs: 2
+  vector_size: 16
+  n_rr_convs: 4
   n_rk_convs: 2
   message_norm: 'mean'
   use_sameres_feat: False 
@@ -81,8 +81,8 @@ dynamics:
   kl_k: 5
 
 dynamics_gvp:
-  vector_size: 12
-  n_convs: 2
+  vector_size: 16
+  n_convs: 6
   n_hidden_scalars: 128
   update_kp: True
   message_norm: 'mean'

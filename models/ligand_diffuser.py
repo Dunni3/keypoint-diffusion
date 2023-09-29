@@ -10,7 +10,6 @@ import torch.nn as nn
 import torch.nn.functional as fn
 from torch_scatter import segment_coo, segment_csr
 
-from geomloss import SamplesLoss
 from losses.rec_encoder_loss import ReceptorEncoderLoss
 from losses.dist_hinge_loss import DistanceHingeLoss
 from models.dynamics import LigRecDynamics
@@ -24,7 +23,7 @@ from torch_scatter import segment_csr
 class LigandDiffuser(nn.Module):
 
     def __init__(self, atom_nf, rec_nf, processed_dataset_dir: Path, n_timesteps: int = 1000, keypoint_centered=False, architecture: str = 'egnn', graph_config={},
-    dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, precision=1e-4, lig_feat_norm_constant=1, rl_dist_threshold=0, use_fake_atoms=False, geomloss_type=None):
+    dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, precision=1e-4, lig_feat_norm_constant=1, rl_dist_threshold=0, use_fake_atoms=False):
         super().__init__()
 
         # NOTE: keypoint_centered is deprecated. This flag no longer has any effect. It is kept as an argument for backwards compatibility with previously trained models.
@@ -34,7 +33,6 @@ class LigandDiffuser(nn.Module):
         self.n_timesteps = n_timesteps
         self.lig_feat_norm_constant = lig_feat_norm_constant
         self.use_fake_atoms = use_fake_atoms
-        self.geomloss_type = geomloss_type
 
         # check architecture
         if architecture not in ['egnn', 'gvp']:
@@ -95,17 +93,6 @@ class LigandDiffuser(nn.Module):
 
         # compute receptor encoding loss
         losses['rec_encoder'] = self.rec_encoder_loss_fn(complex_graphs, interface_points=interface_points)
-
-        # compute loss with geomloss
-        if self.geomloss_type:
-            print("Geomloss Type: ", self.geomloss_type)
-            # compute sinkhorn loss using default p and blur values
-            keypoint_positions = [ g.nodes["kp"].data["x_0"] for g in dgl.unbatch(complex_graphs) ]
-            calc_geomloss = SamplesLoss(loss=self.geomloss_type, p=2, blur=.05)
-            total_geomloss = 0
-            for i in range(len(keypoint_positions)):
-                total_geomloss += calc_geomloss(keypoint_positions[i], interface_points[i])
-            losses['geomloss'] = (total_geomloss / len(interface_points))
 
         # remove ligand COM from receptor/ligand complex
         complex_graphs = self.remove_com(complex_graphs, batch_idxs['lig'], batch_idxs['kp'], com='ligand')

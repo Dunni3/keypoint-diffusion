@@ -6,6 +6,7 @@ import ot
 from typing import List
 import numpy as np
 from losses.dist_hinge_loss import DistanceHingeLoss
+from geomloss import SamplesLoss
 
 # this function is taken from equibind
 def compute_ot_emd(cost_mat, device):
@@ -19,17 +20,21 @@ def compute_ot_emd(cost_mat, device):
 
 class ReceptorEncoderLoss(nn.Module):
 
-    def __init__(self, loss_type='optimal_transport', use_interface_points: bool = False, hinge_threshold: float = 4):
+    def __init__(self, loss_type='optimal_transport', use_interface_points: bool = False, hinge_threshold: float = 4, **kwargs):
         super().__init__()
 
         self.loss_type = loss_type
         self.use_interface_points = use_interface_points
+        print('Rec Encoder Loss Kwargs: ', kwargs)
 
-        if self.loss_type not in ['optimal_transport', 'gaussian_repulsion', 'hinge', 'none']:
+        if self.loss_type not in ['optimal_transport', 'gaussian_repulsion', 'hinge', 'geom', 'none']:
             raise ValueError
-        
+
         if self.loss_type == 'hinge':
             self._hinge_loss = DistanceHingeLoss(distance_threshold=hinge_threshold)
+        
+        if self.loss_type == 'geom':
+            self.geomloss_type = kwargs['geomloss_kwargs']['geomloss_type']
 
     def forward(self, batched_complex_graphs: dgl.DGLGraph = None, interface_points: List[torch.Tensor] = None):
 
@@ -37,6 +42,8 @@ class ReceptorEncoderLoss(nn.Module):
             return self.compute_ot_loss(batched_complex_graphs)
         elif self.loss_type == 'optimal_transport' and self.use_interface_points:
             return self.compute_interface_point_loss(batched_complex_graphs, interface_points)
+        elif self.loss_type == 'geom' and self.use_interface_points:
+            return self.compute_geom_loss(batched_complex_graphs, interface_points)
         elif self.loss_type == 'gaussian_repulsion':
             return self.compute_repulsion_loss(batched_complex_graphs)
         elif self.loss_type == 'hinge':
@@ -80,6 +87,17 @@ class ReceptorEncoderLoss(nn.Module):
         
         ot_loss = ot_loss / len(interface_points)
         return ot_loss
+    
+    def compute_geom_loss(self, batched_complex_graphs, interface_points):
+        print("Geomloss Type: ", self.geomloss_type)
+
+        keypoint_positions = [ g.nodes["kp"].data["x_0"] for g in dgl.unbatch(batched_complex_graphs) ]
+        calc_geomloss = SamplesLoss(loss=self.geomloss_type, p=2, blur=.05)
+        total_geomloss = 0
+        for i in range(len(keypoint_positions)):
+            total_geomloss += calc_geomloss(keypoint_positions[i], interface_points[i])
+
+        return total_geomloss / len(interface_points)
 
     def compute_repulsion_loss(self, batched_complex_graphs: dgl.DGLHeteroGraph):
 
