@@ -103,6 +103,8 @@ def parse_arguments():
     p.add_argument('--use_tanh', type=str, default=None)
     p.add_argument('--message_norm', type=str, default=None)
 
+    p.add_argument('--exp_name', type=str, default=None)
+    p.add_argument('--architecture', type=str, default=None)
     p.add_argument('--config', type=str, default=None)
     p.add_argument('--resume', default=None)
     args = p.parse_args()
@@ -118,6 +120,8 @@ def parse_arguments():
     with open(config_file, 'r') as f:
         config_dict = yaml.load(f, Loader=yaml.FullLoader)
 
+    if args.architecture is not None:
+        config_dict['diffusion']['architecture'] = args.architecture
 
     architecture = config_dict['diffusion']['architecture'] if 'architecture' in config_dict['diffusion'] else 'egnn'
     if architecture == 'egnn':
@@ -134,6 +138,9 @@ def parse_arguments():
 
     # override config file args with command line args
     args_dict = vars(args)
+
+    if args.exp_name is not None:
+        config_dict['experiment']['name'] = args.exp_name
 
     if args.dropout is not None:
         config_dict[rec_encoder_key]['dropout'] = args.dropout
@@ -420,10 +427,18 @@ def main():
     n_rec_atom_features = test_complex_graph.nodes['rec'].data['h_0'].shape[1]
     n_lig_feat = test_complex_graph.nodes['lig'].data['h_0'].shape[1]
 
-    if architecture == 'egnn':
-        n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
-    elif architecture == 'gvp':
-        n_kp_feat = args["rec_encoder_gvp"]["out_scalar_size"]
+    try:
+        rec_encoder_type = args['diffusion']['rec_encoder_type']
+    except KeyError:
+        rec_encoder_type = 'learned'
+
+    if rec_encoder_type == 'learned':
+        if architecture == 'egnn':
+            n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
+        elif architecture == 'gvp':
+            n_kp_feat = args["rec_encoder_gvp"]["out_scalar_size"]
+    else:
+        n_kp_feat = n_rec_atom_features
 
     print(f'{n_rec_atom_features=}')
     print(f'{n_lig_feat=}', flush=True)

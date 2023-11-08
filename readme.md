@@ -56,3 +56,24 @@ Use the script `test_crossdocked.py` which, despite the name, can be used for bo
 # Sampling molecules and visualizing the diffusion process.
 
 Use the script `sample_crossdocked.py` with the `--visualize` flag. Ideally, the visualize feature should be incorporated into `test_crossdocked.py` because these scripts are doing almost the exact same thing, iirc. 
+
+# Some commands for producing publication reusts
+
+## sampling validation set
+```console
+python gen_test_commands.py test_cmds.txt --filenames_file data/bindingmoad_refactor/val_filenames.pkl --lines 28 29 30 31 32 33 35 36 38 40 41 42 43 44 45 46
+sbatch --array 1-3904 test_parallel.slurm
+```
+
+## running force-field minimization on sampled molecules
+```console
+python make_minimize_cmds.py
+./pub_samples_min_cmds/py_cmds.sh
+./pub_samples_min_cmds/sbatch_cmds.sh
+```
+
+## running vina scoring on ff minimized molecules
+```console
+python gen_docking_cmds.py pub_samples_2/ --exclude diffsbdd_ca_cond diffsbdd_ca_inpaint diffsbdd_full_cond --minimize
+sbatch --array 1-3954 dock_cpu.slurm
+```
