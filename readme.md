@@ -82,3 +82,8 @@ sbatch --array 1-3954 dock_cpu.slurm
 python gen_docking_cmds.py pub_samples_2/ --model_name validation_set --minimize
 sbatch --array 1-244 dock_cpu.slurm
 ```
+
+# Cleanup todo
+- [] add license
+- [] create directory with trained models
+- [] write script for sampling molecules from trained models
