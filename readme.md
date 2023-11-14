@@ -77,3 +77,8 @@ python make_minimize_cmds.py
 python gen_docking_cmds.py pub_samples_2/ --exclude diffsbdd_ca_cond diffsbdd_ca_inpaint diffsbdd_full_cond --minimize
 sbatch --array 1-3954 dock_cpu.slurm
 ```
+
+```console
+python gen_docking_cmds.py pub_samples_2/ --model_name validation_set --minimize
+sbatch --array 1-244 dock_cpu.slurm
+```

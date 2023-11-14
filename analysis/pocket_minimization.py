@@ -75,7 +75,6 @@ def minimize_ligand(ref_lig, lig_idx, rec):
         return None
 
     complex = Chem.CombineMols(rec,lig)
-    Chem.SanitizeMol(complex)
 
     try:
         ff = Chem.UFFGetMoleculeForceField(complex,ignoreInterfragInteractions=False)

@@ -286,10 +286,20 @@ class MoleculeProperties:
             QED, SA, LogP, Lipinski (per molecule), and Diversity (per pocket)
         """
 
-        for pocket in pocket_rdmols:
-            for mol in pocket:
-                Chem.SanitizeMol(mol)
+        # originally this code would throw an error if any molecule was invalid. which makes a lot of sense
+        # because this evaluation is only to be run on valid molecules. However, in the last stages of this work,
+        # it became apparent that some of the molecules in the validation set were invalid. So, I added this try/except as a quick fix.
+        for pocket_idx, pocket in enumerate(pocket_rdmols):
+            bad_mols = []
+            for mol_idx, mol in enumerate(pocket):
+                try:
+                    Chem.SanitizeMol(mol)
+                except Exception:
+                    bad_mols.append(mol_idx)
+                    continue
                 assert mol is not None, "only evaluate valid molecules"
+            for mol_idx in reversed(bad_mols):
+                del pocket_rdmols[pocket_idx][mol_idx]
 
         all_qed = []
         all_sa = []
