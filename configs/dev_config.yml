@@ -32,7 +32,7 @@ dataset:
   
 graph:
   n_keypoints: 20
-  graph_cutoffs: {'rr': 3.5, 'rk': 100, 'kk': 8, 'kl': 8, 'll': 9} # i suppose rk isn'y really necessary because we know all r's are connected to all k's...unless...they are not
+  graph_cutoffs: {'rr': 3.5, 'rk': 100, 'kk': 8, 'kl': 8, 'll': 9}
 
 rec_encoder:
   n_convs: 4

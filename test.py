@@ -58,43 +58,9 @@ def make_reference_files(dataset_idx: int, dataset: CrossDockedDataset, output_d
     ref_rec_file = Path(ref_rec_file)
     ref_lig_file = Path(ref_lig_file)
 
-    # # get receptor object and atom coordinates
-    # rec: prody.AtomGroup = prody.parsePDB(str(ref_rec_file))
-    # rec_coords = rec.getCoords()
-
-    # # get ligand object 
-    # suppl = Chem.SDMolSupplier(str(ref_lig_file), sanitize=False, removeHs=remove_hydrogen)
-    # ligands = list(suppl)
-    # if len(ligands) > 1:
-    #     raise NotImplementedError('Multiple ligands found. Code is not written to handle multiple ligands.')
-    # ligand = ligands[0]
-
-    # # get atom positions
-    # ligand_conformer = ligand.GetConformer()
-    # ligand_atom_positions = ligand_conformer.GetPositions()
-
-    # ligand_com = ligand_atom_positions.mean(axis=0, keepdims=True)
-
-    # # remove ligand COM from receptor coordinates
-    # rec.setCoords( rec_coords - ligand_com )
-
-    # # remove ligand COM from ligand coordinates
-    # new_lig_pos = ligand_atom_positions - ligand_com
-    # for i in range(ligand.GetNumAtoms()):
-    #     x,y,z = new_lig_pos[i]
-    #     ligand_conformer.SetAtomPosition(i,Point3D(x,y,z))
-
     # get filepath of new ligand and receptor files
     centered_lig_file = output_dir / ref_lig_file.name
     centered_rec_file = output_dir / ref_rec_file.name
-
-    # # write ligand to new file
-    # lig_writer = Chem.SDWriter(str(centered_lig_file))
-    # lig_writer.write(ligand)
-    # lig_writer.close()
-
-    # # write receptor to new file
-    # prody.writePDB(str(centered_rec_file), rec)
 
     shutil.copy(ref_rec_file, centered_rec_file)
     shutil.copy(ref_lig_file, centered_lig_file)

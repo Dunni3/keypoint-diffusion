@@ -215,6 +215,55 @@ def compute_smiles(lig_pos, lig_feat, lig_decoder):
     smi = Chem.MolToSmiles(mol)
     return smi
 
+def get_n_nodes_dist(lig_rec_size_counter: defaultdict, smooth_sigma=1):
+    # Joint distribution of ligand's and pocket's number of nodes
+
+    observed_rec_num_nodes, observed_lig_num_nodes = list(zip(*lig_rec_size_counter.keys()))
+
+
+    # idx_lig, n_nodes_lig = np.unique(lig_mask, return_counts=True)
+    # idx_pocket, n_nodes_pocket = np.unique(pocket_mask, return_counts=True)
+
+    # joint_histogram = np.zeros((np.max(lig_num_nodes) + 1,
+    #                             np.max(rec_num_nodes) + 1))
+
+    # for nlig, npocket in zip(lig_num_nodes, rec_num_nodes):
+    #     joint_histogram[nlig, npocket] += 1
+
+    joint_histogram = np.zeros((
+        np.max(observed_rec_num_nodes) - np.min(observed_rec_num_nodes) + 1,
+        np.max(observed_lig_num_nodes) - np.min(observed_lig_num_nodes) + 1
+    ))
+
+    rec_idx_val_map = np.arange(np.min(observed_rec_num_nodes), np.max(observed_rec_num_nodes) + 1)
+    rec_val_idx_map = { val:idx for idx, val in enumerate(rec_idx_val_map) }
+
+    lig_idx_val_map = np.arange(np.min(observed_lig_num_nodes), np.max(observed_lig_num_nodes) + 1)
+    lig_val_idx_map = { val:idx for idx, val in enumerate(lig_idx_val_map) }
+
+    for mol_sizes, count in lig_rec_size_counter.items():
+        rec_n_atoms, lig_n_atoms = mol_sizes
+        rec_idx = rec_val_idx_map[rec_n_atoms]
+        lig_idx = lig_val_idx_map[lig_n_atoms]
+        joint_histogram[lig_idx, rec_idx] += count
+
+
+    print(f'Original histogram: {np.count_nonzero(joint_histogram)}/'
+          f'{joint_histogram.shape[0] * joint_histogram.shape[1]} bins filled')
+
+    # Smooth the histogram
+    if smooth_sigma is not None:
+        filtered_histogram = gaussian_filter(
+            joint_histogram, sigma=smooth_sigma, order=0, mode='constant',
+            cval=0.0, truncate=4.0)
+
+        print(f'Smoothed histogram: {np.count_nonzero(filtered_histogram)}/'
+              f'{filtered_histogram.shape[0] * filtered_histogram.shape[1]} bins filled')
+
+        joint_histogram = filtered_histogram
+
+    return joint_histogram
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -297,7 +346,7 @@ if __name__ == '__main__':
         
 
         data = defaultdict(list)
-        ligand_size_counter = defaultdict(int)
+        lig_rec_size_counter = defaultdict(int)
         atom_type_counts = None
         smiles = set()
 
@@ -398,8 +447,9 @@ if __name__ == '__main__':
                         else:
                             atom_type_counts += lig_feat.sum(dim=0)
 
-                        # record ligand size
-                        ligand_size_counter[lig_pos.shape[0]] += 1
+                        # record ligand size and pocket size
+                        size_counter_key = (rec_pos.shape[0], lig_pos.shape[0])
+                        lig_rec_size_counter[size_counter_key] += 1
 
                         # compute/record smiles
                         smi = compute_smiles(lig_pos, lig_feat, lig_decoder)
@@ -466,10 +516,11 @@ if __name__ == '__main__':
         with open(filenames, 'wb') as f:
             pickle.dump({'rec_files': data['rec_files'], 'lig_files': data['lig_files']}, f)
 
-        # save ligand size counts
-        lig_size_file = processed_dir / f'{split}_ligand_sizes.pkl'
-        with open(lig_size_file, 'wb') as f:
-            pickle.dump(ligand_size_counter, f)
+        # save joint distribution of ligand and pocket sizes
+        joint_dist_file = processed_dir / f'{split}_n_node_joint_dist.pkl'
+        joint_dist = get_n_nodes_dist(lig_rec_size_counter, smooth_sigma=1)
+        with open(joint_dist_file, 'wb') as f:
+            pickle.dump(joint_dist, f)
 
         # save smiles
         smiles_file = processed_dir / f'{split}_smiles.pkl'
