@@ -505,9 +505,8 @@ class LigandDiffuser(nn.Module):
 
     @torch.no_grad()
     def sample_random_sizes(self, ref_graphs: List[dgl.DGLHeteroGraph], n_replicates: int = 10, rec_enc_batch_size: int = 32, diff_batch_size: int = 32):
-        
-        n_receptors = len(ref_graphs)
-        n_lig_atoms = self.lig_size_dist.sample((n_receptors, n_replicates))
+        n_nodes_rec = torch.tensor([ g.num_nodes('rec') for g in ref_graphs ])
+        n_lig_atoms = self.lig_size_dist.sample(n_nodes_rec, n_replicates)
         samples = self._sample(ref_graphs=ref_graphs, n_lig_atoms=n_lig_atoms, rec_enc_batch_size=rec_enc_batch_size, diff_batch_size=diff_batch_size)
         return samples
 

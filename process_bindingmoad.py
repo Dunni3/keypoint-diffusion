@@ -245,8 +245,9 @@ def get_n_nodes_dist(lig_rec_size_counter: defaultdict, smooth_sigma=1):
         rec_n_atoms, lig_n_atoms = mol_sizes
         rec_idx = rec_val_idx_map[rec_n_atoms]
         lig_idx = lig_val_idx_map[lig_n_atoms]
-        joint_histogram[lig_idx, rec_idx] += count
+        joint_histogram[rec_idx, lig_idx] += count
 
+    joint_histogram = joint_histogram / joint_histogram.sum()
 
     print(f'Original histogram: {np.count_nonzero(joint_histogram)}/'
           f'{joint_histogram.shape[0] * joint_histogram.shape[1]} bins filled')
@@ -262,7 +263,12 @@ def get_n_nodes_dist(lig_rec_size_counter: defaultdict, smooth_sigma=1):
 
         joint_histogram = filtered_histogram
 
-    return joint_histogram
+        joint_histogram = joint_histogram / joint_histogram.sum()
+
+    rec_bounds = (rec_idx_val_map[0], rec_idx_val_map[-1])
+    lig_bounds = (lig_idx_val_map[0], lig_idx_val_map[-1])
+
+    return joint_histogram, rec_bounds, lig_bounds
 
 
 if __name__ == '__main__':
@@ -518,9 +524,9 @@ if __name__ == '__main__':
 
         # save joint distribution of ligand and pocket sizes
         joint_dist_file = processed_dir / f'{split}_n_node_joint_dist.pkl'
-        joint_dist = get_n_nodes_dist(lig_rec_size_counter, smooth_sigma=1)
+        joint_dist_data = get_n_nodes_dist(lig_rec_size_counter, smooth_sigma=1)
         with open(joint_dist_file, 'wb') as f:
-            pickle.dump(joint_dist, f)
+            pickle.dump(joint_dist_data, f)
 
         # save smiles
         smiles_file = processed_dir / f'{split}_smiles.pkl'
