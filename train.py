@@ -17,6 +17,7 @@ import yaml
 from dgl.dataloading import GraphDataLoader
 
 import wandb
+from model_setup import model_from_config
 from analysis.metrics import ModelAnalyzer
 from data_processing.crossdocked.dataset import (CrossDockedDataset,
                                                  get_dataloader)
@@ -360,27 +361,27 @@ def main():
 
     # torch.autograd.set_detect_anomaly(True)
 
-    script_args, args = parse_arguments()
+    script_args, config = parse_arguments()
 
     # determine if we are resuming from a previous run
     resume = script_args.resume is not None
 
     # initialize wandb
-    wandb_init_kwargs = args['wandb']['init_kwargs']
-    wandb_init_kwargs['name'] = args['experiment']['name']
-    wandb.init(config=args, settings=dict(start_method="thread"), **wandb_init_kwargs)
+    wandb_init_kwargs = config['wandb']['init_kwargs']
+    wandb_init_kwargs['name'] = config['experiment']['name']
+    wandb.init(config=config, settings=dict(start_method="thread"), **wandb_init_kwargs)
 
     # if an experiment name was not given in the config file, weights and biases will have assigned a random name
-    if args['experiment']['name'] is None and wandb.run is not None: 
-        args['experiment']['name'] = wandb.run.name
+    if config['experiment']['name'] is None and wandb.run is not None: 
+        config['experiment']['name'] = wandb.run.name
 
-    print(f"running experiment {args['experiment']['name']}", flush=True)
+    print(f"running experiment {config['experiment']['name']}", flush=True)
 
     # create output directory
     now = datetime.now().strftime('%m%d%H%M%S')
-    results_dir = Path(args['experiment']['results_dir'])
+    results_dir = Path(config['experiment']['results_dir'])
     random_id = str(uuid.uuid1())[:4]
-    output_dir_name = f"{args['experiment']['name']}_{now}_{random_id}"
+    output_dir_name = f"{config['experiment']['name']}_{now}_{random_id}"
     output_dir = results_dir / output_dir_name
     output_dir.mkdir()
     print(f'results are written to this directory: {output_dir}', flush=True)
@@ -399,85 +400,27 @@ def main():
     print(f'{device=}', flush=True)
 
     # get batch size
-    batch_size = args['training']['batch_size']
-
-    # get the model architecture
-    try:
-        architecture = args['diffusion']['architecture']
-    except KeyError:
-        architecture = 'egnn'
+    batch_size = config['training']['batch_size']
 
     # create datasets
-    dataset_path = Path(args['dataset']['location']) 
+    dataset_path = Path(config['dataset']['location']) 
     train_dataset_path = str(dataset_path / 'train.pkl') 
     test_dataset_path = str(dataset_path / 'test.pkl')
-    train_dataset = CrossDockedDataset(name='train', processed_data_file=train_dataset_path, **args['graph'], **args['dataset'])
-    test_dataset = CrossDockedDataset(name='test', processed_data_file=test_dataset_path, **args['graph'], **args['dataset'])
+    train_dataset = CrossDockedDataset(name='train', processed_data_file=train_dataset_path, **config['graph'], **config['dataset'])
+    test_dataset = CrossDockedDataset(name='test', processed_data_file=test_dataset_path, **config['graph'], **config['dataset'])
 
     # compute number of iterations per epoch - necessary for deciding when to do test evaluations/saves/etc. 
     iterations_per_epoch = len(train_dataset) / batch_size
 
     # create dataloaders
-    train_dataloader = get_dataloader(train_dataset, batch_size=batch_size, num_workers=args['training']['num_workers'], shuffle=True, pin_memory=True)
-    test_dataloader = get_dataloader(test_dataset, batch_size=batch_size, num_workers=args['training']['num_workers'], pin_memory=True)
-
-    # get number of ligand and receptor atom features
-    # test_rec_graph, test_lig_pos, test_lig_feat, test_interface_points = train_dataset[0]
-    test_complex_graph, _ = train_dataset[0]
-    n_rec_atom_features = test_complex_graph.nodes['rec'].data['h_0'].shape[1]
-    n_lig_feat = test_complex_graph.nodes['lig'].data['h_0'].shape[1]
-
-    try:
-        rec_encoder_type = args['diffusion']['rec_encoder_type']
-    except KeyError:
-        rec_encoder_type = 'learned'
-
-    if rec_encoder_type == 'learned':
-        if architecture == 'egnn':
-            n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
-        elif architecture == 'gvp':
-            n_kp_feat = args["rec_encoder_gvp"]["out_scalar_size"]
-    else:
-        n_kp_feat = n_rec_atom_features
-
-    print(f'{n_rec_atom_features=}')
-    print(f'{n_lig_feat=}', flush=True)
-
-    # get rec encoder config and dynamics config
-    if architecture == 'gvp':
-        rec_encoder_config = args["rec_encoder_gvp"]
-        rec_encoder_config['in_scalar_size'] = n_rec_atom_features
-        args["rec_encoder_gvp"]["in_scalar_size"] = n_rec_atom_features
-        dynamics_config = args['dynamics_gvp']
-    elif architecture == 'egnn':
-        rec_encoder_config = args["rec_encoder"]
-        rec_encoder_config["in_n_node_feat"] = n_rec_atom_features
-        args["rec_encoder"]["in_n_node_feat"] = n_rec_atom_features
-        dynamics_config = args['dynamics']
-
-    # determine if we're using fake atoms
-    try:
-        use_fake_atoms = args['dataset']['max_fake_atom_frac'] > 0
-    except KeyError:
-        use_fake_atoms = False
+    train_dataloader = get_dataloader(train_dataset, batch_size=batch_size, num_workers=config['training']['num_workers'], shuffle=True, pin_memory=True)
+    test_dataloader = get_dataloader(test_dataset, batch_size=batch_size, num_workers=config['training']['num_workers'], pin_memory=True)
 
     # determine if we are using interface points
-    use_interface_points = args['rec_encoder_loss']['use_interface_points']
-
-    # get number of keyponts
-    n_keypoints = args['graph']['n_keypoints']
+    use_interface_points = config['rec_encoder_loss']['use_interface_points']
 
     # create diffusion model
-    model = LigandDiffuser(
-        n_lig_feat, 
-        n_kp_feat,
-        processed_dataset_dir=Path(args['dataset']['location']), # TODO: on principle, i don't like that our model needs access to the processed data dir for which it was trained.. need to fix/reorganize to avoid this
-        graph_config=args['graph'],
-        dynamics_config=dynamics_config, 
-        rec_encoder_config=rec_encoder_config, 
-        rec_encoder_loss_config=args['rec_encoder_loss'],
-        use_fake_atoms=use_fake_atoms,
-        **args['diffusion']).to(device=device)
+    model: LigandDiffuser = model_from_config(config).to(device)
     
     if resume:
         state_file = script_args.resume
@@ -486,56 +429,48 @@ def main():
     # create optimizer
     optimizer = torch.optim.Adam(
         model.parameters(), 
-        lr=args["training"]['learning_rate'],
-        weight_decay=args["training"]['weight_decay'])
+        lr=config["training"]['learning_rate'],
+        weight_decay=config["training"]['weight_decay'])
 
 
     # create model analyzer
     model_analyzer = ModelAnalyzer(model=model, dataset=test_dataset, device=device)
 
     # initialize learning rate scheduler
-    scheduler_args = args['training']['scheduler']
+    scheduler_args = config['training']['scheduler']
     scheduler = Scheduler(
         model=model,
         optimizer=optimizer,
-        base_lr=args['training']['learning_rate'],
+        base_lr=config['training']['learning_rate'],
         output_dir=output_dir,
-        rec_enc_loss_weight=args['training']['rec_encoder_loss_weight'],
+        rec_enc_loss_weight=config['training']['rec_encoder_loss_weight'],
         **scheduler_args
     )
 
     # watch model if desired
-    if args['wandb']['watch_model']:
-        wandb.watch(model, **args['wandb']['watch_kwargs'])
-
-    # add info that is needed to reconstruct the model later into args
-    # this should definitely be done in a cleaner way. and it can be. i just dont have time
-    args["reconstruction"] = {
-        'n_lig_feat': n_lig_feat,
-        'n_rec_atom_feat': n_rec_atom_features
-    }
+    if config['wandb']['watch_model']:
+        wandb.watch(model, **config['wandb']['watch_kwargs'])
 
     # write the model configuration to the output directory
     new_configfile_loc = output_dir / 'config.yml'
     with open(new_configfile_loc, 'w') as f:
-        yaml.dump(args, f)
+        yaml.dump(config, f)
 
     # save args to output dir
     arg_fp = output_dir / 'args.pkl'
     with open(arg_fp, 'wb') as f:
-        pickle.dump(args, f)
+        pickle.dump(config, f)
     
     # create empty lists to record per-batch losses
     losses = defaultdict(list)
 
-
-    if args['rec_encoder_loss']['loss_type'] == 'optimal_transport':
+    if config['rec_encoder_loss']['loss_type'] == 'optimal_transport':
         rec_encoder_loss_name = 'ot_loss'
-    elif args['rec_encoder_loss']['loss_type'] == 'gaussian_repulsion':
+    elif config['rec_encoder_loss']['loss_type'] == 'gaussian_repulsion':
         rec_encoder_loss_name = 'repulsion_loss'
-    elif args['rec_encoder_loss']['loss_type'] == 'hinge':
+    elif config['rec_encoder_loss']['loss_type'] == 'hinge':
         rec_encoder_loss_name = 'rec_hinge_loss'
-    elif args['rec_encoder_loss']['loss_type'] == 'none':
+    elif config['rec_encoder_loss']['loss_type'] == 'none':
         rec_encoder_loss_name = 'no_rec_enc_loss'
     
     # create markers for deciding when to evaluate on the test set, report training metrics, save the model
@@ -548,7 +483,7 @@ def main():
     training_start = time.time()
 
     model.train()
-    n_epochs = args['training']['epochs']
+    n_epochs = config['training']['epochs']
     n_epochs_ceil = math.ceil(n_epochs)
     for epoch_idx in range(n_epochs_ceil):
 
@@ -586,9 +521,7 @@ def main():
             # TODO: add random translations to the complex positions??
 
             # encode receptor, add noise to ligand and predict noise
-            # noise_loss, rec_encoder_loss = model(rec_graphs, lig_atom_positions, lig_atom_features)
             loss_dict = model(complex_graphs, interface_points)
-            # noise_loss, rec_encoder_loss = loss_dict['l2'], loss_dict['rec_encoder']
 
             # append losses for this batch into lists of all per-batch losses computed so far
             for k,v in loss_dict.items():
@@ -600,34 +533,17 @@ def main():
                 total_loss = total_loss + loss_dict['rec_encoder']*rec_encoder_loss_weight
 
             if 'rl_hinge' in loss_dict:
-                total_loss = total_loss + loss_dict['rl_hinge']*args['training']['rl_hinge_loss_weight']
+                total_loss = total_loss + loss_dict['rl_hinge']*config['training']['rl_hinge_loss_weight']
 
 
             total_loss.backward()
 
-            # if current_epoch > 6.56943:
-            #     nan_grads_found = False
-            #     nan_params = []
-            #     for param_name, param in model.named_parameters():
-            #         if param.grad is None:
-            #              continue
-            #         if param.grad.isnan().any():
-            #             print(f'{param_name} has nan gradient', flush=True)
-            #             nan_grads_found = True
-            #             nan_params.append(param_name)
-            #     if nan_grads_found:
-            #         with open('nan_params.txt', 'w') as f:
-            #             f.write('\n'.join(nan_params))
-            #         raise ValueError('nan grads found')
-            #     sys.exit()
-
-
-            if args['training']['clip_grad']:
-                torch.nn.utils.clip_grad_value_(model.parameters(), clip_value=args['training']['clip_value'])
+            if config['training']['clip_grad']:
+                torch.nn.utils.clip_grad_value_(model.parameters(), clip_value=config['training']['clip_value'])
             optimizer.step()
 
             # save the model if necessary
-            if current_epoch - save_marker >= args['training']['save_interval']:
+            if current_epoch - save_marker >= config['training']['save_interval']:
                 save_marker = current_epoch # update save marker
                 file_name = f'model_epoch_{epoch_idx}_iter_{iter_idx}.pt' # where to save current model
                 file_path = output_dir / file_name 
@@ -636,14 +552,14 @@ def main():
                 save_model(model, most_recent_model)
 
             # evaluate the quality of sampled molecules, if necessary
-            if current_epoch - sample_eval_marker >= args['training']['sample_interval']:
+            if current_epoch - sample_eval_marker >= config['training']['sample_interval']:
 
                 # reset marker
                 sample_eval_marker = current_epoch
 
                 # sample molecules / compute metrics of their quality
                 model.eval()
-                molecule_quality_metrics = model_analyzer.sample_and_analyze(**args['sampling_config'])
+                molecule_quality_metrics = model_analyzer.sample_and_analyze(**config['sampling_config'])
                 molecule_quality_metrics['epoch_exact'] = current_epoch
                 model.train()
 
@@ -656,11 +572,11 @@ def main():
                 wandb.log(molecule_quality_metrics)
 
             # test the model if necessary
-            if current_epoch - test_report_marker >= args['training']['test_interval'] or current_epoch == 0:
+            if current_epoch - test_report_marker >= config['training']['test_interval'] or current_epoch == 0:
                 test_report_marker = current_epoch
 
                 model.eval()
-                test_metrics_row = test_model(model, test_dataloader, args, device=device)
+                test_metrics_row = test_model(model, test_dataloader, config, device=device)
                 model.train()
 
                 test_metrics_row['epoch_exact'] = current_epoch
@@ -686,7 +602,7 @@ def main():
 
 
             # record train metrics if necessary
-            if current_epoch - train_report_marker >= args['training']['train_metrics_interval']:
+            if current_epoch - train_report_marker >= config['training']['train_metrics_interval']:
                 train_report_marker = current_epoch
 
                 # TODO: edit this to use the new method of reporting losses from the ligand diffusion model!!

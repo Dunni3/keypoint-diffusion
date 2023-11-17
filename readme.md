@@ -64,6 +64,8 @@ Each time `train.py` is run, a new directory will be created within `results_dir
 
 The script `byop.py` (bring your own protein) accepts as input: the location of a trained model, a pdb defining a protein structure, and an sdf file specifying a "reference ligand" which is located inside the protein binding pocket. This reference ligand need not actually be a ligand. The script will simply use the coordinates of the reference ligand to define the binding pocket and it will start sampling molecules by placing atoms at the center of mass of the reference ligand. 
 
+`byop.py` will do a force-field minimization of generated ligands inside the binding pocket if you specify the `--pocket_minimization` flag.
+
 # Sampling molecules and visualizing the diffusion process.
 
 Use the script `sample.py` with the `--visualize` flag. Ideally, the visualize feature should be incorporated into `test.py` because these scripts are doing almost the exact same thing, iirc. Note that this only allows you to visualize the sampling process for proteins in the original dataset. I haven't yet implemented sampling visualization with `byop.py`.
@@ -80,11 +82,15 @@ Note that `test.py` assumed that the processed dataset specified by the models's
 
 ## Force-Field Minimization inside Binding Pocket
 
-The force-field minimzation of a single biding pocket is performed by the script `analysis/pocket_minimization.py`. However, we sample ligands for many different pockets (all pockets in the validation set). You can run the script `gen_pocket_min_cmds.py` and pass it a `sampled_mols` directory produced by `test.py`, and then it will generate a shell script where each line of the shell script calls `pocket_minimization.py` on a different pocket. You can then run this shell script to run the force-field minimization on all of the sampled pockets. You could also use this shell script to construct an array job to parallelize minimization across a cluster. For a given pocket directory produced by `test.py`, the minimization script `analysis/pocket_minimization.py` will write the minimized molecules into that same directory as well as a csv containing the RMSDs of molecules before and after force-field minimization. 
+There are two options for doing ff-minimization of generated molecules inside the binding pocket:
+1. You can do it while sampling molecules by passing the `--pocket_minimization` flag to `test.py`. This will cause `test.py` to write the minimized molecules into the same directory as the raw sampled molecules.
+2. You can do it after sampling molecules by running the script `analysis/pocket_minimization.py`. This script accepts as input a directory of sampled molecules produced by `test.py`.
+
+To elbaorate on the second option here: the second method is advantageous if you are minimizing many molecules across many pockets because you can parallelize the minimization across a cluster. The force-field minimzation of a single binding pocket is performed by the script `analysis/pocket_minimization.py`. You can run the script `gen_pocket_min_cmds.py` and pass it a `sampled_mols` directory produced by `test.py`, and then it will generate a shell script where each line of the shell script calls `pocket_minimization.py` on a different pocket. You can then run this shell script to run the force-field minimization on all of the sampled pockets. You could also use this shell script to construct an array job to parallelize minimization across a cluster. For a given pocket directory produced by `test.py`, the minimization script `analysis/pocket_minimization.py` will write the minimized molecules into that same directory as well as a csv containing the RMSDs of molecules before and after force-field minimization. 
 
 ## Scoring with AutoDock Vina
 
-We actually use [gnina](https://github.com/gnina/gnina) to do molecule scoring. gnina returns Autodock Vina scores on molecules in addition to scores from its own scoring function. So to use our scoring pipeline, you will need to install gnina. The scripts that we have for docking/scoring generated molecules just p
+We actually use [gnina](https://github.com/gnina/gnina) to do molecule scoring. gnina returns Autodock Vina scores on molecules in addition to scores from its own scoring function. So to use our scoring pipeline, you will need to install gnina. 
 
 The script `gen_docking_cmds.py` accepts as input a directory of sampled molecules produced by `test.py` and produces as output a text file containing list of gnina commands which then can be run as a shell script or array jobs across a cluster. By default, the commands generated will completely redock the reference ligand. This is not what we do for the paper. For the paper, we use the `--minimize` flag to generate commands that will simply minimize the ligand pose with respect to the Vina scoring function. 
 

@@ -7,7 +7,7 @@ class LigandSizeDistribution:
 
     def __init__(self, processed_dataset_dir: Path):
 
-        joint_dist_file = processed_dataset_dir / 'train_joint_dist.pkl'
+        joint_dist_file = processed_dataset_dir / 'train_n_node_joint_dist.pkl'
         if not joint_dist_file.exists():
             raise ValueError(f'Joint distribution file {joint_dist_file} does not exist')
         

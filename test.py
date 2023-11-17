@@ -11,6 +11,7 @@ import pickle
 from tqdm import trange
 import dgl
 
+from model_setup import model_from_config
 from data_processing.crossdocked.dataset import CrossDockedDataset
 from data_processing.make_bindingmoad_pocketfile import write_pocket_file
 from models.ligand_diffuser import LigandDiffuser
@@ -78,20 +79,20 @@ def write_ligands(mols, filepath: Path):
 
 def main():
     
-    cmd_args = parse_arguments()
+    args = parse_arguments()
 
     # get output dir path and create the directory
-    output_dir = Path(cmd_args.output_dir)
+    output_dir = Path(args.output_dir)
     output_dir.mkdir(exist_ok=True)
     mols_dir = output_dir / 'sampled_mols'
     mols_dir.mkdir(exist_ok=True)
 
     # get filepath of config file within model_dir
-    if cmd_args.model_dir is not None:
-        model_dir = Path(cmd_args.model_dir)
+    if args.model_dir is not None:
+        model_dir = Path(args.model_dir)
         model_file = model_dir / 'model.pt'
-    elif cmd_args.model_file is not None:
-        model_file = Path(cmd_args.model_file)
+    elif args.model_file is not None:
+        model_file = Path(args.model_file)
         model_dir = model_file.parent
     
     # get config file
@@ -99,67 +100,28 @@ def main():
 
     # load model configuration
     with open(config_file, 'r') as f:
-        args = yaml.load(f, Loader=yaml.FullLoader)
+        config = yaml.load(f, Loader=yaml.FullLoader)
 
     # determine device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'{device=}', flush=True)
 
     # set random seeds
-    torch.manual_seed(cmd_args.seed)
+    torch.manual_seed(args.seed)
 
     # create test dataset object
-    dataset_path = Path(args['dataset']['location']) 
-    test_dataset_path = str(dataset_path / f'{cmd_args.split}.pkl')
-    test_dataset = CrossDockedDataset(name=cmd_args.split, processed_data_file=test_dataset_path, **args['graph'], **args['dataset'])
-
-    # get the model architecture
-    try:
-        architecture = args['diffusion']['architecture']
-    except KeyError:
-        architecture = 'egnn'
-
-    try:
-        rec_encoder_type = args['diffusion']['rec_encoder_type']
-    except KeyError:
-        rec_encoder_type = 'learned'
-
-    # get rec encoder config and dynamics config
-    if architecture == 'gvp':
-        rec_encoder_config = args["rec_encoder_gvp"]
-        dynamics_config = args['dynamics_gvp']
-    elif architecture == 'egnn':
-        rec_encoder_config = args["rec_encoder"]
-        dynamics_config = args['dynamics']
-
-    # get number of ligand and receptor atom features
-    n_lig_feat = args['reconstruction']['n_lig_feat']
-
-    if rec_encoder_type == 'learned':
-        if architecture == 'egnn':
-            n_kp_feat = args["rec_encoder"]["out_n_node_feat"]
-        elif architecture == 'gvp':
-            n_kp_feat = args["rec_encoder_gvp"]["out_scalar_size"]
-    else:
-        n_kp_feat = args['reconstruction']['n_rec_atom_feat']
+    dataset_path = Path(config['dataset']['location']) 
+    test_dataset_path = str(dataset_path / f'{args.split}.pkl')
+    test_dataset = CrossDockedDataset(name=args.split, processed_data_file=test_dataset_path, **config['graph'], **config['dataset'])
 
     # determine if we're using fake atoms
     try:
-        use_fake_atoms = args['dataset']['max_fake_atom_frac'] > 0
+        use_fake_atoms = config['dataset']['max_fake_atom_frac'] > 0
     except KeyError:
         use_fake_atoms = False
 
     # create diffusion model
-    model = LigandDiffuser(
-        n_lig_feat, 
-        n_kp_feat,
-        processed_dataset_dir=Path(args['dataset']['location']),
-        graph_config=args['graph'],
-        dynamics_config=dynamics_config, 
-        rec_encoder_config=rec_encoder_config, 
-        rec_encoder_loss_config=args['rec_encoder_loss'],
-        use_fake_atoms=use_fake_atoms,
-        **args['diffusion']).to(device=device)
+    model: LigandDiffuser = model_from_config(config).to(device)
 
     # load model weights
     model.load_state_dict(torch.load(model_file, map_location=device))
@@ -171,15 +133,15 @@ def main():
     # keypoints = []
 
     # generate the iterator over the dataset
-    if cmd_args.dataset_idx is None:
+    if args.dataset_idx is None:
         # truncate the dataset if we need to
-        if cmd_args.dataset_size is not None:
-            dataset_size = cmd_args.dataset_size
+        if args.dataset_size is not None:
+            dataset_size = args.dataset_size
         else:
             dataset_size = len(test_dataset)
         dataset_iterator = trange(dataset_size)
     else:
-        dataset_iterator = trange(cmd_args.dataset_idx, cmd_args.dataset_idx+1)
+        dataset_iterator = trange(args.dataset_idx, args.dataset_idx+1)
 
     # iterate over dataset and draw samples for each pocket
     for dataset_idx in dataset_iterator:
@@ -190,6 +152,8 @@ def main():
         ref_graph, _ = test_dataset[dataset_idx]
         ref_rec_file, ref_lig_file = test_dataset.get_files(dataset_idx) # get original rec/lig files
 
+        # when using fake atoms, the dataloader will add fake atoms to the ligand graph
+        # we need to remove them here
         if use_fake_atoms:
             ref_lig_batch_idx = torch.zeros(ref_graph.num_nodes('lig'), device=ref_graph.device)
             ref_graph = model.remove_fake_atoms(ref_graph, ref_lig_batch_idx)
@@ -201,7 +165,7 @@ def main():
 
 
         # compute initial ligand COM
-        if cmd_args.use_ref_lig_com:
+        if args.use_ref_lig_com:
             ref_init_lig_com = dgl.readout_nodes(ref_graph, ntype='lig', feat='x_0', op='mean')
             assert ref_init_lig_com.shape == (1, 3)
         else:
@@ -209,18 +173,18 @@ def main():
 
         pocket_raw_mols = []
 
-        for attempt_idx in range(cmd_args.max_tries):
+        for attempt_idx in range(args.max_tries):
 
-            n_mols_needed = cmd_args.samples_per_pocket - len(pocket_raw_mols)
-            n_mols_to_generate = int( n_mols_needed / (cmd_args.avg_validity*0.95) ) + 1
-            batch_size = min(n_mols_to_generate, cmd_args.max_batch_size)
+            n_mols_needed = args.samples_per_pocket - len(pocket_raw_mols)
+            n_mols_to_generate = int( n_mols_needed / (args.avg_validity*0.95) ) + 1
+            batch_size = min(n_mols_to_generate, args.max_batch_size)
 
             # collect just the batch_size graphs and init_kp_coms that we need
             g_batch = copy_graph(ref_graph, batch_size)
             g_batch = dgl.batch(g_batch)
 
             # copy the ref_lig_com out batch_size times
-            if cmd_args.use_ref_lig_com:
+            if args.use_ref_lig_com:
                 init_lig_com_batch = ref_init_lig_com.repeat(batch_size, 1)
             else:
                 init_lig_com_batch = None
@@ -245,7 +209,7 @@ def main():
                     pocket_raw_mols.append(mol)
 
             # stop generating molecules if we've made enough
-            if len(pocket_raw_mols) >= cmd_args.samples_per_pocket:
+            if len(pocket_raw_mols) >= args.samples_per_pocket:
                 break
 
         pocket_sample_time = time.time() - pocket_sample_start
@@ -270,11 +234,11 @@ def main():
 
         # write the pocket used for minimization to the pocket dir
         pocket_file = pocket_dir / 'pocket.pdb'
-        if cmd_args.dataset == 'bindingmoad':
-            write_pocket_file(ref_rec_file, ref_lig_file, pocket_file, cutoff=args['dataset']['pocket_cutoff'])
+        if args.dataset == 'bindingmoad':
+            write_pocket_file(ref_rec_file, ref_lig_file, pocket_file, cutoff=config['dataset']['pocket_cutoff'])
             full_rec_file = pocket_dir / 'receptor.pdb'
             shutil.copy(ref_rec_file, full_rec_file)
-        elif cmd_args.dataset == 'crossdocked':
+        elif args.dataset == 'crossdocked':
             shutil.copy(ref_rec_file, pocket_file)
 
         # write the reference files to the pocket dir
@@ -291,7 +255,7 @@ def main():
         write_ligands(pocket_raw_mols, pocket_dir / 'raw_ligands.sdf')
 
         # ligand-only minimization
-        if cmd_args.ligand_only_minimization:
+        if args.ligand_only_minimization:
             pocket_lomin_mols = []
             for raw_mol in pocket_raw_mols:
                 minimized_mol = process_molecule(Chem.Mol(raw_mol), add_hydrogens=True, relax_iter=200)
@@ -302,7 +266,7 @@ def main():
             write_ligands(pocket_lomin_mols, ligands_file)
 
         # pocket-only minimization
-        if cmd_args.pocket_minimization:
+        if args.pocket_minimization:
             input_mols = [ Chem.Mol(raw_mol) for raw_mol in pocket_raw_mols ]
             pocket_pmin_mols, rmsd_df = pocket_minimization(pocket_file, input_mols, add_hs=True)
             ligands_file = pocket_dir / 'pocket_minimized_ligands.sdf'

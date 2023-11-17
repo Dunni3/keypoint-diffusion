@@ -15,7 +15,6 @@ from Bio.PDB.Polypeptide import protein_letters_3to1, is_aa
 from Bio.PDB import PDBIO
 from openbabel import openbabel
 from rdkit import Chem
-from rdkit.Chem import QED
 from scipy.ndimage import gaussian_filter
 from scipy.spatial.distance import cdist
 
@@ -24,7 +23,7 @@ from constants import aa_to_idx
 import utils
 import pickle
 
-from data_processing.pdbbind_processing import rec_atom_featurizer, lig_atom_featurizer, Unparsable, build_receptor_graph, get_interface_points, InterfacePointException, build_initial_complex_graph
+from data_processing.pdbbind_processing import rec_atom_featurizer, lig_atom_featurizer, Unparsable, build_receptor_graph, get_interface_points, InterfacePointException
 from utils import get_rec_atom_map
 
 

@@ -75,7 +75,7 @@ def parse_ligand(ligand_path: Path, element_map: Dict[str, int], remove_hydrogen
 
     # skip ligands which have "other" type atoms
     if other_atoms_mask.sum() > 0:
-        raise Unparsable
+        raise Unparsable('Ligand contains atom types that are not supported.')
 
     # drop the "other" atom dimension
     atom_features = atom_features[:, :-1]
