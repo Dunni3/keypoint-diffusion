@@ -1,32 +1,35 @@
 import argparse
+import math
+import pickle
+import shutil
 import time
-import yaml
 from pathlib import Path
-import torch
+
+import dgl
 import numpy as np
 import prody
+import torch
+import yaml
+from Bio.PDB import MMCIFIO, PDBIO, MMCIFParser, PDBParser
+from Bio.PDB.Polypeptide import is_aa, protein_letters_3to1
 from rdkit import Chem
-import shutil
-import pickle
-from tqdm import trange
-import dgl    
-import math
-
-from Bio.PDB import PDBParser, MMCIFParser, PDBIO, MMCIFIO
-from Bio.PDB.Polypeptide import protein_letters_3to1, is_aa
-from data_processing.pdbbind_processing import parse_ligand, rec_atom_featurizer, build_initial_complex_graph
 from scipy.spatial.distance import cdist
-from constants import aa_to_idx
 from torch.nn.functional import one_hot
+from tqdm import trange
 
-from model_setup import model_from_config
+from analysis.metrics import MoleculeProperties
+from analysis.molecule_builder import build_molecule, process_molecule
+from analysis.pocket_minimization import pocket_minimization
+from constants import aa_to_idx
 from data_processing.crossdocked.dataset import CrossDockedDataset
 from data_processing.make_bindingmoad_pocketfile import PocketSelector
+from data_processing.pdbbind_processing import (build_initial_complex_graph,
+                                                parse_ligand,
+                                                rec_atom_featurizer)
+from model_setup import model_from_config
 from models.ligand_diffuser import LigandDiffuser
-from utils import write_xyz_file, copy_graph, get_rec_atom_map
-from analysis.molecule_builder import build_molecule, process_molecule
-from analysis.metrics import MoleculeProperties
-from analysis.pocket_minimization import pocket_minimization
+from utils import copy_graph, get_rec_atom_map, write_xyz_file
+
 
 def parse_arguments():
     p = argparse.ArgumentParser()

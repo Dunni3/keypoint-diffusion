@@ -130,5 +130,5 @@ sbatch --array 1-244 dock_cpu.slurm -->
 # Cleanup todo
 - [] add license
 - [x] create directory with trained models
-- [] write script for sampling molecules from trained models
+- [x] write script for sampling molecules from trained models
 - [] change name of directory and name of LigandDiffuser class
