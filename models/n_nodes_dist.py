@@ -41,11 +41,6 @@ class LigandSizeDistribution:
 
     def sample(self, n_nodes_rec: torch.Tensor, n_replicates) -> torch.Tensor:
 
-
-        # sampled_idxs = self.dist.sample(sample_shape=size)
-        # sampled_sizes = self.idx_to_size[sampled_idxs]
-        # return sampled_sizes
-
         for idx in range(n_nodes_rec.shape[0]):
             if n_nodes_rec[idx] not in self.rec_size_to_idx:
 
