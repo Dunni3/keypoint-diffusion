@@ -109,9 +109,6 @@ def process_ligand_and_pocket(rec_file: Path, lig_file: Path, output_dir: Path,
     rec_struct = parser.get_structure('', rec_file)
 
     _, lig_coords, lig_atom_features = parse_ligand(lig_file, lig_element_map, remove_hydrogen=remove_hydrogen)
-    
-    # drop "other atoms" column
-    lig_atom_features = lig_atom_features[:, :-1]
 
     # make ligand data into torch tensors
     lig_coords = torch.tensor(lig_coords, dtype=torch.float32)
@@ -234,7 +231,8 @@ def main():
     print(f'{device=}', flush=True)
 
     # set random seeds
-    torch.manual_seed(args.seed)
+    if args.seed is not None:
+        torch.manual_seed(args.seed)
 
     # isolate dataset config
     dataset_config = config['dataset']
@@ -268,11 +266,11 @@ def main():
         raise ValueError('receptor or reference ligand file does not exist')
     
     ref_graph: dgl.DGLHeteroGraph = process_ligand_and_pocket(
-                                rec_file, ref_lig_file,
+                                rec_file, ref_lig_file, output_dir,
                                 rec_element_map=rec_element_map,
                                 lig_element_map=lig_element_map,
-                                ip_dist_threshold=dataset_config['interface_distance_threshold'],
-                                ip_exclusion_threshold=dataset_config['interface_exclusion_threshold'], 
+                                n_keypoints=config['graph']['n_keypoints'],
+                                graph_cutoffs=config['graph']['graph_cutoffs'],
                                 pocket_cutoff=dataset_config['pocket_cutoff'], 
                                 remove_hydrogen=dataset_config['remove_hydrogen'],
                                 ca_only=ca_only)
@@ -308,7 +306,7 @@ def main():
 
         # sample the number of ligand atoms in each graph
         if args.n_ligand_atoms == 'sample':
-            atoms_per_lig = model.lig_size_dist.sample(n_rec_nodes, batch_size).to(device)
+            atoms_per_lig = model.lig_size_dist.sample(n_rec_nodes, batch_size).to(device).flatten()
         elif args.n_ligand_atoms == 'ref':
             atoms_per_lig = torch.tensor([ref_graph.num_nodes('lig')]*batch_size, device=device)
         else:
@@ -341,7 +339,7 @@ def main():
                 pocket_raw_mols.append(mol)
 
         # stop generating molecules if we've made enough
-        if len(pocket_raw_mols) >= args.samples_per_pocket:
+        if len(pocket_raw_mols) >= args.n_mols:
             break
 
     pocket_sample_time = time.time() - pocket_sample_start

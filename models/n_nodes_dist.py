@@ -21,8 +21,8 @@ class LigandSizeDistribution:
         self.rec_idx_to_size = torch.arange(rec_bounds[0], rec_bounds[1]+1)
         self.lig_idx_to_size = torch.arange(lig_bounds[0], lig_bounds[1]+1)
 
-        self.rec_size_to_idx = { size:idx for idx, size in enumerate(self.rec_idx_to_size) }
-        self.lig_size_to_idx = { size:idx for idx, size in enumerate(self.lig_idx_to_size) }
+        self.rec_size_to_idx = { int(size):idx for idx, size in enumerate(self.rec_idx_to_size) }
+        self.lig_size_to_idx = { int(size):idx for idx, size in enumerate(self.lig_idx_to_size) }
 
 
         # # get the dictionary containing the counts of number of nodes
@@ -42,7 +42,7 @@ class LigandSizeDistribution:
     def sample(self, n_nodes_rec: torch.Tensor, n_replicates) -> torch.Tensor:
 
         for idx in range(n_nodes_rec.shape[0]):
-            if n_nodes_rec[idx] not in self.rec_size_to_idx:
+            if int(n_nodes_rec[idx]) not in self.rec_size_to_idx:
 
                 if n_nodes_rec[idx] < self.rec_bounds[0]:
                     new_size = self.rec_bounds[0]
@@ -53,7 +53,7 @@ class LigandSizeDistribution:
                 print(f'Sampling number of ligand nodes conditioning on receptor having {new_size} nodes')
                 n_nodes_rec[idx] = new_size
 
-        rec_idxs = [ self.rec_size_to_idx[size] for size in n_nodes_rec ]
+        rec_idxs = [ self.rec_size_to_idx[int(size)] for size in n_nodes_rec ]
         rec_idxs = torch.tensor(rec_idxs)
         lig_idxs = torch.multinomial(self.joint_histogram[rec_idxs], n_replicates, replacement=True)
         lig_sizes = self.lig_idx_to_size[lig_idxs]
