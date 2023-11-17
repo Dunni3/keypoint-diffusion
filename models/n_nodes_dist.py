@@ -41,10 +41,18 @@ class LigandSizeDistribution:
 
     def sample(self, n_nodes_rec: torch.Tensor, n_replicates) -> torch.Tensor:
 
+        for idx in range(n_nodes_rec.shape[0]):
+            if n_nodes_rec[idx] not in self.rec_size_to_idx:
 
-        # sampled_idxs = self.dist.sample(sample_shape=size)
-        # sampled_sizes = self.idx_to_size[sampled_idxs]
-        # return sampled_sizes
+                if n_nodes_rec[idx] < self.rec_bounds[0]:
+                    new_size = self.rec_bounds[0]
+                elif n_nodes_rec[idx] > self.rec_bounds[1]:
+                    new_size = self.rec_bounds[1]
+
+                print(f'WARNING: Number of receptor nodes {n_nodes_rec[idx]} is not in the range {self.rec_bounds} from the training set')
+                print(f'Sampling number of ligand nodes conditioning on receptor having {new_size} nodes')
+                n_nodes_rec[idx] = new_size
+
         rec_idxs = [ self.rec_size_to_idx[size] for size in n_nodes_rec ]
         rec_idxs = torch.tensor(rec_idxs)
         lig_idxs = torch.multinomial(self.joint_histogram[rec_idxs], n_replicates, replacement=True)
