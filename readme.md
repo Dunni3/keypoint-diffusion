@@ -1,3 +1,7 @@
+# **Accelerating Inference in Molecular Diffusion Models with Latent Representations of Protein Structure.**
+
+![](generation_movie.mp4)
+
 # Setting up dev environment
 
 All code in this repository was run on python 3.10. In my experience, installing with python 3.11 caused dependency conflicts. I recommend using conda or mamba to create a python 3.10 environment. You should install the following dependencies in this order. You can copy and paste this code block into a shell script for easy use.
@@ -131,6 +135,6 @@ sbatch --array 1-244 dock_cpu.slurm -->
 - [ ] add license
 - [x] create directory with trained models
 - [x] write script for sampling molecules from trained models
-- [ ] change name of directory and name of LigandDiffuser class
+- [x ] change name of directory and name of LigandDiffuser class
 - [ ] add necessary dataset files for alpha-carbon only models
 - [ ] add picture of ligand generation to readme

@@ -1,4 +1,4 @@
-from models.ligand_diffuser import LigandDiffuser
+from models.ligand_diffuser import KeypointDiffusion
 from pathlib import Path
 
 def model_from_config(config: dict):
@@ -51,7 +51,7 @@ def model_from_config(config: dict):
         dynamics_config = config['dynamics']
 
     # create diffusion model
-    model = LigandDiffuser(
+    model = KeypointDiffusion(
         n_lig_feat, 
         n_kp_feat,
         processed_dataset_dir=Path(config['dataset']['location']),

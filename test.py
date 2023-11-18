@@ -14,7 +14,7 @@ import dgl
 from model_setup import model_from_config
 from data_processing.crossdocked.dataset import CrossDockedDataset
 from data_processing.make_bindingmoad_pocketfile import write_pocket_file
-from models.ligand_diffuser import LigandDiffuser
+from models.ligand_diffuser import KeypointDiffusion
 from utils import write_xyz_file, copy_graph
 from analysis.molecule_builder import build_molecule, process_molecule
 from analysis.metrics import MoleculeProperties
@@ -121,7 +121,7 @@ def main():
         use_fake_atoms = False
 
     # create diffusion model
-    model: LigandDiffuser = model_from_config(config).to(device)
+    model: KeypointDiffusion = model_from_config(config).to(device)
 
     # load model weights
     model.load_state_dict(torch.load(model_file, map_location=device))

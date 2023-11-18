@@ -10,14 +10,14 @@ import time
 import numpy as np
 from tqdm import tqdm
 
-from models.ligand_diffuser import LigandDiffuser
+from models.ligand_diffuser import KeypointDiffusion
 from data_processing.crossdocked.dataset import CrossDockedDataset
 from analysis.molecule_builder import make_mol_openbabel
 from constants import allowed_bonds
 
 class ModelAnalyzer:
 
-    def __init__(self, model: LigandDiffuser, dataset: CrossDockedDataset, device):
+    def __init__(self, model: KeypointDiffusion, dataset: CrossDockedDataset, device):
         self.model = model
         self.dataset = dataset
         self.connectivity_thresh = 0.5

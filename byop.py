@@ -27,7 +27,7 @@ from data_processing.pdbbind_processing import (build_initial_complex_graph,
                                                 parse_ligand,
                                                 rec_atom_featurizer)
 from model_setup import model_from_config
-from models.ligand_diffuser import LigandDiffuser
+from models.ligand_diffuser import KeypointDiffusion
 from utils import copy_graph, get_rec_atom_map, write_xyz_file
 
 
@@ -251,7 +251,7 @@ def main():
     lig_decoder = { v:k for k,v in lig_element_map.items() }
 
 
-    model: LigandDiffuser = model_from_config(config).to(device)
+    model: KeypointDiffusion = model_from_config(config).to(device)
 
     # load model weights
     model.load_state_dict(torch.load(model_file, map_location=device))

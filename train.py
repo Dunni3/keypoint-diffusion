@@ -22,7 +22,7 @@ from analysis.metrics import ModelAnalyzer
 from data_processing.crossdocked.dataset import (CrossDockedDataset,
                                                  get_dataloader)
 from models.dynamics import LigRecDynamics
-from models.ligand_diffuser import LigandDiffuser
+from models.ligand_diffuser import KeypointDiffusion
 from models.receptor_encoder import ReceptorEncoder
 from models.scheduler import Scheduler
 from utils import save_model
@@ -420,7 +420,7 @@ def main():
     use_interface_points = config['rec_encoder_loss']['use_interface_points']
 
     # create diffusion model
-    model: LigandDiffuser = model_from_config(config).to(device)
+    model: KeypointDiffusion = model_from_config(config).to(device)
     
     if resume:
         state_file = script_args.resume

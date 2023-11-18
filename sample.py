@@ -8,7 +8,7 @@ from rdkit import Chem
 import shutil
 
 from data_processing.crossdocked.dataset import CrossDockedDataset
-from models.ligand_diffuser import LigandDiffuser
+from models.ligand_diffuser import KeypointDiffusion
 from utils import write_xyz_file, copy_graph, get_batch_idxs
 from analysis.molecule_builder import make_mol_openbabel
 from data_processing.make_bindingmoad_pocketfile import write_pocket_file
@@ -156,7 +156,7 @@ def main():
         use_fake_atoms = False
 
     # create diffusion model
-    model = LigandDiffuser(
+    model = KeypointDiffusion(
         n_lig_feat, 
         n_kp_feat,
         processed_dataset_dir=Path(args['dataset']['location']),
