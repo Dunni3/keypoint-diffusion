@@ -133,3 +133,4 @@ sbatch --array 1-244 dock_cpu.slurm -->
 - [x] write script for sampling molecules from trained models
 - [ ] change name of directory and name of LigandDiffuser class
 - [ ] add necessary dataset files for alpha-carbon only models
+- [ ] add picture of ligand generation to readme
