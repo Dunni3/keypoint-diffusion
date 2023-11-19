@@ -1,6 +1,6 @@
 # **Accelerating Inference in Molecular Diffusion Models with Latent Representations of Protein Structure.**
 
-![](generation_movie.mp4)
+![](https://github.com/Dunni3/keypoint-diffusion/blob/eab669ebfbff81ee3a715f9520b9d423b5128476/generation_movie.mp4)
 
 # Setting up dev environment
 
