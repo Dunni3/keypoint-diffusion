@@ -2,6 +2,8 @@
 
 ![Keypoint-Conditioned Diffusion](https://github.com/Dunni3/keypoint-diffusion/assets/29707787/9dd7cbc4-1d10-4843-9cd5-d6565d088811)
 
+This is the offical code release for the paper [Accelerating Inference in Molecular Diffusion Models with Latent Representations of Protein Structure](). This work was accepted as a spotlight paper at the [NeurIPS 2023 Workshop on Generative AI in Biology](https://genbio-workshop.github.io/).
+
 # Setting up dev environment
 
 All code in this repository was run on python 3.10. In my experience, installing with python 3.11 caused dependency conflicts. I recommend using conda or mamba to create a python 3.10 environment. You should install the following dependencies in this order. You can copy and paste this code block into a shell script for easy use.
