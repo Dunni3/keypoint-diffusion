@@ -1,4 +1,28 @@
-# Setting up dev environment
+# **Accelerating Inference in Molecular Diffusion Models with Latent Representations of Protein Structure.**
+
+![Keypoint-Conditioned Diffusion](https://github.com/Dunni3/keypoint-diffusion/assets/29707787/9dd7cbc4-1d10-4843-9cd5-d6565d088811)
+
+This is the offical code release for the paper [Accelerating Inference in Molecular Diffusion Models with Latent Representations of Protein Structure](https://openreview.net/forum?id=Z4ia7s2tpV). This work was accepted as a spotlight paper at the [NeurIPS 2023 Workshop on Generative AI in Biology](https://genbio-workshop.github.io/).
+
+
+# Project Structure
+
+Here are some useful bits of information if you want to work with this codebase.
+
+## How we define a model (config files)
+
+Specifications of the model and the data that the model is trained on are all packaged into one config file. The config files are just yaml files. Once you setup your config file, you pass it as input to the data processing scripts in addition to the training scripts. An example config file is provided at `configs/dev_config.yml`. This example config file also has some helpful comments in it describing what the different parameters mean.
+
+Actual config files used to train models presented in the paper are available in the `trained_models/` directory.
+
+Note, you don't have to reprocess the dataset for every model you train, as long as the models you are training contain the same parameters under the `dataset` section of the config file. 
+
+
+## A note on understanding our scripts
+
+All of the steps of training, sampling, and evaluation are run through various scripts in this repo. In this readme, I describe in words the inputs that are provided to each script. Each of these scripts implements command line arguments via the argparse library. You can always run `python <script_name>.py --help` to see a list of command line arguments that the script accepts. You can also just open the script and inspect the `parse_args()` function to see what command line arguments are accepted.
+
+# Environment Setup
 
 All code in this repository was run on python 3.10. In my experience, installing with python 3.11 caused dependency conflicts. I recommend using conda or mamba to create a python 3.10 environment. You should install the following dependencies in this order. You can copy and paste this code block into a shell script for easy use.
 
@@ -14,26 +38,15 @@ mamba install -c conda-forge biopython -y
 
 I might be missing a few dependencies. Feel free to add them here.
 
-# Getting the data
+# Datasets
+
+## Getting the data
 
 For the paper all models are trained on the bindingmoad dataset. We use the same splits of bindingmoad as in [DiffSBDD](https://github.com/arneschneuing/DiffSBDD). Clone the DiffSBDD repo, and follow the directions for downloadng the bindingmoad dataset into the `data/` folder of the DiffSBDD Repo. You don't need to run their scripts for processing the data, you just need to download it.
 
 You will notice that there is some code in this repository for processing/working with the crossdocked dataset. The results in the paper only focus on models trained on the bindingmoad dataset. Future releases of this repository / versions of this paper may include results on the crossdocked dataset. However, for now, the crossdocked dataset is not used for training or evaluation, and the processing scripts are not guaranteed to work.
 
-# How we define a model (config files)
-
-Specifications of the model and the data that the model is trained on are all packaged into one config file. The config files are just yaml files. Once you setup your config file, you pass it as input to the data processing scripts in addition to the training scripts. An example config file is provided at `configs/dev_config.yml`. This example config file also has some helpful comments in it describing what the different parameters mean.
-
-Actual config files used to train models presented in the paper are available in the `trained_models/` directory.
-
-Note, you don't have to reprocess the dataset for every model you train, as long as the models you are training contain the same parameters under the `dataset` section of the config file. 
-
-
-# A note on understanding our scripts
-
-All of the steps of training, sampling, and evaluation are run through various scripts in this repo. In this readme, I describe in words the inputs that are provided to each script. Each of these scripts implements command line arguments via the argparse library. You can always run `python <script_name>.py --help` to see a list of command line arguments that the script accepts. You can also just open the script and inspect the `parse_args()` function to see what command line arguments are accepted.
-
-# Processing the data
+## Processing the data
 
 There are two scripts in this repository for processing the crossdocked and bindingmoad datasets so they can be ingested by our dataset class at training/evaluation time. These are `process_crossdocked.py` and `process_bindingmoad.py`. Unfortunately, `process_crossdocked.py` might be broken at the moment. 
 
@@ -47,7 +60,7 @@ command for processing bindingmoad dataset
 python process_bindingmoad.py --config_file=configs/dev_config.yml --data_dir=/home/ian/projects/mol_diffusion/DiffSBDD/data/ 
 ```
 
-## Output of data processing
+### Output of data processing
 
 Running either `process_crossdocked.py` or `process_bindingmoad.py` will write a processed version of the dataset to whatever directory was specified by the `--output_dir` command-line argument. 
 
@@ -131,6 +144,12 @@ sbatch --array 1-244 dock_cpu.slurm -->
 - [ ] add license
 - [x] create directory with trained models
 - [x] write script for sampling molecules from trained models
+<<<<<<< HEAD
 - [x] change name of directory and name of LigandDiffuser class
 - [x] add necessary dataset files for alpha-carbon only models
 - [x] add picture of ligand generation to readme
+=======
+- [x ] change name of directory and name of LigandDiffuser class
+- [ ] add necessary dataset files for alpha-carbon only models
+- [ ] add picture of ligand generation to readme
+>>>>>>> d6e0f2be9eeaca3755ae67daeb636cad7ed564fd

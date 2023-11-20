@@ -21,7 +21,7 @@ from models.n_nodes_dist import LigandSizeDistribution
 from utils import get_batch_info, get_nodes_per_batch, copy_graph, get_batch_idxs
 from torch_scatter import segment_csr
 
-class LigandDiffuser(nn.Module):
+class KeypointDiffusion(nn.Module):
 
     def __init__(self, atom_nf, rec_nf, processed_dataset_dir: Path, n_timesteps: int = 1000, keypoint_centered=False, architecture: str = 'egnn', rec_encoder_type: str = 'learned',
                  graph_config={}, dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, precision=1e-4, lig_feat_norm_constant=1, rl_dist_threshold=0, use_fake_atoms=False):
