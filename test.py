@@ -12,7 +12,7 @@ from tqdm import trange
 import dgl
 
 from model_setup import model_from_config
-from data_processing.crossdocked.dataset import CrossDockedDataset
+from data_processing.crossdocked.dataset import ProteinLigandDataset
 from data_processing.make_bindingmoad_pocketfile import write_pocket_file
 from models.ligand_diffuser import KeypointDiffusion
 from utils import write_xyz_file, copy_graph
@@ -52,7 +52,7 @@ def parse_arguments():
 
     return args
 
-def make_reference_files(dataset_idx: int, dataset: CrossDockedDataset, output_dir: Path) -> Path:
+def make_reference_files(dataset_idx: int, dataset: ProteinLigandDataset, output_dir: Path) -> Path:
 
     # get original receptor and ligand files
     ref_rec_file, ref_lig_file = dataset.get_files(dataset_idx)
@@ -112,7 +112,7 @@ def main():
     # create test dataset object
     dataset_path = Path(config['dataset']['location']) 
     test_dataset_path = str(dataset_path / f'{args.split}.pkl')
-    test_dataset = CrossDockedDataset(name=args.split, processed_data_file=test_dataset_path, **config['graph'], **config['dataset'])
+    test_dataset = ProteinLigandDataset(name=args.split, processed_data_file=test_dataset_path, **config['graph'], **config['dataset'])
 
     # determine if we're using fake atoms
     try:

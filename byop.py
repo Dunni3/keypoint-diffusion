@@ -21,7 +21,7 @@ from analysis.metrics import MoleculeProperties
 from analysis.molecule_builder import build_molecule, process_molecule
 from analysis.pocket_minimization import pocket_minimization
 from constants import aa_to_idx
-from data_processing.crossdocked.dataset import CrossDockedDataset
+from data_processing.crossdocked.dataset import ProteinLigandDataset
 from data_processing.make_bindingmoad_pocketfile import PocketSelector
 from data_processing.pdbbind_processing import (build_initial_complex_graph,
                                                 parse_ligand,
@@ -65,7 +65,7 @@ def parse_arguments():
 
     return args
 
-def make_reference_files(dataset_idx: int, dataset: CrossDockedDataset, output_dir: Path) -> Path:
+def make_reference_files(dataset_idx: int, dataset: ProteinLigandDataset, output_dir: Path) -> Path:
 
     # get original receptor and ligand files
     ref_rec_file, ref_lig_file = dataset.get_files(dataset_idx)

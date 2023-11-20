@@ -7,7 +7,7 @@ import prody
 from rdkit import Chem
 import shutil
 
-from data_processing.crossdocked.dataset import CrossDockedDataset
+from data_processing.crossdocked.dataset import ProteinLigandDataset
 from models.ligand_diffuser import KeypointDiffusion
 from utils import write_xyz_file, copy_graph, get_batch_idxs
 from analysis.molecule_builder import make_mol_openbabel
@@ -39,7 +39,7 @@ def parse_arguments():
 
     return args
 
-def make_reference_files(dataset_idx: int, dataset: CrossDockedDataset, output_dir: Path, remove_hydrogen: bool) -> Path:
+def make_reference_files(dataset_idx: int, dataset: ProteinLigandDataset, output_dir: Path, remove_hydrogen: bool) -> Path:
 
     output_dir = output_dir / f'pocket_{dataset_idx}'
     output_dir.mkdir(exist_ok=True)
@@ -63,7 +63,7 @@ def make_reference_files(dataset_idx: int, dataset: CrossDockedDataset, output_d
 
     return output_dir
 
-def write_sampled_ligands(lig_pos, lig_feat, output_dir: Path, dataset: CrossDockedDataset, name: str = None):
+def write_sampled_ligands(lig_pos, lig_feat, output_dir: Path, dataset: ProteinLigandDataset, name: str = None):
 
     lig_pos = [ arr.detach().cpu() for arr in lig_pos ]
     lig_feat = [ arr.detach().cpu() for arr in lig_feat ]
@@ -125,7 +125,7 @@ def main():
     # create test dataset
     dataset_path = Path(args['dataset']['location']) 
     test_dataset_path = str(dataset_path / 'val.pkl')
-    test_dataset = CrossDockedDataset(name='val', processed_data_file=test_dataset_path, **args['graph'], **args['dataset'])
+    test_dataset = ProteinLigandDataset(name='val', processed_data_file=test_dataset_path, **args['graph'], **args['dataset'])
 
 
     # get the model architecture

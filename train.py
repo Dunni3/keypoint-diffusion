@@ -19,7 +19,7 @@ from dgl.dataloading import GraphDataLoader
 import wandb
 from model_setup import model_from_config
 from analysis.metrics import ModelAnalyzer
-from data_processing.crossdocked.dataset import (CrossDockedDataset,
+from data_processing.crossdocked.dataset import (ProteinLigandDataset,
                                                  get_dataloader)
 from models.dynamics import LigRecDynamics
 from models.ligand_diffuser import KeypointDiffusion
@@ -406,8 +406,8 @@ def main():
     dataset_path = Path(config['dataset']['location']) 
     train_dataset_path = str(dataset_path / 'train.pkl') 
     test_dataset_path = str(dataset_path / 'test.pkl')
-    train_dataset = CrossDockedDataset(name='train', processed_data_file=train_dataset_path, **config['graph'], **config['dataset'])
-    test_dataset = CrossDockedDataset(name='test', processed_data_file=test_dataset_path, **config['graph'], **config['dataset'])
+    train_dataset = ProteinLigandDataset(name='train', processed_data_file=train_dataset_path, **config['graph'], **config['dataset'])
+    test_dataset = ProteinLigandDataset(name='test', processed_data_file=test_dataset_path, **config['graph'], **config['dataset'])
 
     # compute number of iterations per epoch - necessary for deciding when to do test evaluations/saves/etc. 
     iterations_per_epoch = len(train_dataset) / batch_size
