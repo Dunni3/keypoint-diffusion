@@ -13,7 +13,7 @@ from data_processing.pdbbind_processing import (build_initial_complex_graph,
 
 # TODO: with the current implementation of fake atoms, the code will not function properly if max_fake_atom_frac = 0
 
-class CrossDockedDataset(dgl.data.DGLDataset):
+class ProteinLigandDataset(dgl.data.DGLDataset):
 
     def __init__(self, name: str, 
         processed_data_file: str,
@@ -173,7 +173,7 @@ def collate_fn(examples: list):
     complex_graphs = dgl.batch(complex_graphs)
     return complex_graphs, interface_points
 
-def get_dataloader(dataset: CrossDockedDataset, batch_size: int, num_workers: int = 1, **kwargs) -> GraphDataLoader:
+def get_dataloader(dataset: ProteinLigandDataset, batch_size: int, num_workers: int = 1, **kwargs) -> GraphDataLoader:
 
     dataloader = GraphDataLoader(dataset, batch_size=batch_size, drop_last=False, num_workers=num_workers, collate_fn=collate_fn, **kwargs)
     return dataloader

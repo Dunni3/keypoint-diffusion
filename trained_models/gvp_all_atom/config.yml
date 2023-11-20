@@ -1,0 +1,145 @@
+dataset:
+  dataset_size: null
+  interface_distance_threshold: 5
+  interface_exclusion_threshold: 2
+  lig_box_padding: 8
+  lig_elements:
+  - C
+  - N
+  - O
+  - S
+  - P
+  - F
+  - Cl
+  - Br
+  - I
+  - B
+  location: data/bindingmoad_processed/
+  max_fake_atom_frac: 0.0
+  min_ligand_atoms: 8
+  pocket_cutoff: 8
+  pocket_edge_algorithm: bruteforce-blas
+  rec_elements:
+  - C
+  - N
+  - O
+  - S
+  - P
+  - F
+  - Cl
+  - Br
+  - I
+  - B
+  receptor_k: 8
+  remove_hydrogen: true
+  use_boltzmann_ot: false
+diffusion:
+  architecture: gvp
+  lig_feat_norm_constant: 1
+  n_timesteps: 1000
+  precision: 1.0e-05
+  rec_encoder_type: fixed
+  rl_dist_threshold: 0
+dynamics:
+  hidden_nf: 256
+  kl_k: 5
+  ll_k: 0
+  message_norm: 0
+  n_layers: 6
+  norm: true
+  update_kp_feat: false
+  use_tanh: true
+dynamics_gvp:
+  dropout: 0.1
+  kl_k: 7
+  ll_k: 0
+  message_norm: mean
+  n_convs: 6
+  n_hidden_scalars: 256
+  n_message_gvps: 3
+  n_noise_gvps: 4
+  n_update_gvps: 2
+  update_kp: true
+  vector_size: 16
+experiment:
+  name: gvp_all_atom_bestkp
+  results_dir: fixed_rec_results/
+graph:
+  graph_cutoffs:
+    kk: 8
+    kl: 6
+    ll: 6
+    rk: 100
+    rr: 3.5
+  n_keypoints: 20
+rec_encoder:
+  coords_range: 10
+  fix_pos: true
+  hidden_n_node_feat: 256
+  k_closest: 0
+  kp_feat_scale: 1.0
+  kp_rad: 5
+  message_norm: 0
+  n_convs: 4
+  n_kk_convs: 0
+  n_kk_heads: 4
+  no_cg: false
+  norm: true
+  out_n_node_feat: 256
+  use_sameres_feat: true
+  use_tanh: true
+rec_encoder_gvp:
+  dropout: 0.2
+  in_scalar_size: 10
+  k_closest: 5
+  kp_rad: 0
+  message_norm: mean
+  n_message_gvps: 3
+  n_rk_convs: 2
+  n_rr_convs: 4
+  n_update_gvps: 2
+  out_scalar_size: 128
+  use_sameres_feat: false
+  vector_size: 16
+rec_encoder_loss:
+  loss_type: none
+  use_interface_points: true
+reconstruction:
+  n_lig_feat: 10
+  n_rec_atom_feat: 10
+sampling_config:
+  diff_batch_size: 128
+  n_receptors: 12
+  n_replicates: 10
+  rec_enc_batch_size: 128
+training:
+  batch_size: 32
+  clip_grad: true
+  clip_value: 1.5
+  epochs: 800
+  learning_rate: 0.0001
+  num_workers: 8
+  rec_encoder_loss_weight: 0.1
+  rl_hinge_loss_weight: 0
+  sample_interval: 30
+  save_interval: 40
+  scheduler:
+    rec_enc_weight_decay_midpoint: 0
+    rec_enc_weight_decay_scale: 0.25
+    restart_interval: 0
+    restart_type: cosine
+    warmup_length: 1
+  test_epochs: 1
+  test_interval: 1
+  train_metrics_interval: 0.1
+  weight_decay: 1.0e-12
+wandb:
+  init_kwargs:
+    group: fixed_receptor
+    mode: online
+    name: gvp_all_atom_bestkp
+    project: ligdiff_cluster
+  watch_kwargs:
+    log: null
+    log_freq: 100
+  watch_model: false

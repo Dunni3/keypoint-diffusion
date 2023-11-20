@@ -2,12 +2,12 @@ from torch.optim import Optimizer
 import numpy as np
 from pathlib import Path
 from utils import save_model
-from models.ligand_diffuser import LigandDiffuser
+from models.ligand_diffuser import KeypointDiffusion
 
 class Scheduler:
 
     def __init__(self,
-                 model: LigandDiffuser,
+                 model: KeypointDiffusion,
                  optimizer: Optimizer, 
                  base_lr: float,
                  output_dir: Path, 

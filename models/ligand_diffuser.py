@@ -21,7 +21,7 @@ from models.n_nodes_dist import LigandSizeDistribution
 from utils import get_batch_info, get_nodes_per_batch, copy_graph, get_batch_idxs
 from torch_scatter import segment_csr
 
-class LigandDiffuser(nn.Module):
+class KeypointDiffusion(nn.Module):
 
     def __init__(self, atom_nf, rec_nf, processed_dataset_dir: Path, n_timesteps: int = 1000, keypoint_centered=False, architecture: str = 'egnn', rec_encoder_type: str = 'learned',
                  graph_config={}, dynamics_config = {}, rec_encoder_config = {}, rec_encoder_loss_config= {}, precision=1e-4, lig_feat_norm_constant=1, rl_dist_threshold=0, use_fake_atoms=False):
@@ -505,9 +505,8 @@ class LigandDiffuser(nn.Module):
 
     @torch.no_grad()
     def sample_random_sizes(self, ref_graphs: List[dgl.DGLHeteroGraph], n_replicates: int = 10, rec_enc_batch_size: int = 32, diff_batch_size: int = 32):
-        
-        n_receptors = len(ref_graphs)
-        n_lig_atoms = self.lig_size_dist.sample((n_receptors, n_replicates))
+        n_nodes_rec = torch.tensor([ g.num_nodes('rec') for g in ref_graphs ])
+        n_lig_atoms = self.lig_size_dist.sample(n_nodes_rec, n_replicates)
         samples = self._sample(ref_graphs=ref_graphs, n_lig_atoms=n_lig_atoms, rec_enc_batch_size=rec_enc_batch_size, diff_batch_size=diff_batch_size)
         return samples
 
