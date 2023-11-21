@@ -120,7 +120,7 @@ def process_ligand_and_pocket(rec_file: Path, lig_file: Path, output_dir: Path,
     pocket_residues = []
     for residue in rec_struct.get_residues():
 
-        # check if residue is interacting with protein
+        # check if residue is a standard amino acid
         is_residue = is_aa(residue.get_resname(), standard=True)
         if not is_residue:
             continue
@@ -128,11 +128,11 @@ def process_ligand_and_pocket(rec_file: Path, lig_file: Path, output_dir: Path,
         # get atomic coordinates of residue
         res_coords = np.array([a.get_coord() for a in residue.get_atoms()])
 
+        # check if residue is interacting with protein
         min_rl_dist = cdist(lig_coords, res_coords).min()
         if min_rl_dist < pocket_cutoff:
             pocket_residues.append(residue)
 
-    # TODO: you left off here
     if len(pocket_residues) == 0:
         raise ValueError(f'no valid pocket residues found.')
 
@@ -280,7 +280,12 @@ def main():
 
     # TODO: how should/could we handle fake atoms? do we need to worry about it?
     # none of the trained models actually use fake atoms, so this is not a problem for now
-    # if use_fake_atoms:
+    try:
+        use_fake_atoms = config['dataset']['max_fake_atom_frac'] > 0
+    except KeyError:
+        use_fake_atoms = False
+    if use_fake_atoms:
+        raise NotImplementedError('fake atoms are not supported')
     #     ref_lig_batch_idx = torch.zeros(ref_graph.num_nodes('lig'), device=ref_graph.device)
     #     ref_graph = model.remove_fake_atoms(ref_graph, ref_lig_batch_idx)
 
@@ -307,7 +312,7 @@ def main():
         n_mols_to_generate = math.ceil( n_mols_needed / 0.99 ) # account for the fact that only ~99% of generated molecules are valid
         batch_size = min(n_mols_to_generate, args.max_batch_size)
 
-        # sample the number of ligand atoms in each graph
+        # compute the number of ligand atoms in each generated molecule
         if args.n_ligand_atoms == 'sample':
             atoms_per_lig = model.lig_size_dist.sample(n_rec_nodes, batch_size).to(device).flatten()
         elif args.n_ligand_atoms == 'ref':

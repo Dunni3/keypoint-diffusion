@@ -256,27 +256,13 @@ class KeypointDiffusion(nn.Module):
 
         device = g.device
 
-        # compute initial receptor atom COM
-        # init_rec_atom_com = dgl.readout_nodes(g, feat='x_0', op='mean', ntype='rec')
-
         # get batch indicies of every ligand and keypoint - useful later
         batch_idx = torch.arange(g.batch_size, device=device)
         kp_batch_idx = batch_idx.repeat_interleave(g.batch_num_nodes('kp'))
         batch_idxs = get_batch_idxs(g)
-        # lig_batch_idx = batch_idx.repeat_interleave(g.batch_num_nodes('lig'))
 
         # get keypoints positions/features
         g = self.rec_encoder(g, batch_idxs)
-
-        # get initial keypoint center of mass
-        # init_kp_com = dgl.readout_nodes(g, feat='x_0', op='mean', ntype='kp')
-
-        # remove (receptor atom COM, or keypoint COM) from receptor keypoints
-        # TODO: does this effect sampling performance? there is an argument to be made to starting sampling at keypoint COM?
-        # g.nodes['kp'].data['x_0'] = g.nodes['kp'].data['x_0'] - init_rec_atom_com[kp_batch_idx]
-        
-        # also remove receptor atom COM from ligand positions
-        # g.nodes['lig'].data['x_0'] = g.nodes['lig'].data['x_0'] - init_rec_atom_com[lig_batch_idx]
 
         return g
 
@@ -422,8 +408,6 @@ class KeypointDiffusion(nn.Module):
             t_arr = t_arr / self.n_timesteps
 
             g = self.sample_p_zs_given_zt(s_arr, t_arr, g, batch_idxs)
-            # if g.batch_num_edges('ll').shape[0] != g.batch_size:
-            #     print('problem!')
             if visualize:
 
                 # make a copy of g
@@ -535,10 +519,6 @@ class KeypointDiffusion(nn.Module):
         var_terms = var_terms[lig_batch_idx].view(-1, 1)
 
         # compute the mean (mu) for positions/features of the distribution p(z_s | z_t)
-        # this is essentially our approximation of the completely denoised ligand i think?
-        # i think that's not quite correct but i think we COULD formulate sampling this way
-        # -- this is how sampling is conventionally formulated for diffusion models IIRC
-        # not sure why the authors settled on the alternative formulation
         mu_pos = g.nodes['lig'].data['x_0']/alpha_t_given_s - var_terms*eps_x
         mu_feat = g.nodes['lig'].data['h_0']/alpha_t_given_s - var_terms*eps_h
         

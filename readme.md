@@ -4,6 +4,20 @@
 
 This is the offical code release for the paper [Accelerating Inference in Molecular Diffusion Models with Latent Representations of Protein Structure](https://openreview.net/forum?id=Z4ia7s2tpV). This work was accepted as a spotlight paper at the [NeurIPS 2023 Workshop on Generative AI and Biology](https://genbio-workshop.github.io/).
 
+# Environment Setup
+
+All code in this repository was run on python 3.10. In my experience, installing with python 3.11 caused dependency conflicts. I recommend using conda or mamba to create a python 3.10 environment. You should install the following dependencies in this order. You can copy and paste this code block into a shell script for easy use.
+
+```console
+mamba install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia -y
+mamba install pytorch-cluster pytorch-scatter -c pyg -y
+mamba install -c dglteam/label/cu118 dgl -y
+mamba install -c conda-forge rdkit -y
+mamba install -c conda-forge openbabel -y
+mamba install -c conda-forge pandas -y
+mamba install -c conda-forge biopython -y
+```
+
 # Project Structure
 
 ## How we define a model (config files)
@@ -18,20 +32,6 @@ Note, you don't have to reprocess the dataset for every model you train, as long
 ## A note on understanding our scripts
 
 All of the steps of training, sampling, and evaluation are run through various scripts in this repo. In this readme, I describe in words the inputs that are provided to each script. Each of these scripts implements command line arguments via the argparse library. You can always run `python <script_name>.py --help` to see a list of command line arguments that the script accepts. You can also just open the script and inspect the `parse_args()` function to see what command line arguments are accepted.
-
-# Environment Setup
-
-All code in this repository was run on python 3.10. In my experience, installing with python 3.11 caused dependency conflicts. I recommend using conda or mamba to create a python 3.10 environment. You should install the following dependencies in this order. You can copy and paste this code block into a shell script for easy use.
-
-```console
-mamba install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia -y
-mamba install pytorch-cluster pytorch-scatter -c pyg -y
-mamba install -c dglteam/label/cu118 dgl -y
-mamba install -c conda-forge rdkit -y
-mamba install -c conda-forge openbabel -y
-mamba install -c conda-forge pandas -y
-mamba install -c conda-forge biopython -y
-```
 
 # Datasets
 
