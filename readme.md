@@ -1,8 +1,10 @@
-# **Accelerating Inference in Molecular Diffusion Models with Latent Representations of Protein Structure.**
+# **Accelerating Inference in Molecular Diffusion Models with Latent Representations of Protein Structure**
+
+[![arXiv](https://img.shields.io/badge/arXiv-1234.56789-b31b1b.svg?style=flat)](https://arxiv.org/abs/2311.13466)
 
 ![Keypoint-Conditioned Diffusion](https://github.com/Dunni3/keypoint-diffusion/assets/29707787/9dd7cbc4-1d10-4843-9cd5-d6565d088811)
 
-This is the offical code release for the paper [Accelerating Inference in Molecular Diffusion Models with Latent Representations of Protein Structure](https://openreview.net/forum?id=Z4ia7s2tpV). This work was accepted as a spotlight paper at the [NeurIPS 2023 Workshop on Generative AI and Biology](https://genbio-workshop.github.io/).
+This is the offical code release for the paper [Accelerating Inference in Molecular Diffusion Models with Latent Representations of Protein Structure](https://openreview.net/forum?id=Z4ia7s2tpV). This work was accepted as a spotlight paper at the [NeurIPS 2023 Generative AI and Biology Workshop](https://genbio-workshop.github.io/).
 
 # Environment Setup
 
