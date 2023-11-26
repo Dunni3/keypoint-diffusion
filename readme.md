@@ -5,7 +5,7 @@
 ![Keypoint Conditioned Diffusion](https://github.com/Dunni3/keypoint-diffusion/assets/29707787/ebf14092-e8e0-4aa7-8f1f-7ca58cd49386)
 
 
-This is the offical code release for the paper [Accelerating Inference in Molecular Diffusion Models with Latent Representations of Protein Structure](https://openreview.net/forum?id=Z4ia7s2tpV). This work was accepted as a spotlight paper at the [NeurIPS 2023 Generative AI and Biology Workshop](https://genbio-workshop.github.io/).
+This is the official code release for the paper [Accelerating Inference in Molecular Diffusion Models with Latent Representations of Protein Structure](https://openreview.net/forum?id=Z4ia7s2tpV). This work was accepted as a spotlight paper at the [NeurIPS 2023 Generative AI and Biology Workshop](https://genbio-workshop.github.io/).
 
 # Environment Setup
 
