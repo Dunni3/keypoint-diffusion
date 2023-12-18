@@ -172,14 +172,14 @@ def process_ligand_and_pocket(rec_file: Path, lig_file: Path, output_dir: Path,
             raise ValueError(f'unsupported residue type found: {[ res.get_resname() for res in pocket_residues ]}')
 
         # one-hot encode residue types
-        pocket_atom_features = one_hot(res_idx, num_classes=len(aa_to_idx)).bool()
+        pocket_atom_features = one_hot(res_idx, num_classes=len(aa_to_idx)).float()
 
         # create an empty other_atoms_mask
         other_atoms_mask = torch.zeros(pocket_atom_features.shape[0], dtype=torch.bool)
 
     else:
         pocket_atom_features, other_atoms_mask = rec_atom_featurizer(rec_element_map, protein_atom_elements=pocket_elements)
-        pocket_atom_features = torch.tensor(pocket_atom_features).bool()
+        pocket_atom_features = torch.tensor(pocket_atom_features).float()
 
     # remove other atoms from pocket
     pocket_coords = pocket_coords[~other_atoms_mask]
